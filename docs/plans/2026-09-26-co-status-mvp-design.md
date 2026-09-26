@@ -53,7 +53,7 @@ All three read only the HTTP status of a check-in, never its body.
 | **D12** | **co-status is developed on the co-status VM itself.** | As with notifier. Notifier's memory reservation (#85) and the SocratiCode client setup therefore apply there too. |
 | **D13** | **The notifier API key is a systemd credential** (`LoadCredential=`) in a root-only file, never an environment variable. | Watcher's #297 pattern. It is the only delivery secret co-status holds. |
 | **D14** | **Cut over one monitor at a time, using `enabled` on both sides.** No dual-posting and no new notifier code. | Notifier keeps watching until co-status's copy has seen a fresh check-in, so there is no moment with nothing watching. See [Cutover](#cutover). |
-| **D15** | **co-status tests `alerting.py` with `respx`, the same library and version range as the SDK's own tests. `client.monitors` is removed from the SDK in the next notifier release, with no deprecation release.** | `respx` intercepts calls beneath the SDK's `RetryTransport`, so retries can be tested too; the SDK's `test_dispatch_retried_with_idempotency_key` relies on this. A `transport=` parameter on `NotifierClient` was considered and dropped: it would have been a notifier release whose only user was these tests. No consumer uses `client.monitors`: broker uses `urllib`, watcher `httpx`, index `curl`. |
+| **D15** | **co-status tests `alerting.py` with `respx`, the same library and version range as the SDK's own tests. `client.monitors` is deleted from the SDK before notifier's next release; it has never been released.** | `respx` intercepts calls beneath the SDK's `RetryTransport`, so retries can be tested too; the SDK's `test_dispatch_retried_with_idempotency_key` relies on this. A `transport=` parameter on `NotifierClient` was considered and dropped: it would have been a notifier release whose only user was these tests. `client.monitors` sits under *Unreleased* in the SDK's CHANGELOG (no tag through `v0.3.1` contains monitors), and no consumer uses it: broker uses `urllib`, watcher `httpx`, index `curl`. |
 
 ## Design
 
@@ -240,7 +240,7 @@ Once all three monitors have run on co-status for 7 days:
 1. Stop and disable `notifier-sweep*`, then delete the four units from `deploy/`.
 2. Delete `src/api/routes/monitors.py`, `src/api/schemas/monitor.py`, `src/core/monitors.py`, the monitor model, `scripts/sweep.sh`, `scripts/sweep_monitors.py`, and their tests.
 3. Add a migration that drops `monitors`.
-4. Remove `client.monitors` from the SDK in the next release (D15; no deprecation release first).
+4. Delete `client.monitors` from the SDK, and its *Unreleased* CHANGELOG entries (D15). It was never released, so no release note is owed.
 5. Retire the `co-broker` and `co-index` tenants with `delete_tenant.py`. Their 56 dispatch records are deleted with them.
 6. Remove the two ACL rules.
 7. Docs:
@@ -262,7 +262,7 @@ Test-first throughout: red, green, refactor.
 **Ported:** notifier's monitor tests (deadlines, `should_alert`, durations, the routes, the sweep script), rewritten wherever they asserted on Apprise.
 
 **New:**
-- **Contract.** co-status's OpenAPI schemas for the check-in request and response must equal a snapshot of notifier's, taken at a pinned tag with notifier's `dump_openapi.py`. This keeps D6 true over time.
+- **Contract.** co-status's OpenAPI schemas for the check-in request and response must equal a snapshot of notifier's, taken at a pinned notifier commit with notifier's `dump_openapi.py`. This keeps D6 true over time.
 - **`alerting.py`**, through `respx` (D15):
   - the endpoint check runs first;
   - idempotency keys are deterministic;

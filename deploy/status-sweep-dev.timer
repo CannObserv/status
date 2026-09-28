@@ -1,0 +1,25 @@
+[Unit]
+Description=Sweep co-status monitors for missed check-ins (dev)
+
+# This timer is the only thing watching for silence. If it stops, every
+# dead-man's timer in the service stops with it and nothing says so — the
+# failure mode notifier#56 exists to prevent, one level up. `systemctl list-timers
+# status-sweep*` is the check.
+
+[Timer]
+Unit=status-sweep-dev.service
+
+# 2 minutes after boot: Postgres and tailscaled both need to be up, and a
+# first sweep that fails on a cold boot would alert on monitors that are
+# merely waiting for the machine to finish starting.
+OnBootSec=2min
+OnUnitActiveSec=60s
+
+# systemd's default AccuracySec is 1 minute, which lets it coalesce a
+# 60-second timer with unrelated wakeups and drift the cadence well past it.
+# The sweep interval is the worst-case lateness of every missing alert, so it
+# is worth the wakeups to hold it.
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

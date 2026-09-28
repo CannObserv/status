@@ -21,6 +21,8 @@ DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 UNITS = {
     "production": DEPLOY / "status.service",
     "development": DEPLOY / "status-dev.service",
+    "production-sweep": DEPLOY / "status-sweep.service",
+    "development-sweep": DEPLOY / "status-sweep-dev.service",
 }
 
 #: The name alerting code reads under $CREDENTIALS_DIRECTORY.
@@ -44,6 +46,15 @@ def test_production_and_development_read_different_files():
     prod = _credentials(UNITS["production"])[CREDENTIAL_NAME]
     dev = _credentials(UNITS["development"])[CREDENTIAL_NAME]
     assert prod != dev
+
+
+@pytest.mark.parametrize("environment", ["production", "development"])
+def test_each_sweep_reads_its_own_environments_key(environment):
+    """The sweep is the other half of alerting: without the key it detects
+    outages and tells no one."""
+    api = _credentials(UNITS[environment])[CREDENTIAL_NAME]
+    sweep = _credentials(UNITS[f"{environment}-sweep"])[CREDENTIAL_NAME]
+    assert sweep == api
 
 
 @pytest.mark.parametrize("environment", UNITS)

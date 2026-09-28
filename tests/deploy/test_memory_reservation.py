@@ -43,7 +43,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = REPO_ROOT / "deploy"
 
 PROD_UNIT = DEPLOY / "status.service"
+PROD_SWEEP = DEPLOY / "status-sweep.service"
 DEV_UNIT = DEPLOY / "status-dev.service"
+DEV_SWEEP = DEPLOY / "status-sweep-dev.service"
 
 POSTGRES_UNIT = DEPLOY / "postgresql@16-main.service.d" / "10-memory.conf"
 
@@ -213,7 +215,7 @@ def test_production_unit_is_not_capped():
     )
 
 
-@pytest.mark.parametrize("unit", [PROD_UNIT], ids=["api"])
+@pytest.mark.parametrize("unit", [PROD_UNIT, PROD_SWEEP], ids=["api", "sweep"])
 def test_production_units_are_deprioritised_for_the_killer(unit):
     """Negative, but never -1000.
 
@@ -403,7 +405,7 @@ def test_the_live_floor_takes_effect(unit):
 # ── the dev units deliberately take none of it ───────────────────────────────
 
 
-@pytest.mark.parametrize("unit", [DEV_UNIT], ids=["api"])
+@pytest.mark.parametrize("unit", [DEV_UNIT, DEV_SWEEP], ids=["api", "sweep"])
 @pytest.mark.parametrize("key", ["MemoryLow", "OOMScoreAdjust"])
 def test_dev_units_never_take_the_reservation(unit, key):
     """The mirror of the production floor and score, and the same rule as the prod opt-in.

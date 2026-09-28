@@ -1,0 +1,47 @@
+[Unit]
+Description=co-status — dead-man's-timer sweep (production)
+After=network.target postgresql.service tailscaled.service
+
+# No [Install] section, and no Restart=. The timer owns the schedule: a
+# transient failure is simply retried at the next tick, and a permanent one
+# leaves a failed unit that `systemctl list-timers` and journald both show.
+# Restart= on a oneshot under a timer would double-fire instead.
+
+[Service]
+Type=oneshot
+User=exedev
+WorkingDirectory=/home/exedev/status
+
+# Every alert is a call to notifier, which delivers to third-party endpoints
+# before it answers. systemd skips a firing while the previous run is still
+# going, so an unbounded sweep held open by a wedged delivery stops every
+# subsequent check: the timer
+# still looks alive and nothing is being swept. Bound it well inside the
+# 60-second cadence's tolerance.
+TimeoutStartSec=120
+
+# The production database opt-in for src/core/db_safety.py. This MUST stay in
+# the unit and never move into an EnvironmentFile below, for the same reason
+# status.service gives: anything in those files is inherited by every shell
+# that sources them (issue notifier#22).
+Environment=STATUS_ALLOW_PROD_DB=1
+
+# Deprioritised for the OOM killer alongside status.service (notifier#74). This unit
+# is the only thing watching for consumer silence, so losing it to memory
+# pressure is a silent outage of the outage detector — the exact failure the
+# timer-not-in-process decision above exists to prevent, arriving by memory
+# rather than by process death. No MemoryLow=: this is a oneshot that is not
+# running most of the time, and a floor reserves nothing while it is idle.
+OOMScoreAdjust=-500
+
+EnvironmentFile=/etc/status/.env
+EnvironmentFile=-/home/exedev/status/.env
+
+# Never an inline `uv run` line. The script checks the database URL through
+# src.core.db_safety and refuses to start without the notifier key — a
+# second spelling here is a second code path that drifts out from under both.
+# The same notifier key as the API unit for this environment (spec D13): the
+# sweep is the other half of alerting. tests/deploy/test_notifier_credential.py.
+LoadCredential=notifier-key:/etc/status/notifier-api.key
+
+ExecStart=/home/exedev/status/scripts/sweep.sh

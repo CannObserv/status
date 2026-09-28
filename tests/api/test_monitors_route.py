@@ -23,7 +23,7 @@ from src.core.api_keys import mint
 from src.core.models import MonitorEvent, Tenant
 from src.core.models.monitor import Monitor
 from src.core.monitors import RECOVERY_TITLE
-from tests.api.conftest import CHANNELS
+from tests.conftest import CHANNELS
 
 HEADER = "X-API-Key"
 

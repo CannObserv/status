@@ -1,0 +1,33 @@
+[Unit]
+Description=co-status — dead-man's-timer sweep (dev)
+After=network.target postgresql.service tailscaled.service
+
+# No [Install] section and no Restart=, for the same reasons as the production
+# sweep: the timer owns the schedule.
+
+[Service]
+Type=oneshot
+User=exedev
+WorkingDirectory=/home/exedev/status
+
+TimeoutStartSec=120
+
+# Deliberately NO STATUS_ALLOW_PROD_DB here. The production opt-in belongs
+# to status-sweep.service alone. This timer inheriting it would have the dev
+# endpoint's sweep alerting on production monitors — and dispatching to
+# production channels to do it. tests/deploy/test_sweep_units.py asserts this
+# stays absent.
+#
+# STATUS_SWEEP_DEV is what tells scripts/sweep.sh to load the env files
+# itself and override DATABASE_URL with DEV_DATABASE_URL, the same swap
+# dev_server.sh performs for the :9001 endpoint.
+Environment=STATUS_SWEEP_DEV=1
+
+# No EnvironmentFile= lines: the script sources /etc/status/.env and the
+# repo .env itself and then replaces DATABASE_URL. Loading them here too would
+# just re-import the production DATABASE_URL one layer earlier for no gain.
+# The same notifier key as the API unit for this environment (spec D13): the
+# sweep is the other half of alerting. tests/deploy/test_notifier_credential.py.
+LoadCredential=notifier-key:/etc/status/notifier-api-dev.key
+
+ExecStart=/home/exedev/status/scripts/sweep.sh

@@ -16,9 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from src.api.deps import get_db_session
 from src.core.logging import AUDIT_SOCKET_ENV
 from src.core.models import ApiKey, Base, Tenant
 
@@ -192,6 +194,21 @@ async def api_key(db_session, tenant) -> tuple[str, ApiKey]:
     db_session.add(key)
     await db_session.flush()
     return raw, key
+
+
+@pytest.fixture
+async def client(test_engine, db_session) -> AsyncGenerator[AsyncClient]:
+    """An AsyncClient wired to the FastAPI app with the savepointed db_session."""
+    from src.api.main import app
+
+    async def override_session() -> AsyncGenerator[AsyncSession]:
+        yield db_session
+
+    app.dependency_overrides[get_db_session] = override_session
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+    app.dependency_overrides.clear()
 
 
 @dataclass

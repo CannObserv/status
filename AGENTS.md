@@ -85,9 +85,12 @@ uv run pre-commit install                     # once per clone
 
 ## Agent Skills
 
-Vendored from `gregoryfoster/skills` as a submodule at `skills-vendor/gregoryfoster-skills/` (read-only; change upstream). Each is a symlink in `skills/` (agentskills.io), re-linked from `.claude/skills/` (Claude Code); a committed directory in `skills/` overrides the vendored copy in both. None overridden yet. Procedure: the `managing-skills` skill.
+Vendored as submodules under `skills-vendor/` (read-only; change upstream). Each skill is a symlink in `skills/` (agentskills.io), re-linked from `.claude/skills/` (Claude Code); a committed directory in `skills/` overrides the vendored copy in both. None overridden yet. Procedure: the `managing-skills` skill.
 
-`curating-context`, `enforcing-architecture`, `init-socraticode`, `managing-skills`, `orchestrating-issue-backlog`, `reviewing-architecture`, `reviewing-code-python-fastapi`, `shipping-work-python-fastapi`, `using-git-worktrees`, `using-mayfly-chat`, `writing-plans`.
+- **`gregoryfoster/skills`** (`skills-vendor/gregoryfoster-skills/`): `curating-context`, `enforcing-architecture`, `init-socraticode`, `managing-skills`, `orchestrating-issue-backlog`, `reviewing-architecture`, `reviewing-code-python-fastapi`, `shipping-work-python-fastapi`, `using-git-worktrees`, `using-mayfly-chat`, `writing-plans`.
+- **`obra/superpowers`** (`skills-vendor/obra-superpowers/`): `brainstorming`, `dispatching-parallel-agents`, `subagent-driven-development`, `systematic-debugging`, `test-driven-development`, `verification-before-completion`, `writing-skills`. Its `writing-plans` and `using-git-worktrees` are not linked; gregoryfoster's hold those names.
+
+**Specs and plans live in `docs/plans/`**, never `docs/superpowers/` or `docs/specs/`: a spec is `YYYY-MM-DD-<topic>-design.md`, its plan `YYYY-MM-DD-<topic>.md`. This is the stated preference `brainstorming` defers to, which is why it is not overridden.
 
 Dangling symlinks (fresh clone, new worktree): `bash .skills/doctor.sh`.
 

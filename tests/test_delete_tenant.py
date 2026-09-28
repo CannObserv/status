@@ -88,6 +88,7 @@ def _inventory(**overrides) -> TenantInventory:
         "tenant_id": TENANT,
         "tenant_name": "acme",
         "keys": [],
+        "monitors": 0,
     }
     return TenantInventory(**{**fields, **overrides})
 
@@ -167,6 +168,10 @@ class TestRender:
         lines = render(_inventory(), dry_run=True)
 
         assert lines[0] == "DRY RUN — nothing was written"
+
+    def test_counts_the_monitors_that_go_with_the_tenant(self):
+        lines = render(_inventory(monitors=3), dry_run=False)
+        assert "monitors=3" in lines
 
     def test_never_prints_a_key_hash(self):
         """A key's prefix identifies it to a human; the digest is what

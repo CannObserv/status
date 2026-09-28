@@ -26,12 +26,12 @@ the mechanism.
 
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.api_keys import KeyRecord, TenantNotFoundError, keys_for, ulid_str
 from src.core.logging import get_audit_logger
-from src.core.models import Tenant
+from src.core.models import Monitor, Tenant
 
 #: The same channel every mint and revoke lands on. A cascaded key is a key
 #: destroyed, and an operator asking "which credential died, and when" must
@@ -54,6 +54,16 @@ class TenantInventory:
     tenant_id: str
     tenant_name: str
     keys: list[KeyRecord]
+    #: Counted, not listed: a monitor is configuration, and its history goes
+    #: with it by cascade.
+    monitors: int
+
+
+async def _count_monitors(session: AsyncSession, tenant_id: str) -> int:
+    result = await session.execute(
+        select(func.count()).select_from(Monitor).where(Monitor.tenant_id == tenant_id)
+    )
+    return int(result.scalar_one())
 
 
 async def inventory_of(session: AsyncSession, tenant_id: str) -> TenantInventory:
@@ -73,6 +83,7 @@ async def inventory_of(session: AsyncSession, tenant_id: str) -> TenantInventory
         tenant_id=ulid_str(tenant_id),
         tenant_name=tenant.name,
         keys=await keys_for(session, tenant_id),
+        monitors=await _count_monitors(session, tenant_id),
     )
 
 
@@ -86,7 +97,8 @@ async def delete_tenant(
 
     The inventory is read first, while the rows are still there to be read —
     it is both what the caller prints and what the audit records are built
-    from. Then the tenant goes, and the cascade takes its keys.
+    from. Then the tenant goes, and the cascade takes its keys, its monitors
+    and their history.
 
     ``dry_run`` rolls the whole thing back and emits nothing, and is the
     default so a caller that forgets the flag writes nothing — the same
@@ -145,6 +157,7 @@ async def delete_tenant(
             "tenant_id": inventory.tenant_id,
             "tenant_name": inventory.tenant_name,
             "keys_destroyed": len(inventory.keys),
+            "monitors": inventory.monitors,
         },
     )
     return inventory

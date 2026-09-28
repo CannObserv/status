@@ -9,13 +9,15 @@ that a rehearsal leaves neither rows nor records.
 
 import json
 import logging
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import event, func, select
 
 from src.core.api_keys import TenantNotFoundError, mint
 from src.core.logging import AUDIT_LOGGER_NAME
-from src.core.models import ApiKey, Tenant
+from src.core.models import ApiKey, Monitor, MonitorEvent, Tenant
+from src.core.monitors import EventKind
 from src.core.tenants import TenantInventory, delete_tenant, inventory_of
 
 
@@ -56,6 +58,10 @@ async def _furnish(session, tenant_id: str) -> None:
     """Give *tenant_id* one of everything a delete has to take with it."""
     await mint(session, tenant_id, "first", "production")
     await mint(session, tenant_id, "second", "development")
+    monitor = Monitor(tenant_id=tenant_id, name="m", interval_seconds=60)
+    session.add(monitor)
+    await session.flush()
+    session.add(MonitorEvent(monitor_id=monitor.id, kind=EventKind.IMPORTED, at=datetime.now(UTC)))
     await session.commit()
 
 
@@ -68,12 +74,14 @@ class TestInventory:
         assert inventory.tenant_id == committed
         assert inventory.tenant_name == "doomed-tenant"
         assert [key.label for key in inventory.keys] == ["first", "second"]
+        assert inventory.monitors == 1
 
     async def test_reads_nothing_into_existence(self, db_session, committed):
         """An empty tenant is an inventory of zeroes, not a refusal."""
         inventory = await inventory_of(db_session, committed)
 
         assert inventory.keys == []
+        assert inventory.monitors == 0
 
     async def test_refuses_a_tenant_that_does_not_exist(self, db_session):
         """A typo'd ULID must not read as "a tenant with nothing in it"."""
@@ -106,6 +114,14 @@ class TestDeleteTenant:
         assert isinstance(inventory, TenantInventory)
         assert [key.label for key in inventory.keys] == ["first", "second"]
         assert inventory.tenant_name == "doomed-tenant"
+
+    async def test_takes_its_monitors_and_their_history(self, db_session, committed):
+        await _furnish(db_session, committed)
+
+        await delete_tenant(db_session, committed, dry_run=False)
+
+        assert await _rows(db_session, Monitor, tenant_id=committed) == 0
+        assert await _rows(db_session, MonitorEvent) == 0
 
     async def test_refuses_a_tenant_that_does_not_exist(self, db_session):
         with pytest.raises(TenantNotFoundError):
@@ -248,6 +264,7 @@ class TestAuditRecords:
         assert summary.tenant_id == committed
         assert summary.tenant_name == "doomed-tenant"
         assert summary.keys_destroyed == 2
+        assert summary.monitors == 1
 
     async def test_a_keyless_tenant_still_leaves_a_record(self, db_session, committed, caplog):
         """No keys to name is not nothing to record: the tenant still went."""

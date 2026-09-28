@@ -37,7 +37,7 @@ above, on the command line, for the single invocation — never in an env file.
 Three things this does that a hand-written ``DELETE FROM tenants`` could not:
 
 * **Names the victim before it goes.** Every key id, label, prefix and
-  ``last_used_at``.
+  ``last_used_at``, and how many monitors go with them.
 * **``--dry-run``.** Rehearses the whole operation, refusals included, and
   rolls back.
 * **Leaves a record.** One ``status.audit`` record per cascaded key plus a
@@ -142,7 +142,7 @@ def render(inventory: TenantInventory, dry_run: bool = False) -> list[str]:
     be pasted into an incident channel.
 
     The keys are listed individually: a key is a credential someone may still
-    be holding and may have to be told about.
+    be holding and may have to be told about. Monitors are counted.
     """
     lines: list[str] = []
     if dry_run:
@@ -161,6 +161,8 @@ def render(inventory: TenantInventory, dry_run: bool = False) -> list[str]:
             lines.append(f"    last_used_at={_timestamp(key.last_used_at)}")
     else:
         lines.append("keys destroyed (0) — this tenant held none")
+
+    lines.append(f"monitors={inventory.monitors}")
     return lines
 
 
@@ -168,7 +170,8 @@ def _describe(inventory: TenantInventory) -> str:
     """One line naming exactly what is about to happen, for the prompt."""
     return (
         f"About to permanently delete tenant {inventory.tenant_id} "
-        f"({inventory.tenant_name}) and its {len(inventory.keys)} key(s). "
+        f"({inventory.tenant_name}): {len(inventory.keys)} key(s) and "
+        f"{inventory.monitors} monitor(s) with their history. "
         "This cannot be undone."
     )
 

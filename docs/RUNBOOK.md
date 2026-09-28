@@ -239,6 +239,6 @@ journalctl -u status-sweep -n 1 -o cat | jq -c '{checked, alerted, owed, undeliv
 
 | Consumer | In notifier | Tailnet | On the consumer, afterwards |
 |---|---|---|---|
-| `co-index` | retire the `co-index` tenant (`delete_tenant.py`) | per spec § Removal | delete `notifier.env.pre-status-83` |
+| `co-index` | retire the `co-index` tenant (`delete_tenant.py`) | remove `tag:index` → `tag:notifier:9000` | delete `notifier.env.pre-status-83` |
 | `co-broker` | retire the `co-broker` tenant (`delete_tenant.py`) | remove `tag:broker` → `tag:notifier:9000` | delete `/etc/broker/notifier.env.pre-status-66` |
 | `co-watcher-backup` | **keep the `watcher` tenant and its channels**: `watcher.service` dispatches through them. Revoke only the backup's own key, the tenant's second production key (notifier#62) | **keep** `tag:watcher` → `tag:notifier:9000` | delete `/etc/watcher/backup-notifier.key.pre-status` |

@@ -242,6 +242,7 @@ Once all three monitors have run on co-status for 7 days:
 3. Add a migration that drops `monitors`.
 4. Delete `client.monitors` from the SDK, and its *Unreleased* CHANGELOG entries (D15). It was never released, so no release note is owed.
 5. Retire the `co-broker` and `co-index` tenants with `delete_tenant.py`. Their 56 dispatch records are deleted with them.
+   **Keep the `watcher` tenant and its channels**: `watcher.service` dispatches through them. Revoke only the backup's own key, the tenant's second production key (notifier#62); watcher then deletes its `.pre-status` copy (CannObserv/watcher#330).
 6. Remove the two ACL rules.
 7. Docs:
    - `AGENTS.md`: the dead-man's paragraph, the freeze, the sweep rows in the infrastructure and lifecycle tables, and the monitor rules in the API boundary principles;
@@ -320,7 +321,7 @@ As listed under [Removal from notifier](#removal-from-notifier). notifier#83 clo
 - [ ] The dev and production drills were both seen to fire and to recover
 - [ ] All three monitors run on co-status and notifier's copies are disabled, with no false alert during any handover
 - [ ] 7-day soak completed
-- [ ] Notifier has no monitor code, tables, timers or SDK methods; `co-broker` and `co-index` are retired from it; the two ACL rules are removed; its docs are updated
+- [ ] Notifier has no monitor code, tables, timers or SDK methods; `co-broker` and `co-index` are retired from it; the watcher backup's key is revoked; the two ACL rules are removed; its docs are updated
 - [ ] co-status's docs state [the gap](#the-gap) and link status#1
 
 ## Out of scope

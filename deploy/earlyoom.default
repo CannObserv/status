@@ -1,4 +1,4 @@
-# earlyoom settings for notifier's host (notifier#74).
+# earlyoom settings for co-status, copied from notifier's (notifier#74).
 #
 # Install to /etc/default/earlyoom; see docs/RUNBOOK.md.
 #
@@ -9,7 +9,8 @@
 # nothing was OOM-killed at all (references/troubleshooting.md row U).
 # earlyoom watches MemAvailable and acts while the host still responds.
 #
-# -m 12,6: SIGTERM at 12% available (~470 MiB), SIGKILL at 6% (~235 MiB).
+# -m 12,6: SIGTERM at 12% available (~970 MiB on this 7.9 GiB host; ~470 MiB
+# on notifier's 3.8 GiB), SIGKILL at 6% (~485 MiB; ~235 MiB there).
 # Above the 10,5 default because with no swap the reclaim that would normally
 # buy time does not exist, so the warning shot has to come earlier.
 #
@@ -23,6 +24,10 @@
 # they launch. `npm exec socrat` is the SocratiCode server; comm is truncated
 # to 15 characters, hence the start-anchored `^npm` rather than a full match.
 # Losing a session costs a session. Losing the service costs the bus.
+#
+# That holds only where sessions sit at adj 0, as on notifier's host. Here
+# they inherit -1000 from exe-init, which earlyoom skips as the kernel does,
+# so --prefer reaches nothing (#5).
 #
 # NO SPACES inside either regex. earlyoom.service is
 # `ExecStart=/usr/bin/earlyoom $EARLYOOM_ARGS`, unquoted, so systemd splits on

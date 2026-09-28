@@ -1,7 +1,8 @@
 """Drift tests for the production memory reservation (notifier#74, notifier#85, notifier#88).
 
-This host is 3.8 GiB with no swap, and it runs the live service, the dev
-endpoint, PostgreSQL and interactive agent sessions on the one kernel. The
+This host is 7.9 GiB with no swap (notifier's, where this was sized, is
+3.8 GiB), and it runs the live service, the dev endpoint, PostgreSQL and
+interactive agent sessions on the one kernel. The
 failure that motivates this is not an OOM kill — it is the *absence* of one.
 Past the ceiling the kernel fails atomic allocations in whatever asks next
 (`tailscaled`, `ksoftirqd`) and the production service is what goes down,
@@ -14,10 +15,11 @@ Three settings, none of which substitutes for another:
   pressure. It protects the *working set*, which is what a stall eats — the
   service's and its database's. Inert unless every slice above it grants it
   too (notifier#85).
-* ``OOMScoreAdjust=`` — makes the killer prefer almost anything else. On this
-  host agent sessions sit at adj 0 (only `sshd` and `exe-init` carry -1000),
-  so a negative score here is what puts production last in line. That premise
-  is exe.dev's, not ours, so it is pinned live (notifier#88).
+* ``OOMScoreAdjust=`` — makes the killer prefer almost anything else. That
+  assumes agent sessions sit at adj 0, as they do on notifier's host, so a
+  negative score here is what puts production last in line. On this host
+  sessions sit at -1000 and the premise fails (#5). It is exe.dev's, not
+  ours, so it is pinned live (notifier#88).
 * ``vm.min_free_kbytes`` — the reserve the *atomic* allocations draw on. The
   other two are per-cgroup and cannot help an allocation in `ksoftirqd`.
 
@@ -577,16 +579,26 @@ def test_no_session_ancestor_is_none(tmp_path):
 
 
 @live_host_only
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="#5: co-status sessions sit at oom_score_adj -1000",
+)
 def test_sessions_here_sit_at_adj_zero():
     """Everything above assumes the killer can reach a session, and nothing set it.
 
     ``--prefer`` in earlyoom.default, ``OOMScoreAdjust=-500`` on the
-    production units and docs/SOCRATICODE.md's "a genuinely tight install is
-    killed" all rest on sessions sitting at 0 — measured 2026-09-18 (notifier#74) and
-    again 2026-09-24 (notifier#88). That is exe.dev's setup, not this repo's, and it
-    differs by host: broker and address-validator sessions sit at -1000, which
-    earlyoom 1.7 skips outright as the kernel does. What decides it was never
+    production units and notifier's docs/SOCRATICODE.md ("a genuinely tight
+    install is killed") all rest on sessions sitting at 0 — measured on notifier's
+    host 2026-09-18 (notifier#74) and again 2026-09-24 (notifier#88). That is
+    exe.dev's setup, not this repo's, and it differs by host: broker and
+    address-validator sessions sit at -1000, which earlyoom 1.7 skips outright
+    as the kernel does. What decides it was never
     determined. If it changes here, no config drifts and no other test fails.
+
+    On co-status sessions sit at -1000 (#5), so this is an expected failure.
+    ``strict`` turns it into a failure the day sessions start at 0 again, and
+    ``raises`` confines it to the premise, not an error in the walk.
     """
     adj = session_root_adj(PROC_FS, os.getpid())
     if adj is None:
@@ -595,5 +607,6 @@ def test_sessions_here_sit_at_adj_zero():
         f"this session's root reads oom_score_adj={adj}, not 0: exe.dev changed "
         f"how it starts sessions here. At -1000 earlyoom's --prefer reaches nothing "
         f"and OOMScoreAdjust=-500 no longer puts production behind the sessions — "
-        f"launch them under `choom -n 500 --` (host-memory.md § 1) and reopen notifier#88"
+        f"launch them under `choom -n 500 --` (gregoryfoster/skills host-memory.md § 1) "
+        f"and see #5"
     )

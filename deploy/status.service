@@ -35,11 +35,12 @@ ExecStartPre=/bin/bash -c 'echo BUILD_ID=$(git rev-parse --short HEAD) > /run/st
 # hole for exactly the hand-run servers the guard targets (issue notifier#22).
 Environment=STATUS_ALLOW_PROD_DB=1
 
-# Memory reservation (notifier#74). This host is 3.8 GiB with no swap and runs the live
-# service, the dev endpoint, PostgreSQL and interactive agent sessions on one
-# kernel. The failure this prevents is not an OOM kill — it is the absence of
-# one: past the ceiling the kernel fails *atomic* allocations in whatever asks
-# next (tailscaled, ksoftirqd) and the production service is what goes down.
+# Memory reservation (notifier#74). This host is 7.9 GiB with no swap (sized
+# on notifier's 3.8 GiB) and runs the live service, the dev endpoint,
+# PostgreSQL and interactive agent sessions on one kernel. The failure this
+# prevents is not an OOM kill — it is the absence of one: past the ceiling the
+# kernel fails *atomic* allocations in whatever asks next (tailscaled,
+# ksoftirqd) and the production service is what goes down.
 #
 # MemoryLow is a soft floor, not a cap. A cap here would be the wrong tool
 # twice: it bounds the victim rather than the cause, and on a process the
@@ -48,13 +49,14 @@ Environment=STATUS_ALLOW_PROD_DB=1
 #
 # Inert on its own (notifier#85): a unit keeps at most what every slice above it
 # grants, and system.slice ships 0. deploy/system.slice.d/ is the grant; read
-# the effective value, never this one (docs/reference/memory-reservation.md).
+# the effective value, never this one (notifier's docs/reference/memory-reservation.md).
 MemoryLow=192M
 
-# Negative so the killer prefers almost anything else — on this host agent
-# sessions sit at adj 0 (only sshd and exe-init inherit -1000), so this is what
-# puts production last in line. Deliberately not -1000: unkillable turns a leak
-# here into a wedged host with no kill and no report.
+# Negative so the killer prefers almost anything else. That puts production
+# last in line only where agent sessions sit at adj 0, as on notifier's host.
+# Here they inherit -1000 from exe-init and cannot be killed, so this only
+# ranks production behind the dev units (#5). Deliberately not -1000:
+# unkillable turns a leak here into a wedged host with no kill and no report.
 OOMScoreAdjust=-500
 
 # The notifier API key (spec D13): co-status's one delivery secret, read by

@@ -1,0 +1,69 @@
+[project]
+name = "co-status"
+version = "0.1.0"
+description = "The cohort's monitoring service: dead-man's timers over consumer check-ins, alerting through notifier."
+readme = "README.md"
+requires-python = ">=3.12"
+# Runtime dependencies arrive with the step that first imports them, so every
+# commit satisfies the dependency policy (AGENTS.md § Conventions).
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.2,<5",
+    "pytest>=9.1.1,<10",
+    "pytest-asyncio>=1.4.0,<2",
+    "pytest-cov>=7.1.0,<8",
+    "ruff>=0.16.5,<0.17",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short -m 'not integration' --cov=src --cov-report=term-missing"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = [
+    "integration: marks tests that hit live external services; excluded by default (run with -m integration)",
+]
+filterwarnings = [
+    "error::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# docs/plans/ are dated snapshots of what was proposed, not maintained source;
+# reformatting their code samples rewrites the record.
+extend-exclude = [
+    "alembic/versions/",
+    "docs/plans/",
+]
+
+[tool.ruff.lint]
+# ASYNC and FAST as in notifier (CannObserv/notifier#66): every handler is
+# `async def` on one event loop, and the check-in handler calls notifier over
+# HTTP, so a blocking call stalls every concurrent check-in. ASYNC210 matches
+# blocking HTTP by *call name* only; `client.get(...)` on an instance passes.
+select = ["ASYNC", "E", "F", "FAST", "I", "W", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.coverage.run]
+source = ["src"]
+# The default trace core under-reports async function bodies (~6 points low
+# across notifier's suite, CannObserv/notifier#27). sysmon needs CPython >= 3.12
+# and coverage >= 7.10; below either it falls back silently, so CI pins both.
+core = "sysmon"
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

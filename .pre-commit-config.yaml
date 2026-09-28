@@ -1,0 +1,34 @@
+# Local hooks only. Every entry shells out to `uv run`, so the hooks use the
+# exact tool versions pinned in uv.lock — the same ruff the CI lint job, the
+# ship gate, and the review gate all use. No pinned hook revs to drift out of
+# sync, and no network needed to bootstrap a clone.
+#
+# These hooks do not run pytest. CI does (.github/workflows/ci.yml), and so
+# does the ship gate (`pre-ship.sh`, in the shipping-work-python-fastapi skill
+# rather than the repo's scripts/). A green pre-commit proves style, not
+# correctness.
+#
+# Both hooks are read-only: they report violations rather than rewriting files
+# mid-commit. Fix with `uv run ruff format .` / `uv run ruff check --fix .`.
+#
+# Install once per clone: uv run pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check .
+        language: system
+        # Both hooks are repo-wide (pass_filenames: false), so this pattern is
+        # purely a trigger. It must include pyproject.toml: a `[tool.ruff]`
+        # change invalidates the formatting of the whole tree, so that is the
+        # one commit that most needs a re-check.
+        files: '(\.pyi?$|(^|/)pyproject\.toml$)'
+        pass_filenames: false
+
+      - id: ruff-format
+        name: ruff format --check
+        entry: uv run ruff format --check .
+        language: system
+        files: '(\.pyi?$|(^|/)pyproject\.toml$)'
+        pass_filenames: false

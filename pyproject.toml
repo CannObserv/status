@@ -11,12 +11,20 @@ dependencies = [
     "asyncpg>=0.30.0,<0.32",
     "fastapi>=0.115.0,<0.137",
     "httpx>=0.28.0,<0.29",
+    "notifier-client>=0.3.1,<0.4",
     "pydantic>=2.13.4,<3",
     "python-json-logger>=4.0.0,<5",
     "python-ulid>=4.0.1,<5",
     "sqlalchemy[asyncio]>=2.0,<3",
     "uvicorn>=0.52.4,<0.53",
 ]
+
+[tool.uv.sources]
+# Pinned to a tag, never a branch (notifier docs/RELEASING.md § Adopting a
+# release). Public repo, so no credential. v0.3.1 predates notifier's monitors
+# but already has everything co-status calls: health, dispatch, preview and
+# channels.list.
+notifier-client = { git = "https://github.com/CannObserv/notifier.git", subdirectory = "clients/python", tag = "v0.3.1" }
 
 [dependency-groups]
 dev = [
@@ -26,6 +34,7 @@ dev = [
     "pytest-asyncio>=1.4.0,<2",
     "pytest-cov>=7.1.0,<8",
     "pyyaml>=6.0,<7",
+    "respx>=0.23.1,<0.24",
     "ruff>=0.16.5,<0.17",
 ]
 

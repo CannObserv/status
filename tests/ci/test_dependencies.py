@@ -83,10 +83,6 @@ IMPORT_LESS = {
             "SQLAlchemy's async driver, selected by the postgresql+asyncpg:// "
             "URL scheme rather than by import"
         ),
-        "httpx": (
-            "HTTP client for scripts/rotate_key.py --verify; nothing under src/ "
-            "imports it until alerting.py (plan step 7), which retires this entry"
-        ),
         "alembic": (
             "migration CLI; the only module that imports it is alembic/env.py, "
             "which alembic itself loads"

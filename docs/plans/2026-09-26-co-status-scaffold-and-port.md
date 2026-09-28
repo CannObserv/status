@@ -1,7 +1,7 @@
 ---
 title: co-status Phases 1–2 — scaffold the repo and port the monitors
 date: 2026-09-26
-status: draft
+status: done — Phase 1 CI run 36447672609 (e96cc5f), Phase 2 CI run 36450624269 (99339fe)
 ---
 
 # co-status Phases 1–2: scaffold and port

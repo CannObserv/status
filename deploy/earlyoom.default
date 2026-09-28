@@ -1,0 +1,32 @@
+# earlyoom settings for notifier's host (notifier#74).
+#
+# Install to /etc/default/earlyoom; see docs/RUNBOOK.md.
+#
+# Why an early killer at all. The kernel's own OOM killer is the last resort,
+# and on a host with no swap it is late: there is no slow path into pressure,
+# so by the time it acts the atomic-allocation failures in unrelated processes
+# have already landed — which is the whole failure mode, since on broker
+# nothing was OOM-killed at all (references/troubleshooting.md row U).
+# earlyoom watches MemAvailable and acts while the host still responds.
+#
+# -m 12,6: SIGTERM at 12% available (~470 MiB), SIGKILL at 6% (~235 MiB).
+# Above the 10,5 default because with no swap the reclaim that would normally
+# buy time does not exist, so the warning shot has to come earlier.
+#
+# --avoid is belt and braces over the OOMScoreAdjust=-500 the production units
+# now carry, which earlyoom already honours: `uv` is status.service's own
+# MainPID comm (uvicorn runs beneath it), and the API is useless without
+# postgres or the tailnet it binds to.
+#
+# --prefer names the measured cause rather than the victim: the agent sessions
+# (`claude`, and `MainThread` — node renames its main thread) and the servers
+# they launch. `npm exec socrat` is the SocratiCode server; comm is truncated
+# to 15 characters, hence the start-anchored `^npm` rather than a full match.
+# Losing a session costs a session. Losing the service costs the bus.
+#
+# NO SPACES inside either regex. earlyoom.service is
+# `ExecStart=/usr/bin/earlyoom $EARLYOOM_ARGS`, unquoted, so systemd splits on
+# whitespace with no shell quoting — a space would silently become a second
+# argument, earlyoom would exit on it, and the host would be left with no
+# early killer. tests/deploy/test_memory_reservation.py asserts this.
+EARLYOOM_ARGS="-r 3600 -m 12,6 --avoid ^(uv|uvicorn|postgres|tailscaled|systemd|sshd|exe-init)$ --prefer ^(MainThread|claude|npm|node|npx)"

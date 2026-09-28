@@ -1,0 +1,82 @@
+[Unit]
+Description=co-status — dead-man's timers for the cohort, alerting through notifier
+After=network.target postgresql.service tailscaled.service
+
+# The service binds this host's tailnet address alone (notifier#43 D3), so a start that
+# beats tailscaled to an address cannot bind at all. After= orders the two but
+# does not wait for the address — scripts/tailnet_bind.sh does that, and gives
+# up non-zero rather than falling back to a bind reachable from elsewhere.
+#
+# Which means every failed start now costs the full tailnet wait *before*
+# RestartSec begins. systemd's default StartLimitIntervalSec is 10s, far too
+# short to ever count restarts that far apart, so without an explicit bound a
+# genuinely broken configuration would retry forever — the same silently-dead
+# endpoint status-dev.service bounds itself against, arriving by a different
+# route. 5 tries x (60s wait + 5s) = ~325s of retries inside a 900s window:
+# long enough to ride out tailscaled and Postgres at boot, short enough that a
+# real misconfiguration gives up somewhere a human will see it.
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=exedev
+WorkingDirectory=/home/exedev/status
+
+# Create runtime dir (runs as root before User= takes effect with + prefix)
+ExecStartPre=+/bin/bash -c 'mkdir -p /run/status && chown exedev:exedev /run/status'
+
+# Write current git SHA to a runtime env file before starting
+ExecStartPre=/bin/bash -c 'echo BUILD_ID=$(git rev-parse --short HEAD) > /run/status/build-id'
+
+# The production database opt-in for src/core/db_safety.py. This MUST stay in
+# the unit and never move into an EnvironmentFile below — anything in those
+# files is inherited by every shell that sources them, which would re-open the
+# hole for exactly the hand-run servers the guard targets (issue notifier#22).
+Environment=STATUS_ALLOW_PROD_DB=1
+
+# Memory reservation (notifier#74). This host is 3.8 GiB with no swap and runs the live
+# service, the dev endpoint, PostgreSQL and interactive agent sessions on one
+# kernel. The failure this prevents is not an OOM kill — it is the absence of
+# one: past the ceiling the kernel fails *atomic* allocations in whatever asks
+# next (tailscaled, ksoftirqd) and the production service is what goes down.
+#
+# MemoryLow is a soft floor, not a cap. A cap here would be the wrong tool
+# twice: it bounds the victim rather than the cause, and on a process the
+# killer will not pick it stalls instead of killing. 192M against a measured
+# 90 MiB peak — room for the working set, not a reservation of idle pages.
+#
+# Inert on its own (notifier#85): a unit keeps at most what every slice above it
+# grants, and system.slice ships 0. deploy/system.slice.d/ is the grant; read
+# the effective value, never this one (docs/reference/memory-reservation.md).
+MemoryLow=192M
+
+# Negative so the killer prefers almost anything else — on this host agent
+# sessions sit at adj 0 (only sshd and exe-init inherit -1000), so this is what
+# puts production last in line. Deliberately not -1000: unkillable turns a leak
+# here into a wedged host with no kill and no report.
+OOMScoreAdjust=-500
+
+# The notifier API key (spec D13): co-status's one delivery secret, read by
+# src/core/alerting.py from $CREDENTIALS_DIRECTORY/notifier-key. A credential,
+# never an EnvironmentFile line: those are inherited by every process that
+# sources them and show up in /proc/<pid>/environ. A missing source file fails
+# the start, loudly, rather than serving a co-status that cannot alert.
+# tests/deploy/test_notifier_credential.py holds this.
+LoadCredential=notifier-key:/etc/status/notifier-api.key
+
+# Load BUILD_ID, then system secrets, then optional repo-local overrides
+EnvironmentFile=-/run/status/build-id
+EnvironmentFile=/etc/status/.env
+EnvironmentFile=-/home/exedev/status/.env
+
+# Never a uvicorn line here. Besides the one-spelling rule status-dev.service
+# has held since notifier#24, systemd reads every EnvironmentFile= *before* ExecStartPre
+# runs — so no ExecStartPre can resolve this host's tailnet address into the
+# environment ExecStart would see. Resolving and binding must share a process.
+ExecStart=/home/exedev/status/scripts/serve.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

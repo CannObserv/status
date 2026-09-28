@@ -1,0 +1,67 @@
+[Unit]
+Description=co-status (dev) — non-production API on port 9001
+After=network.target postgresql.service tailscaled.service
+
+# The launch script exits non-zero by design when status_dev is unreachable
+# or unmigrated (notifier#23). Without a bound that is a restart loop in the journal
+# forever; with too tight a bound, a slow Postgres at boot exhausts the tries
+# and the unit stays failed until someone runs `systemctl reset-failed` —
+# turning a transient into a silently dead endpoint, the opposite of what this
+# unit is for. After= orders startup but does not wait for the cluster to
+# accept connections, so the window has to ride that race out.
+#
+# Since notifier#43 this unit also waits on tailscaled for its bind address, which
+# scripts/tailnet_bind.sh bounds internally before failing the start.
+#
+# 5 tries x RestartSec=15 = 75s of retries. Long enough for any plausible boot
+# race; short enough that a real misconfiguration, which no amount of waiting
+# fixes, still gives up somewhere a human will see it.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=exedev
+WorkingDirectory=/home/exedev/status
+
+# Same runtime dir as the production unit, created here too because start
+# order between the two is not specified — whichever runs first makes it.
+ExecStartPre=+/bin/bash -c 'mkdir -p /run/status && chown exedev:exedev /run/status'
+
+# Report the commit being served, so a bug filed against :9001 names a SHA
+# instead of "dev". Written to its own file: the two units serve one working
+# tree but restart independently, and sharing /run/status/build-id would
+# have them racing to write it.
+ExecStartPre=/bin/bash -c 'echo BUILD_ID=$(git rev-parse --short HEAD) > /run/status/build-id-dev'
+EnvironmentFile=-/run/status/build-id-dev
+
+# Deliberately NO STATUS_ALLOW_PROD_DB here. The production opt-in belongs
+# to status.service alone. Non-production check-ins point at this endpoint;
+# the entire value of a development-marked key
+# is that it cannot reach production, and inheriting the opt-in would undo it.
+# tests/deploy/test_dev_systemd_unit.py asserts this stays absent.
+Environment=STATUS_DEV_RELOAD=0
+
+# notifier's development key, for notifier :9001 (spec D13). Its own file, not
+# the production one: notifier refuses a development key on :9000, and a
+# production key has no business reaching notifier_dev.
+LoadCredential=notifier-key:/etc/status/notifier-api-dev.key
+
+# No EnvironmentFile= line for the secret files: the script sources
+# /etc/status/.env and the repo .env itself, then overrides DATABASE_URL
+# with DEV_DATABASE_URL. Loading them here too would just re-import the
+# production DATABASE_URL one layer earlier for no gain. The build-id file
+# above is the exception and holds nothing but BUILD_ID.
+#
+# ExecStart is the guarded script, never a hand-rolled uvicorn line. The
+# script unsets the production opt-in, swaps in DEV_DATABASE_URL, delegates
+# the URL check to src.core.db_safety, and refuses an unmigrated database.
+# A second uvicorn spelling here would be a second code path that can drift
+# out from under all four checks (issues notifier#22, notifier#23, notifier#24).
+ExecStart=/home/exedev/status/scripts/dev_server.sh
+
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

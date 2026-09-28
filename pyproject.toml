@@ -6,7 +6,13 @@ readme = "README.md"
 requires-python = ">=3.12"
 # Runtime dependencies arrive with the step that first imports them, so every
 # commit satisfies the dependency policy (AGENTS.md § Conventions).
-dependencies = []
+dependencies = [
+    "alembic>=1.15.0,<2",
+    "asyncpg>=0.30.0,<0.32",
+    "python-json-logger>=4.0.0,<5",
+    "python-ulid>=4.0.1,<5",
+    "sqlalchemy[asyncio]>=2.0,<3",
+]
 
 [dependency-groups]
 dev = [

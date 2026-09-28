@@ -58,7 +58,7 @@ uv run pre-commit install                     # once per clone
 #<number> [type]: <description>      # with issue (this repo's numbers)
 [type]: <description>                # without issue
 ```
-Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `CannObserv/notifier#N`.
+Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `notifier#N` in code and docs (`CannObserv/notifier#N` in GitHub text, where it links).
 
 **Date & time:** all UTC. ISO 8601: `YYYY-MM-DDTHH:MM:SS.ffffffZ` (timestamps), `YYYY-MM-DD` (dates).
 

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from ulid import ULID
 
+from src.api import deps
 from src.api.deps import require_api_key
 from src.core.api_keys import mint, revoke
 from tests.api.conftest import PROBE_PATH
@@ -60,3 +61,15 @@ async def test_a_revoked_key_stops_authenticating(probe_client, db_session, tena
 
     response = await probe_client.get(PROBE_PATH, headers={"X-API-Key": raw})
     assert response.status_code == 401
+
+
+def test_the_alerter_is_built_once_per_process(monkeypatch):
+    """One NotifierClient, one connection pool, however many requests."""
+    built = []
+    monkeypatch.setattr(deps, "_alerter", None)
+    monkeypatch.setattr(deps, "_alerter_built", False)
+    monkeypatch.setattr(deps, "alerter_from_environment", lambda: built.append(1) or None)
+
+    assert deps.get_alerter() is None
+    assert deps.get_alerter() is None
+    assert built == [1]

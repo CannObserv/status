@@ -24,6 +24,7 @@ import httpx
 from notifier_client import NotifierClient, NotifierError, RateLimited, ServerError
 from notifier_client.types import DispatchOut
 
+from src.core.db_safety import database_name, environment_label
 from src.core.logging import get_logger
 from src.core.models.monitor import Monitor
 from src.core.monitors import _as_utc, deadline_for
@@ -153,6 +154,25 @@ async def within_budget[T](awaitable: Awaitable[T], *, budget: float = REQUEST_B
             return await awaitable
     except TimeoutError as exc:
         raise BudgetExceeded(f"notifier did not answer within {budget}s") from exc
+
+
+class Budget:
+    """A deadline shared by every notifier call one check-in makes.
+
+    ``within_budget`` bounds one call; a check-in can make up to four
+    (endpoint check, preview, recovery, report), and it is their *sum* that
+    has to land inside the consumer's timeout.
+    """
+
+    def __init__(self, seconds: float = REQUEST_BUDGET_SECONDS) -> None:
+        self._deadline = asyncio.get_running_loop().time() + seconds
+
+    def remaining(self) -> float:
+        return max(self._deadline - asyncio.get_running_loop().time(), 0.0)
+
+    async def run[T](self, awaitable: Awaitable[T]) -> T:
+        """Await *awaitable* within what is left of the budget."""
+        return await within_budget(awaitable, budget=self.remaining())
 
 
 def _unknown_channel_ids(error: NotifierError) -> list[str]:
@@ -290,3 +310,29 @@ class _UnknownChannels(Exception):
     def __init__(self, ids: list[str]) -> None:
         super().__init__(ids)
         self.ids = ids
+
+
+def alerter_from_environment(environ: Mapping[str, str] = os.environ) -> Alerter | None:
+    """The alerter this process should use, or ``None`` if it cannot alert.
+
+    The environment is read from ``DATABASE_URL`` the way ``/health`` reads
+    it, so co-status's notion of which notifier to call cannot disagree with
+    what it reports about itself. Without a key there is nothing to send
+    with: logged as an error, and every check-in is still recorded.
+    """
+    try:
+        environment = environment_label(database_name(environ.get("DATABASE_URL", "")))
+    except ValueError:
+        environment = "production"
+    key = read_notifier_key(environ)
+    if not key:
+        logger.error(
+            "no notifier key under $CREDENTIALS_DIRECTORY; this process will record "
+            "check-ins but send no alerts",
+            extra={"environment": environment},
+        )
+        return None
+    return Alerter(
+        NotifierClient(base_url=NOTIFIER_URLS[environment], api_key=key),
+        environment=environment,
+    )

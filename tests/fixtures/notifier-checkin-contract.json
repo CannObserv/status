@@ -1,0 +1,252 @@
+{
+  "_source": "CannObserv/notifier@2c02dbf \u2014 scripts/dump_openapi.py; regenerate only on a deliberate contract change (spec D6)",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "monitor_id",
+      "required": true,
+      "schema": {
+        "pattern": "^[0123456789ABCDEFGHJKMNPQRSTVWXYZabcdefghjkmnpqrstvwxyz]{26}$",
+        "title": "Monitor Id",
+        "type": "string"
+      }
+    }
+  ],
+  "path": "/api/v1/monitors/{monitor_id}/checkin",
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/CheckinRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "response_202": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/CheckinResponse"
+        }
+      }
+    },
+    "description": "Successful Response"
+  },
+  "schemas": {
+    "CheckinRequest": {
+      "description": "Request body for POST /monitors/{id}/checkin.\n\nSend one **every tick, regardless of findings** \u2014 the arrival is the\nsignal. ``status`` is the consumer's own judgement about the contents:\n``alert`` renders and dispatches the monitor's template, ``ok`` records\nthe check-in and sends nothing.",
+      "properties": {
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "status": {
+          "default": "ok",
+          "enum": [
+            "ok",
+            "alert"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "variables": {
+          "additionalProperties": true,
+          "title": "Variables",
+          "type": "object"
+        }
+      },
+      "title": "CheckinRequest",
+      "type": "object"
+    },
+    "CheckinResponse": {
+      "description": "Response body for POST /monitors/{id}/checkin.",
+      "properties": {
+        "dispatches": {
+          "items": {
+            "$ref": "#/components/schemas/DispatchOut"
+          },
+          "title": "Dispatches",
+          "type": "array"
+        },
+        "last_checkin_at": {
+          "format": "date-time",
+          "title": "Last Checkin At",
+          "type": "string"
+        },
+        "monitor_id": {
+          "title": "Monitor Id",
+          "type": "string"
+        },
+        "next_deadline_at": {
+          "format": "date-time",
+          "title": "Next Deadline At",
+          "type": "string"
+        },
+        "previous_state": {
+          "enum": [
+            "pending",
+            "ok",
+            "missing"
+          ],
+          "title": "Previous State",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "ok",
+            "missing"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "monitor_id",
+        "previous_state",
+        "state",
+        "last_checkin_at",
+        "next_deadline_at",
+        "dispatches"
+      ],
+      "title": "CheckinResponse",
+      "type": "object"
+    },
+    "DispatchAttemptOut": {
+      "description": "Response body fragment representing one channel attempt.",
+      "properties": {
+        "attempt": {
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "channel_id": {
+          "title": "Channel Id",
+          "type": "string"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Finished At"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "channel_id",
+        "status",
+        "reason",
+        "attempt",
+        "started_at"
+      ],
+      "title": "DispatchAttemptOut",
+      "type": "object"
+    },
+    "DispatchOut": {
+      "description": "Response body for POST /dispatch and GET /dispatch/{id}.",
+      "properties": {
+        "attempts": {
+          "items": {
+            "$ref": "#/components/schemas/DispatchAttemptOut"
+          },
+          "title": "Attempts",
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Idempotency Key"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "rendered_body": {
+          "title": "Rendered Body",
+          "type": "string"
+        },
+        "rendered_title": {
+          "title": "Rendered Title",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "partial",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "template_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Template Id"
+        },
+        "tenant_id": {
+          "title": "Tenant Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "tenant_id",
+        "template_id",
+        "idempotency_key",
+        "rendered_title",
+        "rendered_body",
+        "status",
+        "metadata",
+        "created_at",
+        "attempts"
+      ],
+      "title": "DispatchOut",
+      "type": "object"
+    }
+  }
+}

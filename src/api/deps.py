@@ -1,4 +1,4 @@
-"""FastAPI dependencies — database session and API-key authentication."""
+"""FastAPI dependencies — database session, API-key authentication, the alerter."""
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -8,6 +8,7 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.alerting import Alerter, alerter_from_environment
 from src.core.api_keys import hash_key
 from src.core.database import get_session_factory
 from src.core.db_safety import serving_production
@@ -18,6 +19,23 @@ async def get_db_session() -> AsyncGenerator[AsyncSession]:
     """Yield an async database session."""
     async with get_session_factory()() as session:
         yield session
+
+
+_alerter: Alerter | None = None
+_alerter_built = False
+
+
+def get_alerter() -> Alerter | None:
+    """The process's one :class:`~src.core.alerting.Alerter`, built on first use.
+
+    ``None`` when the unit has no notifier key; the routes then record every
+    check-in and send nothing.
+    """
+    global _alerter, _alerter_built
+    if not _alerter_built:
+        _alerter = alerter_from_environment()
+        _alerter_built = True
+    return _alerter
 
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)

@@ -20,11 +20,13 @@ from src.core.alerting import (
     Alerter,
     AlertNotAccepted,
     AlertRejected,
+    Budget,
     BudgetExceeded,
     EndpointMismatch,
     NoDeliverableChannel,
     NotifierUnavailable,
     TemplateRejected,
+    alerter_from_environment,
     missing_key,
     read_notifier_key,
     recovery_key,
@@ -387,3 +389,54 @@ class TestWithinBudget:
         """broker and watcher give a check-in 10 seconds; co-status must answer
         inside that or the consumer retries and a report is sent twice."""
         assert REQUEST_BUDGET_SECONDS < 10
+
+
+class TestBudget:
+    """One deadline shared by every notifier call a single check-in makes."""
+
+    async def test_calls_share_one_deadline(self):
+        budget = Budget(0.2)
+
+        async def nap():
+            await asyncio.sleep(0.15)
+
+        await budget.run(nap())
+        with pytest.raises(BudgetExceeded):
+            await budget.run(nap())
+
+    async def test_a_spent_budget_refuses_without_waiting(self):
+        budget = Budget(0)
+
+        async def never_awaited_long():
+            await asyncio.sleep(5)
+
+        with pytest.raises(BudgetExceeded):
+            await budget.run(never_awaited_long())
+
+
+class TestAlerterFromEnvironment:
+    def _environ(self, tmp_path, database: str, key: str | None = "nk_secret") -> dict:
+        if key is not None:
+            (tmp_path / CREDENTIAL_NAME).write_text(key)
+        return {
+            "DATABASE_URL": f"postgresql+asyncpg://u@h/{database}",
+            "CREDENTIALS_DIRECTORY": str(tmp_path),
+        }
+
+    @pytest.mark.parametrize(
+        ("database", "environment"), [("status", "production"), ("status_dev", "development")]
+    )
+    def test_the_database_decides_which_notifier(self, tmp_path, database, environment):
+        alerter = alerter_from_environment(self._environ(tmp_path, database))
+        assert alerter is not None
+        assert alerter.environment == environment
+
+    def test_no_key_is_no_alerter_and_says_so(self, tmp_path, caplog):
+        assert alerter_from_environment(self._environ(tmp_path, "status", key=None)) is None
+        assert any("no notifier key" in r.getMessage() for r in caplog.records)
+
+    def test_an_unreadable_url_is_treated_as_production(self, tmp_path):
+        """Fails safe, the same way round as serving_production()."""
+        environ = self._environ(tmp_path, "status")
+        environ["DATABASE_URL"] = "nonsense"
+        assert alerter_from_environment(environ).environment == "production"

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, FastAPI
 
 from src.api.deps import require_api_key
 from src.api.routes.health import router as health_router
+from src.api.routes.monitors import router as monitors_router
 from src.api.schemas.errors import AuthErrorDetail
 from src.core.logging import configure_audit_logging, configure_logging, get_logger
 
@@ -41,6 +42,7 @@ v1_router = APIRouter(
     dependencies=[Depends(require_api_key)],
     responses=AUTH_RESPONSES,
 )
+v1_router.include_router(monitors_router)
 
 app.include_router(v1_router)
 app.include_router(health_router)

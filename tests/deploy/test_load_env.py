@@ -17,6 +17,8 @@ LOADER = REPO_ROOT / "scripts" / "load_env.sh"
 DOCS = [
     "AGENTS.md",
     "README.md",
+    "docs/RUNBOOK.md",
+    "docs/reference/monitors.md",
     # Not prose, and the most-read copy of the recipe there is: it is the
     # error message a developer meets at the moment they need it. It carried
     # the unguarded form until b24f4a0 while this list watched five files

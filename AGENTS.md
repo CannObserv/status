@@ -20,7 +20,22 @@ TDD required. Red → Green → Refactor. No production code without a failing t
 
 Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 
-`pre-commit` runs ruff only, never pytest. A clean commit hook says nothing about correctness — only CI does.
+`pre-commit` runs ruff only, never pytest. A clean commit hook says nothing about correctness — only CI does (`.github/workflows/ci.yml`: `lint`, `test`, `migrations`). CI pins CPython 3.12 and installs with `uv sync --locked`, because `core = "sysmon"` coverage needs both; `tests/ci/` asserts it.
+
+## Project Layout
+
+`src/api/` is transport (routes, schemas, auth deps); `src/core/` is domain. Core never imports api.
+
+| Module | Role |
+|---|---|
+| `src/core/monitors.py` | Pure: deadlines, `should_alert` (incl. the owed-alert rule), built-in wording as `Notice` |
+| `src/core/alerting.py` | **The only module that talks to notifier.** Endpoint check, idempotency keys, `send()`, request `Budget` |
+| `src/core/sweep.py` | The pass that marks missing monitors and sends/owes their alerts |
+| `src/core/importer.py` | One monitor in from notifier's export, disabled |
+| `src/api/routes/monitors.py` | CRUD and the check-in |
+| `tests/fixtures/notifier-checkin-contract.json` | notifier's check-in contract, compared by `tests/api/test_contract.py` |
+
+Tests reach notifier through the real `notifier-client` intercepted by `respx` — the `notifier` and `alerter` fixtures in `tests/conftest.py`.
 
 ## Infrastructure
 
@@ -34,6 +49,14 @@ Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 | Public status pages | **8000 — reserved; nothing binds it in the MVP** | — |
 
 **Until then, development happens on `notifier.exe.xyz`.** `status_test` lives on notifier's Postgres cluster, owned by role `status`, which has no access to notifier's databases. Dropped once co-status runs its own Postgres.
+
+**Which notifier is derived, never configured:** production → `http://notifier:9000`, development → `http://notifier:9001`, from co-status's own database name.
+
+**The notifier API key is a systemd credential**, never an env var (D13): `LoadCredential=notifier-key:/etc/status/notifier-api{,-dev}.key` on the API and sweep units. Without it the API records check-ins and sends nothing; the sweep refuses to start.
+
+**The sweeps are the only thing watching for consumer silence, and nothing watches them yet** (#1): `systemctl list-timers 'status-sweep*'` is the check.
+
+Setup, routine ops and the cutover: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Environment Variables
 
@@ -55,6 +78,10 @@ uv run ruff check . && uv run ruff format --check .
 uv run pre-commit run --all-files
 uv run pre-commit install                     # once per clone
 ```
+
+## Server Lifecycle
+
+**Never hand-run uvicorn.** `scripts/serve.sh` (production unit) and `scripts/dev_server.sh` (dev unit, or by hand after `sudo systemctl stop status-dev`) are the only launchers; `src/core/db_safety.py` refuses a database not ending `_test`/`_dev` unless the unit opts in with `STATUS_ALLOW_PROD_DB=1`.
 
 ## Conventions
 
@@ -81,3 +108,10 @@ Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `noti
 - **`variables` is opaque.** Stored and forwarded, never read. `status` is the consumer's own judgement.
 - **Never deliver directly.** Alerts go through notifier's `/dispatch`; a new delivery path here is a design change, not a fix.
 - **Nothing public on 9000/9001; nothing private on 8000.**
+- **A check-in is always recorded and answered.** Nothing notifier does or fails to do may cost a consumer its heartbeat.
+
+## Detail Docs
+
+- [docs/reference/monitors.md](docs/reference/monitors.md) — the dead-man's timer: model, API, what gets sent, the owed alert, the gap
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — first-time setup (Phase 3), routine ops, moving a monitor from notifier
+- [docs/plans/](docs/plans/) — the MVP spec and the Phases 1–2 plan

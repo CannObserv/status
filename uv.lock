@@ -122,6 +122,7 @@ dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "python-json-logger" },
     { name = "python-ulid" },
@@ -131,11 +132,12 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
+    { name = "packaging" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -144,6 +146,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.15.0,<2" },
     { name = "asyncpg", specifier = ">=0.30.0,<0.32" },
     { name = "fastapi", specifier = ">=0.115.0,<0.137" },
+    { name = "httpx", specifier = ">=0.28.0,<0.29" },
     { name = "pydantic", specifier = ">=2.13.4,<3" },
     { name = "python-json-logger", specifier = ">=4.0.0,<5" },
     { name = "python-ulid", specifier = ">=4.0.1,<5" },
@@ -153,11 +156,12 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28.0,<0.29" },
+    { name = "packaging", specifier = ">=26.3,<27" },
     { name = "pre-commit", specifier = ">=4.6.2,<5" },
     { name = "pytest", specifier = ">=9.1.1,<10" },
     { name = "pytest-asyncio", specifier = ">=1.4.0,<2" },
     { name = "pytest-cov", specifier = ">=7.1.0,<8" },
+    { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "ruff", specifier = ">=0.16.5,<0.17" },
 ]
 

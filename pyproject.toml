@@ -10,6 +10,7 @@ dependencies = [
     "alembic>=1.15.0,<2",
     "asyncpg>=0.30.0,<0.32",
     "fastapi>=0.115.0,<0.137",
+    "httpx>=0.28.0,<0.29",
     "pydantic>=2.13.4,<3",
     "python-json-logger>=4.0.0,<5",
     "python-ulid>=4.0.1,<5",
@@ -19,11 +20,12 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.0,<0.29",
+    "packaging>=26.3,<27",
     "pre-commit>=4.6.2,<5",
     "pytest>=9.1.1,<10",
     "pytest-asyncio>=1.4.0,<2",
     "pytest-cov>=7.1.0,<8",
+    "pyyaml>=6.0,<7",
     "ruff>=0.16.5,<0.17",
 ]
 

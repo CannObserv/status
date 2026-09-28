@@ -1,0 +1,31 @@
+# Proposes the bumps the 0.x cap policy makes invisible to `uv lock` (notifier#33).
+# Every cap sits one minor below a wall by design (notifier#30): crossing it takes a
+# reviewed diff, and this file is what produces that diff instead of a memory.
+# Each PR is gated by ci.yml — `uv sync --locked` proves the lock resolves,
+# the suite proves nothing broke, tests/ci/test_dependencies.py proves the
+# rewritten specifier still obeys the policy — and this file is itself
+# guarded by tests/ci/test_dependabot.py, because a mistyped config stops
+# producing PRs without erroring anywhere a person looks.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directories:
+      - "/"
+    schedule:
+      interval: "weekly"
+    # Touch a specifier only when the new release falls outside it. Floors in
+    # these tables mean "oldest supported" and must not ratchet on every bump;
+    # the default `auto` can resolve to `widen`, which is unsupported for uv
+    # (dependabot-core#15290).
+    versioning-strategy: increase-if-necessary
+    groups:
+      # Dev tooling carries most of the churn (ruff alone ships minors
+      # roughly monthly); one grouped PR per directory keeps the bot
+      # readable. Runtime dependencies stay individual PRs — a fastapi or
+      # sqlalchemy bump deserves its own review.
+      dev-tools:
+        dependency-type: "development"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

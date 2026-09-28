@@ -83,6 +83,14 @@ uv run pre-commit install                     # once per clone
 
 **Never hand-run uvicorn.** `scripts/serve.sh` (production unit) and `scripts/dev_server.sh` (dev unit, or by hand after `sudo systemctl stop status-dev`) are the only launchers; `src/core/db_safety.py` refuses a database not ending `_test`/`_dev` unless the unit opts in with `STATUS_ALLOW_PROD_DB=1`.
 
+## Agent Skills
+
+Vendored from `gregoryfoster/skills` as a submodule at `skills-vendor/gregoryfoster-skills/` (read-only; change upstream). Each is a symlink in `skills/` (agentskills.io), re-linked from `.claude/skills/` (Claude Code); a committed directory in `skills/` overrides the vendored copy in both. None overridden yet. Procedure: the `managing-skills` skill.
+
+`curating-context`, `enforcing-architecture`, `init-socraticode`, `managing-skills`, `orchestrating-issue-backlog`, `reviewing-architecture`, `reviewing-code-python-fastapi`, `shipping-work-python-fastapi`, `using-git-worktrees`, `using-mayfly-chat`, `writing-plans`.
+
+Dangling symlinks (fresh clone, new worktree): `bash .skills/doctor.sh`.
+
 ## Conventions
 
 **Commit messages:**

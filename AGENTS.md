@@ -37,13 +37,18 @@ Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 
 ## Environment Variables
 
-`.env` (repo root, git-ignored): `TEST_DATABASE_URL`. Never commit it.
+Two env files, loaded in order by `scripts/load_env.sh` (later values override):
+
+1. **`/etc/status/.env`** — production secrets (`DATABASE_URL`); on the co-status VM only.
+2. **`.env`** (repo root, git-ignored) — `TEST_DATABASE_URL`, `DEV_DATABASE_URL`. Never commit it.
+
+Source them with `. scripts/load_env.sh`; never word-split through `xargs`.
 
 ## Common Commands
 
 ```bash
 uv sync
-set -a; . ./.env; set +a
+. scripts/load_env.sh
 uv run pytest
 uv run pytest --no-cov tests/path/test_x.py   # a subset; skips the coverage gate
 uv run ruff check . && uv run ruff format --check .

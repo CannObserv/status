@@ -27,7 +27,7 @@ from src.core.models import ApiKey, Base, Tenant
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 if not TEST_DATABASE_URL:
     raise RuntimeError(
-        "TEST_DATABASE_URL environment variable is not set. Load env:  set -a; . ./.env; set +a"
+        "TEST_DATABASE_URL environment variable is not set. Load env:  . scripts/load_env.sh"
     )
 
 # Pin DATABASE_URL at the test database for the whole session, before any

@@ -32,8 +32,9 @@ Byte-for-byte notifier's check-in (spec D6), so a consumer moves by base URL and
 curl -s "http://status:9000/health"
 # {"status":"ok","build":"…","database":"status","environment":"production"}
 
-curl -sX POST "http://status:9000/api/v1/monitors/$ID/checkin" \
-  -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{
+# The key on stdin, never in curl's argv, where `ps` shows it.
+printf 'X-API-Key: %s\n' "$KEY" | curl -sX POST "http://status:9000/api/v1/monitors/$ID/checkin" \
+  -H @- -H 'Content-Type: application/json' -d '{
     "status": "ok",
     "variables": {"source": "co-broker", "finding_count": 0, "findings": []}
   }'

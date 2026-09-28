@@ -115,14 +115,29 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 ## Cutover: moving one monitor from notifier
 
-Order: `co-index`, then `co-watcher-backup`, then `co-broker` (after CannObserv/broker#66). Notifier keeps watching until step 5, so there is no moment with nothing watching (spec § Cutover).
+**Run 2026-09-28 (Phase 5)** for all three, in this order. Notifier keeps watching until step 5, so there is no moment with nothing watching (spec § Cutover).
+
+| Monitor | First check-in on co-status | co-status enabled | notifier disabled | Record |
+|---|---|---|---|---|
+| `co-index` | 17:22:17 | 17:22:29 | 17:22:30 | #2 |
+| `co-broker` | 18:21:06 | 18:26:40 | 18:26:52 | CannObserv/broker#66 |
+| `co-watcher-backup` | 18:28:51 | 18:31:18 | by 18:34 | CannObserv/watcher#330 |
+
+**Keys never go on a command line.** `curl -H "X-API-Key: $KEY"` puts the key in curl's argv, where `ps` shows it. Every call below passes it on stdin: `printf 'X-API-Key: %s\n' "$KEY" | curl -H @- …` (`printf` is a shell builtin).
 
 ### 1. Prepare
 
 ```bash
-# co-status (this host): the consumer's tenant and key.
+# co-status (this host): the consumer's tenant and key. The key waits
+# root-only in /etc/status/pending/ until the consumer has it (step 3);
+# the other three lines are the ids to record.
 . scripts/load_env.sh
-STATUS_ALLOW_PROD_DB=1 uv run python scripts/seed_tenant.py co-broker co-broker production
+out=$(STATUS_ALLOW_PROD_DB=1 uv run python scripts/seed_tenant.py co-broker co-broker-checkin production)
+grep -v '^raw_key=' <<< "$out"
+sudo install -d -m 700 /etc/status/pending
+sudo install -m 400 -o root -g root /dev/null /etc/status/pending/co-broker.key
+sed -n 's/^raw_key=//p' <<< "$out" | sudo tee /etc/status/pending/co-broker.key >/dev/null
+unset out
 
 # notifier (notifier.exe.xyz): copy the monitor's channels into notifier's
 # `co-status` tenant. Keep the source_channel_id / channel_id pairs it prints.
@@ -149,6 +164,8 @@ SELECT row_to_json(r) FROM (
 SQL
 ```
 
+Shred the export on both hosts once step 2 is done.
+
 ### 2. Import it, disabled
 
 ```bash
@@ -165,30 +182,63 @@ STATUS_ALLOW_PROD_DB=1 uv run python scripts/import_monitors.py \
 
 Base URL `http://status:9000`, and the key minted in step 1. Nothing else changes: same path, body, and monitor id (spec D6).
 
-- **co-index**: notifier's `deploy/index/index-checkin.sh`, redeployed to co-index.
-- **co-watcher**: `/etc/watcher/backup.env` and the unit's `notifier-key` credential file on the watcher VM.
-- **co-broker**: CannObserv/broker#66.
+**The key crosses terminal to terminal.** The consumer's operator reads it in the co-status browser terminal (https://co-status.xterm.exe.xyz) with `sudo cat /etc/status/pending/<tenant>.key` and writes it into the consumer's credential file, root-only. It goes into no issue, chat or shell history.
+
+**The consumer keeps its old notifier key**, root-only, renamed aside. Step 5 needs it, and until Phase 7 it is the only credential that can pause notifier's copy.
+
+- **co-index**: notifier's `deploy/index/index-checkin.sh`, redeployed to co-index. Old env file: `notifier.env.pre-status-83`.
+- **co-watcher**: `/etc/watcher/backup.env` and the unit's `notifier-key` credential file on the watcher VM. Old key: `/etc/watcher/backup-notifier.key.pre-status`.
+- **co-broker**: CannObserv/broker#66 (`8a00f56`), key in `/etc/broker/status.env`. Old env file: `/etc/broker/notifier.env.pre-status-66`.
+
+A manual run on the consumer lands the first check-in at a chosen time instead of the next tick.
 
 ### 4. Confirm
 
 ```bash
-curl -s -H "X-API-Key: $KEY" "http://status:9000/api/v1/monitors/<id>" | jq .last_checkin_at
+sudo cat /etc/status/pending/<tenant>.key | { read -r KEY
+  printf 'X-API-Key: %s\n' "$KEY" | curl -s -H @- "http://status:9000/api/v1/monitors/<id>"; } \
+  | jq .last_checkin_at
 ```
 
 Later than the import. If it never moves, the switch is broken and notifier's copy will say so — the right alarm.
 
 ### 5. Hand over
 
-Within notifier's window since its last check-in (30 minutes for broker and index, 26 hours for watcher):
+Within notifier's window since its last check-in there (interval + grace: 30 minutes for broker and index, 26 hours for watcher). A miss is noisy, not silent: notifier's copy alerts once. Disable it anyway and carry on.
 
 ```bash
-# co-status: enable (writes `resumed`)
-curl -s -X PATCH -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
-  -d '{"enabled": true}' "http://status:9000/api/v1/monitors/<id>"
+# co-status (this host): enable (writes `resumed`), then shred the pending key.
+sudo cat /etc/status/pending/<tenant>.key | { read -r KEY
+  printf 'X-API-Key: %s\n' "$KEY" | curl -s -X PATCH -H @- -H 'Content-Type: application/json' \
+    -d '{"enabled": true}' "http://status:9000/api/v1/monitors/<id>"; } | jq .enabled
+sudo shred -u /etc/status/pending/<tenant>.key
+```
 
-# notifier: disable its copy, with the consumer's old notifier key
-curl -s -X PATCH -H "X-API-Key: $OLD_NOTIFIER_KEY" -H 'Content-Type: application/json' \
+```bash
+# The consumer's host: disable notifier's copy with the old notifier key, so
+# that key never leaves the host it lives on.
+printf 'X-API-Key: %s\n' "$OLD_NOTIFIER_KEY" | curl -s -X PATCH -H @- \
+  -H 'Content-Type: application/json' \
   -d '{"enabled": false}' "http://notifier:9000/api/v1/monitors/<id>"
 ```
 
+Then the consumer's next **scheduled** run must land on co-status by itself, and the next sweep's `checked` must count the monitor. The monitor's soak clock starts at the handover, not at the first check-in.
+
 notifier's disabled row stays for 7 days as the fallback. Rolling back before step 5 is reverting the consumer.
+
+## After the cutover
+
+**The soak** (Phase 6) ends 7 days after the last handover: no earlier than 2026-10-05 18:31 UTC. Nothing watches this host (#1), so check it daily until then:
+
+```bash
+systemctl list-timers 'status-sweep*'
+journalctl -u status-sweep -n 1 -o cat | jq -c '{checked, alerted, owed, undeliverable}'   # checked: 3
+```
+
+**What Phase 7 (removal from notifier) must know**, per consumer. The notifier side is notifier's work (spec § Removal from notifier); these are the leftovers the cutover created.
+
+| Consumer | In notifier | Tailnet | On the consumer, afterwards |
+|---|---|---|---|
+| `co-index` | retire the `co-index` tenant (`delete_tenant.py`) | per spec § Removal | delete `notifier.env.pre-status-83` |
+| `co-broker` | retire the `co-broker` tenant (`delete_tenant.py`) | remove `tag:broker` → `tag:notifier:9000` | delete `/etc/broker/notifier.env.pre-status-66` |
+| `co-watcher-backup` | **keep the `watcher` tenant and its channels**: `watcher.service` dispatches through them. Revoke only the backup's own key, the tenant's second production key (notifier#62) | **keep** `tag:watcher` → `tag:notifier:9000` | delete `/etc/watcher/backup-notifier.key.pre-status` |

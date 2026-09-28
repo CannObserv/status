@@ -6,7 +6,7 @@ status: done — Phase 1 CI run 36447672609 (e96cc5f), Phase 2 CI run 3645062426
 
 # co-status Phases 1–2: scaffold and port
 
-Spec: [`2026-09-26-co-status-mvp-design.md`](2026-09-26-co-status-mvp-design.md). Decision numbers (D1–D15) and section names below refer to it.
+Spec: [`2026-09-26-co-status-mvp-design.md`](../specs/2026-09-26-co-status-mvp-design.md). Decision numbers (D1–D15) and section names below refer to it.
 
 ## Problem
 

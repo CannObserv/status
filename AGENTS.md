@@ -10,7 +10,7 @@ co-status **originates** alerts and **delivers none itself**. Every alert goes t
 
 Long-term home for cohort monitoring: public status pages, an admin UI and active probes are expected, each with its own spec. Until then they are constraints only (see the spec, § Decisions D2, D7).
 
-Spec: [docs/plans/2026-09-26-co-status-mvp-design.md](docs/plans/2026-09-26-co-status-mvp-design.md). Current plan: [docs/plans/2026-09-26-co-status-scaffold-and-port.md](docs/plans/2026-09-26-co-status-scaffold-and-port.md).
+Spec: [docs/specs/2026-09-26-co-status-mvp-design.md](docs/specs/2026-09-26-co-status-mvp-design.md). Current plan: [docs/plans/2026-09-26-co-status-scaffold-and-port.md](docs/plans/2026-09-26-co-status-scaffold-and-port.md).
 
 ## Development Methodology
 
@@ -90,7 +90,7 @@ Vendored as submodules under `skills-vendor/` (read-only; change upstream). Each
 - **`gregoryfoster/skills`** (`skills-vendor/gregoryfoster-skills/`): `curating-context`, `enforcing-architecture`, `init-socraticode`, `managing-skills`, `orchestrating-issue-backlog`, `reviewing-architecture`, `reviewing-code-python-fastapi`, `shipping-work-python-fastapi`, `using-git-worktrees`, `using-mayfly-chat`, `writing-plans`.
 - **`obra/superpowers`** (`skills-vendor/obra-superpowers/`): `brainstorming`, `dispatching-parallel-agents`, `subagent-driven-development`, `systematic-debugging`, `test-driven-development`, `verification-before-completion`, `writing-skills`. Its `writing-plans` and `using-git-worktrees` are not linked; gregoryfoster's hold those names.
 
-**Specs and plans live in `docs/plans/`**, never `docs/superpowers/` or `docs/specs/`: a spec is `YYYY-MM-DD-<topic>-design.md`, its plan `YYYY-MM-DD-<topic>.md`. This is the stated preference `brainstorming` defers to, which is why it is not overridden.
+**Specs in `docs/specs/`, plans in `docs/plans/`**, never `docs/superpowers/`. A spec (`YYYY-MM-DD-<topic>-design.md`, from `brainstorming`) is the design: what, why, the decisions. A plan (`YYYY-MM-DD-<topic>.md`, from `writing-plans`) is how one piece of a spec gets built: phases, steps, tests; it links its spec. This is the stated preference `brainstorming` defers to, which is why it is not overridden.
 
 Dangling symlinks (fresh clone, new worktree): `bash .skills/doctor.sh`.
 
@@ -125,4 +125,5 @@ Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `noti
 
 - [docs/reference/monitors.md](docs/reference/monitors.md) — the dead-man's timer: model, API, what gets sent, the owed alert, the gap
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) — first-time setup (Phase 3), routine ops, moving a monitor from notifier
-- [docs/plans/](docs/plans/) — the MVP spec and the Phases 1–2 plan
+- [docs/specs/](docs/specs/) — the MVP spec
+- [docs/plans/](docs/plans/) — the Phases 1–2 plan

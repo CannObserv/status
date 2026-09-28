@@ -54,12 +54,13 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-# docs/plans/ are dated snapshots of what was proposed, not maintained source;
+# docs/specs/ and docs/plans/ are dated records of what was proposed, not maintained source;
 # reformatting their code samples rewrites the record.
 extend-exclude = [
     "alembic/versions/",
     "docs/plans/",
-    # Vendored skills (gregoryfoster/skills): upstream's code, linted upstream.
+    "docs/specs/",
+    # Vendored skills: upstream's code, linted upstream.
     "skills-vendor/",
 ]
 

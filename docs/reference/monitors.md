@@ -1,6 +1,6 @@
 # Monitors — the dead-man's timer
 
-How co-status alerts on the **absence** of a report, not only on its contents. Taken over from notifier (CannObserv/notifier#56, #83) with the contract unchanged; what changed is where alerts go. Design: [the MVP spec](../plans/2026-09-26-co-status-mvp-design.md).
+How co-status alerts on the **absence** of a report, not only on its contents. Taken over from notifier (CannObserv/notifier#56, #83) with the contract unchanged; what changed is where alerts go. Design: [the MVP spec](../specs/2026-09-26-co-status-mvp-design.md).
 
 ## Why absence
 

@@ -1,6 +1,6 @@
 # co-status runbook
 
-Setting up the co-status VM, running it, and moving monitors over from notifier. Design and reasons: [the MVP spec](plans/2026-09-26-co-status-mvp-design.md). Tracking: [#2](https://github.com/CannObserv/status/issues/2).
+Setting up the co-status VM, running it, and moving monitors over from notifier. Design and reasons: [the MVP spec](specs/2026-09-26-co-status-mvp-design.md). Tracking: [#2](https://github.com/CannObserv/status/issues/2).
 
 ## First-time setup
 

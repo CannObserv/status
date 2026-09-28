@@ -16,7 +16,7 @@ dependencies = [
     "python-json-logger>=4.0.0,<5",
     "python-ulid>=4.0.1,<5",
     "sqlalchemy[asyncio]>=2.0,<3",
-    "uvicorn>=0.52.4,<0.53",
+    "uvicorn>=0.52.4,<0.55",
 ]
 
 [tool.uv.sources]

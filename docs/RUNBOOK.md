@@ -4,7 +4,7 @@ Setting up the co-status VM, running it, and moving monitors over from notifier.
 
 ## First-time setup
 
-**Not yet run: this is Phase 3.** Written ahead of the VM; correct it against the machine as it is built, not the other way round.
+**Run 2026-09-28 (Phase 3)** on `co-status`: node `status`, `100.88.216.92`, `tag:status`. Corrected against the machine where it was wrong.
 
 Prerequisites the operator supplies (spec § Infrastructure): `TAILSCALE_KEY_STATUS` (single-tag `tag:status`, pre-approved, non-ephemeral), the ACL rows, and both notifier API keys.
 
@@ -68,10 +68,13 @@ sudo systemctl enable --now status-sweep.timer status-sweep-dev.timer
 # Memory reservation. Values are notifier's (notifier#74, #85) as a starting
 # point; re-measure here and adjust (spec Phase 3).
 sudo cp deploy/99-status-memory.conf /etc/sysctl.d/
-sudo cp deploy/earlyoom.default /etc/default/earlyoom
 sudo sysctl -p /etc/sysctl.d/99-status-memory.conf
+# Install earlyoom BEFORE copying its config. The other order leaves dpkg
+# asking whether to keep a modified conffile, which fails without a terminal
+# and aborts the install half-configured (found on the first run here).
 sudo apt-get install -y earlyoom
-sudo systemctl enable --now earlyoom
+sudo cp deploy/earlyoom.default /etc/default/earlyoom
+sudo systemctl enable earlyoom && sudo systemctl restart earlyoom
 for f in system.slice.d/10-memory-protection.conf \
          system-postgresql.slice.d/10-memory-protection.conf \
          postgresql@16-main.service.d/10-memory.conf; do

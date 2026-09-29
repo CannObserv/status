@@ -40,7 +40,7 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` �
 
 ## Infrastructure
 
-**Planned** (Phase 3, not provisioned yet): exe.dev VM `co-status` (`pdx`), tailnet node `status`, `tag:status`.
+**Provisioned 2026-09-28** (Phase 3): exe.dev VM `co-status` (`pdx`), tailnet node `status` (`100.88.216.92`), `tag:status`. Postgres 16 on localhost holds `status`, `status_dev` and `status_test`.
 
 | Service | Port | Database |
 |---|---|---|
@@ -49,7 +49,7 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` �
 | Sweep (live / dev) | systemd timer, 60s | `status` / `status_dev` |
 | Public status pages | **8000 — reserved; nothing binds it in the MVP** | — |
 
-**Until then, development happens on `notifier.exe.xyz`.** `status_test` lives on notifier's Postgres cluster, owned by role `status`, which has no access to notifier's databases. Dropped once co-status runs its own Postgres.
+**This checkout is the deployment.** Every unit above runs from `/home/exedev/status`, working tree included. The sweeps reload the code every pass, so a model change that adds a column breaks both of them **on save**. Do schema work in a worktree, or migrate `status_dev` and `status` first (RUNBOOK § Routine ops), then `sudo systemctl restart status status-dev`. `/health` is on the tailnet address, not localhost.
 
 **Which notifier is derived, never configured:** production → `http://notifier:9000`, development → `http://notifier:9001`, from co-status's own database name.
 

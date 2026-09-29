@@ -110,6 +110,7 @@ class Monitor(Base, TimestampMixin):
     )
     last_alert_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     #: notifier's delivery ``status`` for the alert at ``last_alert_at``
-    #: (``succeeded``, ``partial`` or ``failed``); ``None`` until this
-    #: outage's first alert is accepted. Accepted is not delivered (#6).
+    #: (``succeeded``, ``partial`` or ``failed``). Cleared when an outage
+    #: begins; kept after recovery, when nothing reads it — the sweep only
+    #: reports it for ``missing`` monitors. Accepted is not delivered (#6).
     last_alert_status: Mapped[str | None] = mapped_column(String, nullable=True)

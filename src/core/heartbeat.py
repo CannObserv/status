@@ -16,6 +16,7 @@ report a dead sweep as alive, so it is never logged and never an env var.
 """
 
 import json
+import logging
 import os
 from collections.abc import Mapping
 
@@ -39,12 +40,35 @@ NOTIFIER_CHECK = "notifier-reachable"
 PING_TIMEOUT_SECONDS = 5.0
 
 
+class _RedactKey(logging.Filter):
+    """Masks the ping key in httpx's ``HTTP Request: POST <url>`` INFO lines."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__()
+        self.key = key
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if self.key in message:
+            record.msg, record.args = message.replace(self.key, "***"), ()
+        return True
+
+
+def _redact_in_httpx_log(key: str) -> None:
+    """Install :class:`_RedactKey` on the ``httpx`` logger, once per key."""
+    httpx_logger = logging.getLogger("httpx")
+    if not any(isinstance(f, _RedactKey) and f.key == key for f in httpx_logger.filters):
+        httpx_logger.addFilter(_RedactKey(key))
+
+
 class Heartbeat:
     """Pings healthchecks.io for one production sweep pass."""
 
     def __init__(self, ping_key: str, *, base_url: str = PING_BASE_URL) -> None:
         self._key = ping_key
         self._base_url = base_url
+        # httpx logs every request URL at INFO, and this URL carries the key.
+        _redact_in_httpx_log(ping_key)
 
     async def sweep_completed(self, report: SweepReport) -> None:
         """Signal a completed pass, and whether notifier took its alerts."""

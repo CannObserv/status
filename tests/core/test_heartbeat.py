@@ -6,6 +6,7 @@ and nothing a ping does can fail the sweep that sent it.
 """
 
 import json
+import logging
 
 import httpx
 import pytest
@@ -93,7 +94,14 @@ class TestAPingNeverFailsTheSweep:
             await Heartbeat(KEY).sweep_failed(RuntimeError())
         assert any("404" in r.message for r in caplog.records)
 
-    async def test_the_key_never_reaches_a_log_line(self, pings, caplog):
+    async def test_the_key_never_reaches_httpxs_request_log(self, pings, caplog):
+        """httpx logs every request's URL at INFO, and the URL holds the key."""
+        with caplog.at_level("DEBUG"):
+            await Heartbeat(KEY).sweep_completed(_report())
+        assert any(r.name == "httpx" for r in caplog.records)
+        assert all(KEY not in r.getMessage() for r in caplog.records)
+
+    async def test_the_key_never_reaches_an_error_log_line(self, pings, caplog):
         pings.routes.clear()
         pings.post(url__regex=r".*").mock(
             side_effect=httpx.ConnectError(f"refused {PING_BASE_URL}/{KEY}/x")
@@ -127,3 +135,10 @@ class TestHeartbeatFromEnvironment:
         (tmp_path / CREDENTIAL_NAME).write_text(KEY)
         env = {"DATABASE_URL": "nonsense", "CREDENTIALS_DIRECTORY": str(tmp_path)}
         assert heartbeat_from_environment(env) is None
+
+
+def test_the_redaction_is_installed_once_per_key():
+    Heartbeat(KEY)
+    Heartbeat(KEY)
+    httpx_filters = logging.getLogger("httpx").filters
+    assert sum(getattr(f, "key", None) == KEY for f in httpx_filters) == 1

@@ -17,9 +17,9 @@ Three settings, none of which substitutes for another:
   too (notifier#85).
 * ``OOMScoreAdjust=`` — makes the killer prefer almost anything else. That
   assumes agent sessions sit at adj 0, as they do on notifier's host, so a
-  negative score here is what puts production last in line. On this host
-  sessions sit at -1000 and the premise fails (#5). It is exe.dev's, not
-  ours, so it is pinned live (notifier#88).
+  negative score here is what puts production last in line. It is exe.dev's,
+  not ours, so it is pinned live (notifier#88); an older ``exe-init`` breaks
+  it (#5).
 * ``vm.min_free_kbytes`` — the reserve the *atomic* allocations draw on. The
   other two are per-cgroup and cannot help an allocation in `ksoftirqd`.
 
@@ -579,11 +579,6 @@ def test_no_session_ancestor_is_none(tmp_path):
 
 
 @live_host_only
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#5: co-status sessions sit at oom_score_adj -1000",
-)
 def test_sessions_here_sit_at_adj_zero():
     """Everything above assumes the killer can reach a session, and nothing set it.
 
@@ -593,12 +588,12 @@ def test_sessions_here_sit_at_adj_zero():
     host 2026-09-18 (notifier#74) and again 2026-09-24 (notifier#88). That is
     exe.dev's setup, not this repo's, and it differs by host: broker and
     address-validator sessions sit at -1000, which earlyoom 1.7 skips outright
-    as the kernel does. What decides it was never
-    determined. If it changes here, no config drifts and no other test fails.
+    as the kernel does. If it changes here, no config drifts and no other test
+    fails.
 
-    On co-status sessions sit at -1000 (#5), so this is an expected failure.
-    ``strict`` turns it into a failure the day sessions start at 0 again, and
-    ``raises`` confines it to the premise, not an error in the walk.
+    What decides it is ``/exe.dev/bin/exe-init``: exe.dev confirmed the -1000
+    as a bug in older builds (#5). co-status shipped with ``9674b2b`` (-1000)
+    and runs ``14fd603`` (0) since 2026-09-29.
     """
     adj = session_root_adj(PROC_FS, os.getpid())
     if adj is None:
@@ -607,6 +602,6 @@ def test_sessions_here_sit_at_adj_zero():
         f"this session's root reads oom_score_adj={adj}, not 0: exe.dev changed "
         f"how it starts sessions here. At -1000 earlyoom's --prefer reaches nothing "
         f"and OOMScoreAdjust=-500 no longer puts production behind the sessions — "
-        f"launch them under `choom -n 500 --` (gregoryfoster/skills host-memory.md § 1) "
-        f"and see #5"
+        f"check `/exe.dev/bin/exe-init --version`; an old build is the known cause, "
+        f"fixed by copying a new VM's exe-init over and restarting (#5)"
     )

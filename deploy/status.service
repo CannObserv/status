@@ -53,9 +53,8 @@ Environment=STATUS_ALLOW_PROD_DB=1
 MemoryLow=192M
 
 # Negative so the killer prefers almost anything else. That puts production
-# last in line only where agent sessions sit at adj 0, as on notifier's host.
-# Here they inherit -1000 from exe-init and cannot be killed, so this only
-# ranks production behind the dev units (#5). Deliberately not -1000:
+# last in line only while agent sessions sit at adj 0; an old exe-init starts
+# them at -1000, unkillable, which inverts the order (#5). Deliberately not -1000:
 # unkillable turns a leak here into a wedged host with no kill and no report.
 OOMScoreAdjust=-500
 

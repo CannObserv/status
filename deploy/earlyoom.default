@@ -25,9 +25,9 @@
 # to 15 characters, hence the start-anchored `^npm` rather than a full match.
 # Losing a session costs a session. Losing the service costs the bus.
 #
-# That holds only where sessions sit at adj 0, as on notifier's host. Here
-# they inherit -1000 from exe-init, which earlyoom skips as the kernel does,
-# so --prefer reaches nothing (#5).
+# That holds only while sessions sit at adj 0. An old exe-init starts them at
+# -1000, which earlyoom skips as the kernel does, so --prefer reaches nothing
+# (#5); tests/deploy/test_memory_reservation.py pins it live.
 #
 # NO SPACES inside either regex. earlyoom.service is
 # `ExecStart=/usr/bin/earlyoom $EARLYOOM_ARGS`, unquoted, so systemd splits on

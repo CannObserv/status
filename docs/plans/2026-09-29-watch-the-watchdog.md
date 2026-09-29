@@ -1,7 +1,7 @@
 ---
 title: Watch the watchdog — healthchecks.io pings from the production sweep (#1)
 date: 2026-09-29
-status: approved
+status: done
 ---
 
 # Watch the watchdog

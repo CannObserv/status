@@ -44,4 +44,14 @@ EnvironmentFile=-/home/exedev/status/.env
 # sweep is the other half of alerting. tests/deploy/test_notifier_credential.py.
 LoadCredential=notifier-key:/etc/status/notifier-api.key
 
+# The healthchecks.io ping key (#1, src/core/heartbeat.py): the watcher of this
+# sweep, outside the cohort. Production only — the dev sweep is not watched.
+# LoadCredential= on a missing file fails the unit (243/CREDENTIALS), which
+# would silence every dead-man's timer for want of the thing that watches
+# them; the SetCredential= of the same name is systemd's fallback when the
+# file cannot be read, and must be non-empty — a lone newline, which the sweep
+# reads as "no key" and runs unwatched. tests/deploy/test_heartbeat_credential.py.
+SetCredential=hc-ping-key:\n
+LoadCredential=hc-ping-key:/etc/status/hc-ping.key
+
 ExecStart=/home/exedev/status/scripts/sweep.sh

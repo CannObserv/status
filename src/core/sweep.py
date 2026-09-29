@@ -38,6 +38,8 @@ class SweepReport:
     owed: list[str] = field(default_factory=list)
     #: Overdue with no channel configured at all: nowhere to send.
     undeliverable: list[str] = field(default_factory=list)
+    #: notifier's ``/health`` answered, in this environment, at the start of the pass.
+    notifier_ok: bool = True
 
 
 async def sweep_monitors(
@@ -60,12 +62,11 @@ async def sweep_monitors(
     now = now or datetime.now(UTC)
     report = SweepReport()
 
-    can_send = True
     try:
         await alerter.check_endpoint()
     except NotifierUnavailable as exc:
         logger.error(f"notifier unreachable at sweep start; alerts will be owed: {exc}")
-        can_send = False
+        report.notifier_ok = False
 
     result = await session.execute(select(Monitor).where(Monitor.enabled.is_(True)))
     for monitor in result.scalars().all():
@@ -81,7 +82,7 @@ async def sweep_monitors(
                 "monitor is overdue but has no channel to alert",
                 extra={"monitor_id": str(monitor.id), "monitor_name": monitor.name},
             )
-        elif not can_send:
+        elif not report.notifier_ok:
             report.owed.append(str(monitor.id))
         else:
             notice = missing_notification(monitor, now)

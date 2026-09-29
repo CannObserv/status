@@ -214,3 +214,15 @@ class TestEndpointCheck:
             await sweep_monitors(db_session, alerter, NOW)
         assert monitor.state == MonitorState.OK
         assert not notifier.dispatch.called
+
+    async def test_the_report_says_notifier_answered(self, db_session, tenant, alerter, notifier):
+        """What the ``notifier-reachable`` heartbeat is built on (#1)."""
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.notifier_ok is True
+
+    async def test_the_report_says_notifier_did_not_answer(
+        self, db_session, tenant, alerter, notifier
+    ):
+        notifier.health.mock(side_effect=httpx.ConnectError("refused"))
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.notifier_ok is False

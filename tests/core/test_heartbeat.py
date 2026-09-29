@@ -30,6 +30,15 @@ PROD_DB = "postgresql+asyncpg://status@localhost/status"
 DEV_DB = "postgresql+asyncpg://status@localhost/status_dev"
 
 
+@pytest.fixture(autouse=True)
+def _restore_httpx_filters():
+    """Each Heartbeat adds a filter to the process-wide httpx logger; take them back."""
+    httpx_logger = logging.getLogger("httpx")
+    saved = list(httpx_logger.filters)
+    yield
+    httpx_logger.filters[:] = saved
+
+
 @pytest.fixture
 def pings():
     """healthchecks.io: every ping answered ``OK``, until a test says not."""

@@ -42,6 +42,10 @@ NOTIFIER_URLS = {
     "development": "http://notifier:9001",
 }
 
+#: notifier's delivery ``status`` for a dispatch that reached every channel;
+#: ``partial`` and ``failed`` are the others.
+DELIVERED = "succeeded"
+
 #: The ``LoadCredential=`` name both units use (spec D13).
 CREDENTIAL_NAME = "notifier-key"
 
@@ -263,7 +267,7 @@ class Alerter:
             except _UnknownChannels as again:
                 raise NoDeliverableChannel(f"notifier rejected channels {again.ids}") from again
         delivery = Delivery(dispatch=dispatch, dropped_channel_ids=dropped)
-        if delivery.status != "succeeded":
+        if delivery.status != DELIVERED:
             logger.warning(
                 f"notifier accepted dispatch {delivery.dispatch_id} with status {delivery.status}",
                 extra={

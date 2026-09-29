@@ -22,16 +22,19 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.alerting import Alerter, AlertNotAccepted, NotifierUnavailable, missing_key
+from src.core.alerting import (
+    DELIVERED,
+    Alerter,
+    AlertNotAccepted,
+    NotifierUnavailable,
+    missing_key,
+)
 from src.core.logging import get_logger
 from src.core.models import MonitorEvent
 from src.core.models.monitor import Monitor
 from src.core.monitors import EventKind, MonitorState, missing_notification, should_alert
 
 logger = get_logger(__name__)
-
-#: notifier's delivery ``status`` for a dispatch that reached every channel.
-DELIVERED = "succeeded"
 
 
 @dataclass

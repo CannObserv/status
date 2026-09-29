@@ -66,11 +66,26 @@ async def test_the_line_names_the_undelivered_monitors(
     db_session, overdue_monitor, alerter, notifier, caplog
 ):
     """Where an operator goes from a `notifier-reachable` /fail to the monitor (#6)."""
+    notifier.dispatch.respond(
+        202,
+        json={
+            "id": "01J0000000000000000000DISP",
+            "tenant_id": "01J0000000000000000000TENT",
+            "template_id": None,
+            "idempotency_key": "k",
+            "rendered_title": "t",
+            "rendered_body": "b",
+            "status": "failed",
+            "metadata": {},
+            "created_at": "2026-09-09T12:00:00Z",
+            "attempts": [],
+        },
+    )
     with caplog.at_level("INFO"):
-        report = await run_sweep(db_session, alerter)
+        await run_sweep(db_session, alerter)
 
     (line,) = [r for r in caplog.records if r.message == "monitor sweep complete"]
-    assert line.undelivered == report.undelivered
+    assert line.undelivered[str(overdue_monitor.id)] == "failed"
 
 
 class FakeHeartbeat:

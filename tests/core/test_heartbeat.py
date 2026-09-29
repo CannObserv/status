@@ -5,13 +5,16 @@ the right check gets the right signal, the ping key never reaches a log line,
 and nothing a ping does can fail the sweep that sent it.
 """
 
+import asyncio
 import json
 import logging
+import time
 
 import httpx
 import pytest
 import respx
 
+from src.core import heartbeat
 from src.core.heartbeat import (
     CREDENTIAL_NAME,
     NOTIFIER_CHECK,
@@ -85,6 +88,22 @@ class TestAPingNeverFailsTheSweep:
         with caplog.at_level("WARNING"):
             await Heartbeat(KEY).sweep_completed(_report())
         assert any("ping" in r.message for r in caplog.records)
+
+    async def test_a_stalled_endpoint_is_cut_off_at_the_timeout(self, pings, caplog, monkeypatch):
+        """The bound is on the whole ping; httpx's own timeout is per phase."""
+        monkeypatch.setattr(heartbeat, "PING_TIMEOUT_SECONDS", 0.05)
+
+        async def stall(request):
+            await asyncio.sleep(5)
+            return httpx.Response(200)
+
+        pings.routes.clear()
+        pings.post(url__regex=r".*").mock(side_effect=stall)
+        started = time.monotonic()
+        with caplog.at_level("WARNING"):
+            await Heartbeat(KEY).sweep_failed(RuntimeError())
+        assert time.monotonic() - started < 1
+        assert any("TimeoutError" in r.message for r in caplog.records)
 
     async def test_a_non_2xx_answer_is_logged(self, pings, caplog):
         """404 is healthchecks' answer for a slug with no check behind it."""

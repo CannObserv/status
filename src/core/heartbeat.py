@@ -15,6 +15,7 @@ beyond its timeout. The ping key is a credential (D13): anyone holding it can
 report a dead sweep as alive, so it is never logged and never an env var.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -93,8 +94,11 @@ class Heartbeat:
     async def _ping(self, check: str, *, ok: bool, body: str) -> None:
         url = f"{self._base_url}/{self._key}/{check}" + ("" if ok else "/fail")
         try:
-            async with httpx.AsyncClient(timeout=PING_TIMEOUT_SECONDS) as client:
-                response = await client.post(url, content=body)
+            # The bound is on the whole ping: httpx's timeout is per phase
+            # (connect, write, read, pool), and DNS has none at all.
+            async with asyncio.timeout(PING_TIMEOUT_SECONDS):
+                async with httpx.AsyncClient(timeout=PING_TIMEOUT_SECONDS) as client:
+                    response = await client.post(url, content=body)
         except Exception as exc:
             # Anything at all: a ping must never fail the sweep that sent it.
             # The type only: an httpx message can carry the URL, and the URL the key.

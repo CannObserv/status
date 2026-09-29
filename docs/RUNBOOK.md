@@ -122,7 +122,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 |---|---|
 | `co-status-sweep`, silent | `systemctl list-timers 'status-sweep*'`, `systemctl status status-sweep`, then the VM |
 | `co-status-sweep`, `/fail` | `journalctl -u status-sweep -n 50`; the ping body names the exception type. A connection error is usually Postgres |
-| `notifier-reachable` | notifier's `/health` from here; the `owed` count in the sweep's journal line |
+| `notifier-reachable` | notifier's `/health` from here; then `journalctl -u status-sweep \| grep 'not accepted'` — a refusal (revoked key, deleted channels) keeps it down just as an outage does |
 | Both silent, host fine | `journalctl -u status-sweep \| grep -i healthchecks`: a missing key or a ping that cannot get out |
 
 ## Watching the sweep: healthchecks.io

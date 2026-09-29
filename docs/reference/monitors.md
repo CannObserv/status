@@ -88,6 +88,7 @@ healthchecks alerts over its own email and Slack, **never through notifier**.
 - **A ping never fails a pass.** A failed ping is a `healthchecks ping … failed` warning in the journal; if it persists, the checks' silence is the alert.
 - **The key is a credential on `status-sweep.service` alone** (D13): anyone holding it can report a dead sweep as alive. Without `/etc/status/hc-ping.key`, the sweep runs, warns every pass and pings nothing. The unit's `SetCredential=` fallback exists because a missing `LoadCredential=` file would otherwise fail the unit (243), and with it every timer.
 - **The dev sweep pings nothing.**
+- **`notifier-reachable` is broader than its name.** It also goes `/fail` when notifier *refuses* an alert: a revoked key (401), a monitor whose channels were all deleted, a 422. It stays down until that is fixed, and healthchecks alerts once per change of state, so a real outage starting meanwhile raises no new alert. A refused alert is still an alert that reaches no one, which is why it counts.
 
 **What is still open:** notifier being down is now *announced*, not closed. Missing alerts still wait for notifier, and recovery and report notices sent during the outage are still lost. A healthchecks.io outage produces false alarms, never silence.
 

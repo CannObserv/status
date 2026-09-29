@@ -83,7 +83,7 @@ co-status delivers nothing itself (spec D5). Every alert is a `POST /api/v1/disp
 | Check | Success ping | `/fail` | Silence past the 5-minute grace |
 |---|---|---|---|
 | `co-status-sweep` | The pass completed and committed. Body: the counts. | The pass raised, Postgres down included. Body: the exception's type, never its message. | Timer, VM or OOM killer |
-| `notifier-reachable` | notifier's `/health` answered in production, nothing was left `owed`, and nothing is `undelivered` | Unreachable at the start of the pass, *n* alerts owed, or *n* undelivered (the body counts `failed` and `partial`) | The sweep itself is not running |
+| `notifier-reachable` | notifier's `/health` answered in production, nothing was left `owed`, and nothing is `undelivered` | Unreachable at the start of the pass, *n* alerts owed, *n* undelivered: the body names each that applies, and counts `failed` and `partial` | The sweep itself is not running |
 
 healthchecks alerts over its own email and Slack, **never through notifier**.
 

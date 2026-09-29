@@ -219,6 +219,19 @@ class TestSend:
         assert delivery.status == status
         assert any(status in r.getMessage() for r in caplog.records)
 
+    async def test_the_warning_names_what_the_alert_was_for(self, alerter, notifier, caplog):
+        """With several undelivered, a dispatch id alone does not say which monitor (#6)."""
+        notifier.post("/api/v1/dispatch").respond(202, json=_dispatch(status="failed"))
+        await alerter.send(
+            title_template="t",
+            body_template="b",
+            variables={},
+            channel_ids=CHANNELS,
+            metadata={"monitor_id": "m", "reason": "missing"},
+        )
+        (warning,) = [r for r in caplog.records if "with status" in r.getMessage()]
+        assert warning.metadata == {"monitor_id": "m", "reason": "missing"}
+
     async def test_retries_once_without_channels_notifier_no_longer_has(
         self, alerter, notifier, caplog
     ):

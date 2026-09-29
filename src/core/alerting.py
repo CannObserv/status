@@ -266,7 +266,11 @@ class Alerter:
         if delivery.status != "succeeded":
             logger.warning(
                 f"notifier accepted dispatch {delivery.dispatch_id} with status {delivery.status}",
-                extra={"dispatch_id": delivery.dispatch_id, "status": delivery.status},
+                extra={
+                    "dispatch_id": delivery.dispatch_id,
+                    "status": delivery.status,
+                    "metadata": metadata,
+                },
             )
         return delivery
 

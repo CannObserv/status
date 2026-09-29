@@ -89,6 +89,15 @@ class TestSweepCompleted:
         assert _paths(pings)[1] == f"/{KEY}/{NOTIFIER_CHECK}/fail"
         assert pings.calls[1].request.content == b"3 alert(s) undelivered (2 failed, 1 partial)"
 
+    async def test_unreachable_does_not_hide_earlier_undelivered_alerts(self, pings):
+        """Fixing the outage will not deliver them; the body must still say so."""
+        await Heartbeat(KEY).sweep_completed(
+            _report(notifier_ok=False, undelivered={"01J1": "failed"})
+        )
+        assert pings.calls[1].request.content == (
+            b"notifier unreachable at sweep start; 1 alert(s) undelivered (1 failed)"
+        )
+
     async def test_owed_and_undelivered_are_both_named(self, pings):
         await Heartbeat(KEY).sweep_completed(_report(owed=["01J1"], undelivered={"01J2": "failed"}))
         assert pings.calls[1].request.content == (

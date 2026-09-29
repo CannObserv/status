@@ -115,9 +115,9 @@ class Heartbeat:
 
 def _notifier_problems(report: SweepReport) -> list[str]:
     """Why ``notifier-reachable`` fails this pass; empty when it does not."""
-    if not report.notifier_ok:
-        return ["notifier unreachable at sweep start"]
     problems = []
+    if not report.notifier_ok:
+        problems.append("notifier unreachable at sweep start")
     if report.owed:
         problems.append(f"{len(report.owed)} alert(s) owed")
     if report.undelivered:

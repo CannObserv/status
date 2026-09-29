@@ -76,6 +76,7 @@ def _to_out(m: Monitor) -> MonitorOut:
         last_status=m.last_status,
         last_variables=m.last_variables,
         last_alert_at=m.last_alert_at,
+        last_alert_status=m.last_alert_status,
         next_deadline_at=deadline_for(m),
         created_at=m.created_at,
         updated_at=m.updated_at,

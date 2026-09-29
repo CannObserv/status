@@ -204,6 +204,16 @@ class TestReadUpdateDelete:
         response = await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)
         assert response.json()["name"] == monitor["name"]
 
+    async def test_says_whether_its_last_alert_was_delivered(
+        self, api, headers, monitor, db_session
+    ):
+        """Accepted is not delivered (#6): the owner can see it without the journal."""
+        row = await _row(db_session, monitor["id"])
+        row.last_alert_status = "partial"
+        await db_session.flush()
+        response = await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)
+        assert response.json()["last_alert_status"] == "partial"
+
     async def test_unknown_id_is_404(self, api, headers):
         assert (await api.get(f"/api/v1/monitors/{ULID()}", headers=headers)).status_code == 404
 

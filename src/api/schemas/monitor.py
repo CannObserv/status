@@ -83,6 +83,9 @@ class MonitorOut(BaseModel):
     #: The last report, verbatim. Never interpreted here.
     last_variables: dict[str, Any]
     last_alert_at: datetime | None
+    #: notifier's delivery ``status`` for that alert: ``succeeded``,
+    #: ``partial`` or ``failed``. Accepted is not delivered (#6).
+    last_alert_status: str | None
     #: When silence becomes an alert. Served so a consumer never has to
     #: re-derive interval + grace to know where it stands.
     next_deadline_at: datetime

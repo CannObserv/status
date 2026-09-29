@@ -270,10 +270,12 @@ class Alerter:
         if delivery.status != DELIVERED:
             logger.warning(
                 f"notifier accepted dispatch {delivery.dispatch_id} with status {delivery.status}",
+                # Only what co-status set: a report's metadata is the consumer's.
                 extra={
                     "dispatch_id": delivery.dispatch_id,
                     "status": delivery.status,
-                    "metadata": metadata,
+                    "monitor_id": (metadata or {}).get("monitor_id"),
+                    "reason": (metadata or {}).get("reason"),
                 },
             )
         return delivery

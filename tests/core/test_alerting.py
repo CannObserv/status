@@ -227,10 +227,13 @@ class TestSend:
             body_template="b",
             variables={},
             channel_ids=CHANNELS,
-            metadata={"monitor_id": "m", "reason": "missing"},
+            metadata={"monitor_id": "m", "reason": "report", "token": "consumer-secret"},
         )
         (warning,) = [r for r in caplog.records if "with status" in r.getMessage()]
-        assert warning.metadata == {"monitor_id": "m", "reason": "missing"}
+        assert (warning.monitor_id, warning.reason) == ("m", "report")
+        # A report's metadata is the consumer's: forwarded, never read, never logged.
+        assert not hasattr(warning, "metadata")
+        assert all("consumer-secret" not in str(v) for v in vars(warning).values())
 
     async def test_retries_once_without_channels_notifier_no_longer_has(
         self, alerter, notifier, caplog

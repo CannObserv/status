@@ -63,7 +63,13 @@ class TestSweepCompleted:
     async def test_the_sweep_ping_carries_the_counts_only(self, pings):
         await Heartbeat(KEY).sweep_completed(_report(alerted=["01J1"], owed=[]))
         body = json.loads(pings.calls[0].request.content)
-        assert body == {"checked": 3, "alerted": 1, "owed": 0, "undeliverable": 0}
+        assert body == {
+            "checked": 3,
+            "alerted": 1,
+            "owed": 0,
+            "undeliverable": 0,
+            "undelivered": 0,
+        }
 
     async def test_notifier_unreachable_fails_the_notifier_check(self, pings):
         await Heartbeat(KEY).sweep_completed(_report(notifier_ok=False))
@@ -74,6 +80,20 @@ class TestSweepCompleted:
         await Heartbeat(KEY).sweep_completed(_report(owed=["01J1"]))
         assert _paths(pings)[1] == f"/{KEY}/{NOTIFIER_CHECK}/fail"
         assert b"1 alert(s) owed" in pings.calls[1].request.content
+
+    async def test_an_undelivered_alert_fails_the_notifier_check(self, pings):
+        """notifier took the alert and could not deliver it (#6)."""
+        await Heartbeat(KEY).sweep_completed(
+            _report(undelivered={"01J1": "failed", "01J2": "partial", "01J3": "failed"})
+        )
+        assert _paths(pings)[1] == f"/{KEY}/{NOTIFIER_CHECK}/fail"
+        assert pings.calls[1].request.content == b"3 alert(s) undelivered (2 failed, 1 partial)"
+
+    async def test_owed_and_undelivered_are_both_named(self, pings):
+        await Heartbeat(KEY).sweep_completed(_report(owed=["01J1"], undelivered={"01J2": "failed"}))
+        assert pings.calls[1].request.content == (
+            b"1 alert(s) owed; 1 alert(s) undelivered (1 failed)"
+        )
 
 
 class TestSweepFailed:

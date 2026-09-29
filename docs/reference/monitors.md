@@ -62,7 +62,7 @@ The built-in wording is a fixed template with the facts passed as `variables`, s
 co-status delivers nothing itself (spec D5). Every alert is a `POST /api/v1/dispatch` to notifier from co-status's own tenant, through `src/core/alerting.py`:
 
 - **Which notifier is derived, not configured:** production sends to `notifier:9000`, development to `notifier:9001`, and `/health`'s `environment` is checked before sending. A co-status pointed at the wrong notifier refuses rather than inverting.
-- **A 202 is not a delivery** (notifier#70). `status` is read and `failed`/`partial` logged.
+- **A 202 is not a delivery** (notifier#70). `status` is logged when it is `failed` or `partial`, and the sweep keeps it as `last_alert_status` (see below).
 - **Missing and recovery alerts carry deterministic idempotency keys**, so a pass that dies between sending and committing does not send twice.
 - **A check-in is always recorded and answered**, whatever notifier does, inside an 8-second budget below the consumers' 10-second timeout.
 
@@ -71,6 +71,8 @@ co-status delivers nothing itself (spec D5). Every alert is a `POST /api/v1/disp
 `status-sweep.timer` fires every 60 seconds: `scripts/sweep.sh` → `scripts/sweep_monitors.py` → `sweep_monitors()`.
 
 **A monitor is marked `missing` whether or not the alert went out** — the state describes the consumer. But **`last_alert_at` moves only when notifier accepted the alert.** A monitor that went missing while notifier was unreachable is still owed its alert, and every pass retries it under the same key until notifier takes it: late, never lost. The journal line reports `owed` every pass.
+
+**Accepted is not delivered** ([#6](https://github.com/CannObserv/status/issues/6)). `last_alert_status` holds notifier's delivery `status` for the alert at `last_alert_at`, and is cleared when a new outage begins. Every pass lists each `missing` monitor whose last alert came back `failed` or `partial` as `undelivered` — every pass, not just the one that sent it, so the heartbeat below does not go *down* and then *up* 60 seconds later while nobody has been told. It clears when the monitor recovers, a later renotify is delivered, or the monitor is disabled. A `partial` counts: a monitor's channels are meant to be redundant. Nothing is resent ([#7](https://github.com/CannObserv/status/issues/7)).
 
 **A timer, not a task in the API process**, and **`TimeoutStartSec` is not decoration**: both for notifier's reasons (its monitors.md § The sweep).
 
@@ -81,16 +83,16 @@ co-status delivers nothing itself (spec D5). Every alert is a `POST /api/v1/disp
 | Check | Success ping | `/fail` | Silence past the 5-minute grace |
 |---|---|---|---|
 | `co-status-sweep` | The pass completed and committed. Body: the counts. | The pass raised, Postgres down included. Body: the exception's type, never its message. | Timer, VM or OOM killer |
-| `notifier-reachable` | notifier's `/health` answered in production, and nothing was left `owed` | Unreachable at the start of the pass, or *n* alerts owed | The sweep itself is not running |
+| `notifier-reachable` | notifier's `/health` answered in production, nothing was left `owed`, and nothing is `undelivered` | Unreachable at the start of the pass, *n* alerts owed, or *n* undelivered (the body counts `failed` and `partial`) | The sweep itself is not running |
 
 healthchecks alerts over its own email and Slack, **never through notifier**.
 
 - **A ping never fails a pass.** A failed ping is a `healthchecks ping … failed` warning in the journal; if it persists, the checks' silence is the alert.
 - **The key is a credential on `status-sweep.service` alone** (D13): anyone holding it can report a dead sweep as alive. Without `/etc/status/hc-ping.key`, the sweep runs, warns every pass and pings nothing. The unit's `SetCredential=` fallback exists because a missing `LoadCredential=` file would otherwise fail the unit (243), and with it every timer.
 - **The dev sweep pings nothing.**
-- **`notifier-reachable` is broader than its name.** It also goes `/fail` when notifier *refuses* an alert: a revoked key (401), a monitor whose channels were all deleted, a 422. It stays down until that is fixed, and healthchecks alerts once per change of state, so a real outage starting meanwhile raises no new alert. A refused alert is still an alert that reaches no one, which is why it counts.
+- **`notifier-reachable` is broader than its name.** It also goes `/fail` when notifier *refuses* an alert: a revoked key (401), a monitor whose channels were all deleted, a 422. It stays down until that is fixed, and healthchecks alerts once per change of state, so a real outage starting meanwhile raises no new alert. A refused alert is still an alert that reaches no one, which is why it counts. The same goes for an alert notifier accepted and could not deliver.
 
-**What is still open:** notifier being down is now *announced*, not closed. Missing alerts still wait for notifier, and recovery and report notices sent during the outage are still lost. A healthchecks.io outage produces false alarms, never silence.
+**What is still open:** notifier being down is now *announced*, not closed. Missing alerts still wait for notifier, and recovery and report notices sent during the outage are still lost. A recovery or report notice notifier accepts and then fails to deliver is logged and nothing more ([#8](https://github.com/CannObserv/status/issues/8)). A healthchecks.io outage produces false alarms, never silence.
 
 ## Check the endpoint before the timer
 

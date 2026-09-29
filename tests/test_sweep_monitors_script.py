@@ -62,6 +62,17 @@ async def test_a_quiet_pass_still_reports_what_it_checked(
     assert any("sweep" in record.message for record in caplog.records)
 
 
+async def test_the_line_names_the_undelivered_monitors(
+    db_session, overdue_monitor, alerter, notifier, caplog
+):
+    """Where an operator goes from a `notifier-reachable` /fail to the monitor (#6)."""
+    with caplog.at_level("INFO"):
+        report = await run_sweep(db_session, alerter)
+
+    (line,) = [r for r in caplog.records if r.message == "monitor sweep complete"]
+    assert line.undelivered == report.undelivered
+
+
 class FakeHeartbeat:
     """Records what the entrypoint told it; healthchecks itself is test_heartbeat's."""
 

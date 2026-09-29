@@ -7,8 +7,9 @@ checks, which alert over their own email and Slack channels when pings stop
 or fail:
 
 - ``co-status-sweep`` — the pass completed and committed (``/fail`` if it raised);
-- ``notifier-reachable`` — notifier answered ``/health`` in this environment
-  **and** accepted every alert the pass sent, i.e. nothing was left owed.
+- ``notifier-reachable`` — notifier answered ``/health`` in this environment,
+  accepted every alert the pass sent (nothing owed), **and** delivered the
+  last alert of every missing monitor (nothing undelivered, #6).
 
 Best effort by construction: a ping never raises and never delays a pass
 beyond its timeout. The ping key is a credential (D13): anyone holding it can
@@ -19,6 +20,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import Counter
 from collections.abc import Mapping
 
 import httpx
@@ -78,12 +80,12 @@ class Heartbeat:
             "alerted": len(report.alerted),
             "owed": len(report.owed),
             "undeliverable": len(report.undeliverable),
+            "undelivered": len(report.undelivered),
         }
         await self._ping(SWEEP_CHECK, ok=True, body=json.dumps(counts))
-        if not report.notifier_ok:
-            await self._ping(NOTIFIER_CHECK, ok=False, body="notifier unreachable at sweep start")
-        elif report.owed:
-            await self._ping(NOTIFIER_CHECK, ok=False, body=f"{len(report.owed)} alert(s) owed")
+        problems = _notifier_problems(report)
+        if problems:
+            await self._ping(NOTIFIER_CHECK, ok=False, body="; ".join(problems))
         else:
             await self._ping(NOTIFIER_CHECK, ok=True, body="ok")
 
@@ -109,6 +111,20 @@ class Heartbeat:
                 f"healthchecks ping for {check} answered {response.status_code}",
                 extra={"check": check, "status_code": response.status_code},
             )
+
+
+def _notifier_problems(report: SweepReport) -> list[str]:
+    """Why ``notifier-reachable`` fails this pass; empty when it does not."""
+    if not report.notifier_ok:
+        return ["notifier unreachable at sweep start"]
+    problems = []
+    if report.owed:
+        problems.append(f"{len(report.owed)} alert(s) owed")
+    if report.undelivered:
+        by_status = Counter(report.undelivered.values())
+        detail = ", ".join(f"{n} {status}" for status, n in sorted(by_status.items()))
+        problems.append(f"{len(report.undelivered)} alert(s) undelivered ({detail})")
+    return problems
 
 
 def heartbeat_from_environment(environ: Mapping[str, str] = os.environ) -> Heartbeat | None:

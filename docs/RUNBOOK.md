@@ -110,11 +110,13 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 | Code committed to main | `sudo systemctl restart status status-dev` |
 | After model changes | `. scripts/load_env.sh && uv run alembic upgrade head`, the same with `DATABASE_URL="$DEV_DATABASE_URL"`, then restart both |
 | Is the sweep firing? | `systemctl list-timers 'status-sweep*'` |
-| What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable` every pass |
+| What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable`, `undelivered` every pass |
 | Force a pass | `sudo systemctl start status-sweep.service` |
 | Which key was minted, revoked, or destroyed with its tenant | `journalctl -t status-keys` |
 
 **`owed` that does not drain** means notifier is not accepting alerts: check notifier's `/health` from here, and `journalctl -u status-sweep` for the reason. The alerts go out, under their original keys, on the first pass notifier accepts them.
+
+**`undelivered` that does not clear** means notifier took a missing alert but a channel failed it (`failed`), or failed one of several (`partial`). `journalctl -u status-sweep | grep 'with status'` gives the dispatch id; notifier's dispatch attempts say which channel and why. Fixing the channel does not clear it: it clears when the monitor recovers, a later renotify is delivered, or the monitor is disabled. Without `renotify_seconds` nothing resends ([#7](https://github.com/CannObserv/status/issues/7)), so tell the monitor's owner directly.
 
 **healthchecks.io watches the sweep** ([monitors.md § Who watches the sweep](reference/monitors.md#who-watches-the-sweep)). An alert from it means:
 
@@ -122,7 +124,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 |---|---|
 | `co-status-sweep`, silent | `systemctl list-timers 'status-sweep*'`, `systemctl status status-sweep`, then the VM |
 | `co-status-sweep`, `/fail` | `journalctl -u status-sweep -n 50`; the ping body names the exception type. A connection error is usually Postgres |
-| `notifier-reachable` | notifier's `/health` from here; then `journalctl -u status-sweep \| grep 'not accepted'` — a refusal (revoked key, deleted channels) keeps it down just as an outage does |
+| `notifier-reachable` | The ping body says which: unreachable, *n* owed, or *n* undelivered. notifier's `/health` from here; then `journalctl -u status-sweep \| grep 'not accepted'` — a refusal (revoked key, deleted channels) keeps it down just as an outage does. For undelivered, see above |
 | Both silent, host fine | `journalctl -u status-sweep \| grep -i healthchecks`: a missing key or a ping that cannot get out |
 
 ## Watching the sweep: healthchecks.io
@@ -267,7 +269,7 @@ notifier's disabled row stays for 7 days as the fallback. Rolling back before st
 
 ```bash
 systemctl list-timers 'status-sweep*'
-journalctl -u status-sweep -n 1 -o cat | jq -c '{checked, alerted, owed, undeliverable}'   # checked: 3
+journalctl -u status-sweep -n 1 -o cat | jq -c '{checked, alerted, owed, undeliverable, undelivered}'   # checked: 3
 ```
 
 **What Phase 7 (removal from notifier) must know**, per consumer. The notifier side is notifier's work (spec § Removal from notifier); these are the leftovers the cutover created.

@@ -43,6 +43,22 @@ async def _save(db_session, tenant, **overrides) -> Monitor:
     return monitor
 
 
+def _dispatch_record(status: str, key: str = "k") -> dict:
+    """A dispatch notifier accepted, with delivery *status*."""
+    return {
+        "id": "01J0000000000000000000DISP",
+        "tenant_id": "01J0000000000000000000TENT",
+        "template_id": None,
+        "idempotency_key": key,
+        "rendered_title": "t",
+        "rendered_body": "b",
+        "status": status,
+        "metadata": {},
+        "created_at": "2026-09-09T12:00:00Z",
+        "attempts": [],
+    }
+
+
 async def _events(db_session, monitor) -> list[MonitorEvent]:
     result = await db_session.execute(
         select(MonitorEvent).where(MonitorEvent.monitor_id == monitor.id)
@@ -105,21 +121,7 @@ class TestSweepMonitors:
     ):
         """notifier took it; that Slack bounced is notifier's record to keep.
         The state describes the consumer, not our luck reaching Slack."""
-        notifier.dispatch.respond(
-            202,
-            json={
-                "id": "01J0000000000000000000DISP",
-                "tenant_id": "01J0000000000000000000TENT",
-                "template_id": None,
-                "idempotency_key": "k",
-                "rendered_title": "t",
-                "rendered_body": "b",
-                "status": "failed",
-                "metadata": {},
-                "created_at": "2026-09-09T12:00:00Z",
-                "attempts": [],
-            },
-        )
+        notifier.dispatch.respond(202, json=_dispatch_record("failed"))
         monitor = await _save(db_session, tenant)
         report = await sweep_monitors(db_session, alerter, NOW)
         assert report.alerted == [str(monitor.id)]
@@ -166,21 +168,7 @@ class TestTheOwedAlert:
         first_key = missing_key(monitor, NOW)
 
         notifier.dispatch.mock(side_effect=None)
-        notifier.dispatch.respond(
-            202,
-            json={
-                "id": "01J0000000000000000000DISP",
-                "tenant_id": "01J0000000000000000000TENT",
-                "template_id": None,
-                "idempotency_key": first_key,
-                "rendered_title": "t",
-                "rendered_body": "b",
-                "status": "succeeded",
-                "metadata": {},
-                "created_at": "2026-09-09T12:00:00Z",
-                "attempts": [],
-            },
-        )
+        notifier.dispatch.respond(202, json=_dispatch_record("succeeded", first_key))
         report = await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
 
         assert report.alerted == [str(monitor.id)]
@@ -201,6 +189,85 @@ class TestTheOwedAlert:
         report = await sweep_monitors(db_session, alerter, NOW)
         assert report.owed == [str(monitor.id)]
         assert not notifier.dispatch.called
+
+
+class TestTheUndeliveredAlert:
+    """Accepted is not delivered (#6): a missing monitor whose last alert
+    notifier could not deliver stays in ``undelivered`` until that changes."""
+
+    @pytest.mark.parametrize("status", ["failed", "partial"])
+    async def test_an_undelivered_alert_is_reported(
+        self, db_session, tenant, alerter, notifier, status
+    ):
+        notifier.dispatch.respond(202, json=_dispatch_record(status))
+        monitor = await _save(db_session, tenant)
+
+        report = await sweep_monitors(db_session, alerter, NOW)
+
+        assert report.undelivered == {str(monitor.id): status}
+        assert monitor.last_alert_status == status
+
+    async def test_a_delivered_alert_is_not(self, db_session, tenant, alerter, notifier):
+        monitor = await _save(db_session, tenant)
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered == {}
+        assert monitor.last_alert_status == "succeeded"
+
+    async def test_it_stays_reported_on_passes_that_send_nothing(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """One /fail followed by a success 60s later would read as resolved."""
+        notifier.dispatch.respond(202, json=_dispatch_record("failed"))
+        monitor = await _save(db_session, tenant)
+        await sweep_monitors(db_session, alerter, NOW)
+
+        report = await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
+
+        assert report.alerted == []
+        assert report.undelivered == {str(monitor.id): "failed"}
+
+    async def test_a_delivered_renotify_clears_it(self, db_session, tenant, alerter, notifier):
+        notifier.dispatch.respond(202, json=_dispatch_record("failed"))
+        monitor = await _save(db_session, tenant, renotify_seconds=3600)
+        await sweep_monitors(db_session, alerter, NOW)
+
+        notifier.dispatch.respond(202, json=_dispatch_record("succeeded"))
+        report = await sweep_monitors(db_session, alerter, NOW + timedelta(hours=1))
+
+        assert report.alerted == [str(monitor.id)]
+        assert report.undelivered == {}
+
+    async def test_a_monitor_no_longer_missing_is_not_reported(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """Recovered: the outage the alert was about is over."""
+        await _save(
+            db_session,
+            tenant,
+            last_checkin_at=NOW - timedelta(minutes=5),
+            last_alert_at=NOW - timedelta(hours=1),
+            last_alert_status="failed",
+        )
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered == {}
+
+    async def test_a_new_outage_forgets_the_last_ones_status(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """Owed is not undelivered: nothing about this outage was sent yet."""
+        notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+        monitor = await _save(
+            db_session,
+            tenant,
+            last_alert_at=NOW - timedelta(days=1),
+            last_alert_status="failed",
+        )
+
+        report = await sweep_monitors(db_session, alerter, NOW)
+
+        assert report.owed == [str(monitor.id)]
+        assert report.undelivered == {}
+        assert monitor.last_alert_status is None
 
 
 class TestEndpointCheck:

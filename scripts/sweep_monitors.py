@@ -55,6 +55,7 @@ async def run_sweep(
             "alerted": report.alerted,
             "owed": report.owed,
             "undeliverable": report.undeliverable,
+            "undelivered": report.undelivered,
         },
     )
     if heartbeat is not None:

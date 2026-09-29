@@ -109,3 +109,7 @@ class Monitor(Base, TimestampMixin):
         JSONB, nullable=False, default=dict, server_default="{}"
     )
     last_alert_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: notifier's delivery ``status`` for the alert at ``last_alert_at``
+    #: (``succeeded``, ``partial`` or ``failed``); ``None`` until this
+    #: outage's first alert is accepted. Accepted is not delivered (#6).
+    last_alert_status: Mapped[str | None] = mapped_column(String, nullable=True)

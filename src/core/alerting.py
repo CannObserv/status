@@ -17,13 +17,13 @@ import os
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import httpx
 from notifier_client import NotifierClient, NotifierError, RateLimited, ServerError
 from notifier_client.types import DispatchOut
 
+from src.core.credentials import read_credential
 from src.core.db_safety import database_name, environment_label
 from src.core.logging import get_logger
 from src.core.models.monitor import Monitor
@@ -111,14 +111,7 @@ def read_notifier_key(environ: Mapping[str, str] = os.environ) -> str:
     ``$CREDENTIALS_DIRECTORY``, and that is an alerter that cannot alert —
     the caller logs it — not a crash.
     """
-    directory = environ.get("CREDENTIALS_DIRECTORY")
-    if not directory:
-        return ""
-    path = Path(directory) / CREDENTIAL_NAME
-    try:
-        return path.read_text().strip()
-    except OSError:
-        return ""
+    return read_credential(CREDENTIAL_NAME, environ)
 
 
 def missing_key(monitor: Monitor, now: datetime) -> str:

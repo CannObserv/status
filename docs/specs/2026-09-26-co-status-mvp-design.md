@@ -173,6 +173,8 @@ With D10, two failures go unannounced in the MVP:
 
 co-status's docs state both and link status#1.
 
+> **2026-09-29:** status#1 closed the first and announces the second: healthchecks.io pings from the production sweep ([plan](../plans/2026-09-29-watch-the-watchdog.md)).
+
 ### Infrastructure
 
 **VM.** `co-status` in `pdx`, default size, running Postgres 16, the four units and agent sessions. Notifier's memory reservation (#85: `MemoryLow=` for the API and Postgres, and the slice grants) and its earlyoom configuration are copied unchanged.

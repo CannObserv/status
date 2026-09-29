@@ -31,6 +31,7 @@ Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 | `src/core/monitors.py` | Pure: deadlines, `should_alert` (incl. the owed-alert rule), built-in wording as `Notice` |
 | `src/core/alerting.py` | **The only module that talks to notifier.** Endpoint check, idempotency keys, `send()`, request `Budget` |
 | `src/core/sweep.py` | The pass that marks missing monitors and sends/owes their alerts |
+| `src/core/heartbeat.py` | healthchecks.io pings after each production pass (#1); never fails the sweep |
 | `src/core/importer.py` | One monitor in from notifier's export, disabled |
 | `src/api/routes/monitors.py` | CRUD and the check-in |
 | `tests/fixtures/notifier-checkin-contract.json` | notifier's check-in contract, compared by `tests/api/test_contract.py` |
@@ -54,7 +55,7 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` �
 
 **The notifier API key is a systemd credential**, never an env var (D13): `LoadCredential=notifier-key:/etc/status/notifier-api{,-dev}.key` on the API and sweep units. Without it the API records check-ins and sends nothing; the sweep refuses to start.
 
-**The sweeps are the only thing watching for consumer silence, and nothing watches them yet** (#1): `systemctl list-timers 'status-sweep*'` is the check.
+**The sweeps are the only thing watching for consumer silence; healthchecks.io watches the production one** (#1): checks `co-status-sweep` and `notifier-reachable`, key `LoadCredential=hc-ping-key:/etc/status/hc-ping.key` on `status-sweep.service` only, with a `SetCredential=` fallback so a missing key never stops the sweep. Local check: `systemctl list-timers 'status-sweep*'`.
 
 Setup, routine ops and the cutover: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
@@ -123,7 +124,7 @@ Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `noti
 
 ## Detail Docs
 
-- [docs/reference/monitors.md](docs/reference/monitors.md) — the dead-man's timer: model, API, what gets sent, the owed alert, the gap
+- [docs/reference/monitors.md](docs/reference/monitors.md) — the dead-man's timer: model, API, what gets sent, the owed alert, who watches the sweep
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) — first-time setup (Phase 3), routine ops, moving a monitor from notifier
 - [docs/specs/](docs/specs/) — the MVP spec
 - [docs/plans/](docs/plans/) — the Phases 1–2 plan

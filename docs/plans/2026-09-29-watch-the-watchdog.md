@@ -22,7 +22,7 @@ Every production sweep pass pings healthchecks.io, free plan, org account, with 
 - **Module:** `src/core/heartbeat.py`, not `alerting.py`. Short timeout; every error is logged and swallowed, so a ping never fails a sweep.
 - **Production only.** The ping key is a systemd credential on `status-sweep.service` alone (D13). The dev sweep has no key and pings nothing.
 
-**A missing key must not stop the sweep.** `LoadCredential=` on a missing file fails the unit (243/CREDENTIALS; tested on this host's systemd 255). An empty `SetCredential=` is no fallback either. The unit therefore declares `SetCredential=hc-ping-key:\n` **before** `LoadCredential=hc-ping-key:/etc/status/hc-ping.key`: the file wins when present, otherwise the credential is a lone newline, which reads as "no key" (both cases verified). A missing key then shows as healthchecks alerting, which is loud, and never as a stopped sweep, which is silent.
+**A missing key must not stop the sweep.** `LoadCredential=` on a missing file fails the unit (243/CREDENTIALS; tested on this host's systemd 255). An empty `SetCredential=` is no fallback either. The unit therefore declares `SetCredential=hc-ping-key:\n` alongside `LoadCredential=hc-ping-key:/etc/status/hc-ping.key`: the file wins when present, otherwise the credential is a lone newline, which reads as "no key" (both cases verified). A missing key then shows as healthchecks alerting, which is loud, and never as a stopped sweep, which is silent.
 
 ## Tradeoffs / alternatives
 

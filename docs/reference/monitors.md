@@ -74,14 +74,22 @@ co-status delivers nothing itself (spec D5). Every alert is a `POST /api/v1/disp
 
 **A timer, not a task in the API process**, and **`TimeoutStartSec` is not decoration**: both for notifier's reasons (its monitors.md § The sweep).
 
-## The gap
+## Who watches the sweep
 
-Two failures go unannounced in the MVP (spec D10):
+**healthchecks.io, outside the cohort** ([#1](https://github.com/CannObserv/status/issues/1), `src/core/heartbeat.py`). The spec (D10) shipped two unannounced failures: co-status stopping, and notifier being down. Every production pass now pings two checks at `https://hc-ping.com/<ping-key>/<slug>`:
 
-1. **co-status stops.** If `status-sweep.timer` stops, every dead-man's timer stops with it and nothing says so. The same gap notifier had, moved rather than closed.
-2. **notifier is down.** Missing alerts are delayed and go out when it answers; recovery and report notices sent during the outage are lost. Before the extraction the sweep delivered through Apprise in-process and needed only Postgres.
+| Check | Success ping | `/fail` | Silence past the 5-minute grace |
+|---|---|---|---|
+| `co-status-sweep` | The pass completed and committed. Body: the counts. | The pass raised. Body: the exception's type, never its message. | Timer, VM, Postgres or OOM killer |
+| `notifier-reachable` | notifier's `/health` answered in production, and nothing was left `owed` | Unreachable at the start of the pass, or *n* alerts owed | The sweep itself is not running |
 
-What closes both is an external dead-man's service pinged every pass: [#1](https://github.com/CannObserv/status/issues/1).
+healthchecks alerts over its own email and Slack, **never through notifier**.
+
+- **A ping never fails a pass.** A failed ping is a `healthchecks ping … failed` warning in the journal; if it persists, the checks' silence is the alert.
+- **The key is a credential on `status-sweep.service` alone** (D13): anyone holding it can report a dead sweep as alive. Without `/etc/status/hc-ping.key`, the sweep runs, warns every pass and pings nothing. The unit's `SetCredential=` fallback exists because a missing `LoadCredential=` file would otherwise fail the unit (243), and with it every timer.
+- **The dev sweep pings nothing.**
+
+**What is still open:** notifier being down is now *announced*, not closed. Missing alerts still wait for notifier, and recovery and report notices sent during the outage are still lost. A healthchecks.io outage produces false alarms, never silence.
 
 ## Check the endpoint before the timer
 

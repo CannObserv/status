@@ -36,6 +36,11 @@ sudo tee /etc/status/notifier-api.key >/dev/null <<< 'nk_...'       # production
 sudo install -m 400 -o root -g root /dev/null /etc/status/notifier-api-dev.key
 sudo tee /etc/status/notifier-api-dev.key >/dev/null <<< 'nk_...'   # development
 
+# The healthchecks.io ping key (#1), production sweep only; § Watching the
+# sweep. Absent, the sweep runs unwatched rather than not at all.
+sudo install -m 400 -o root -g root /dev/null /etc/status/hc-ping.key
+sudo tee /etc/status/hc-ping.key >/dev/null <<< '<ping-key>'
+
 # Postgres
 sudo -u postgres psql -c "CREATE USER status WITH PASSWORD '<generated>';"
 sudo -u postgres psql -c "CREATE DATABASE status OWNER status;"
@@ -111,7 +116,37 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 **`owed` that does not drain** means notifier is not accepting alerts: check notifier's `/health` from here, and `journalctl -u status-sweep` for the reason. The alerts go out, under their original keys, on the first pass notifier accepts them.
 
-**Nothing watches this host yet** ([monitors.md § The gap](reference/monitors.md#the-gap), [#1](https://github.com/CannObserv/status/issues/1)).
+**healthchecks.io watches the sweep** ([monitors.md § Who watches the sweep](reference/monitors.md#who-watches-the-sweep)). An alert from it means:
+
+| Check down | Look at |
+|---|---|
+| `co-status-sweep`, silent | `systemctl list-timers 'status-sweep*'`, `systemctl status status-sweep`, then the VM and Postgres |
+| `co-status-sweep`, `/fail` | `journalctl -u status-sweep -n 50`; the ping body names the exception type |
+| `notifier-reachable` | notifier's `/health` from here; the `owed` count in the sweep's journal line |
+| Both silent, host fine | `journalctl -u status-sweep \| grep -i healthchecks`: a missing key or a ping that cannot get out |
+
+## Watching the sweep: healthchecks.io
+
+Org account, free plan (#1). Set up once:
+
+1. Create two checks: slugs **`co-status-sweep`** and **`notifier-reachable`**, **period 1 minute, grace 5 minutes**. That absorbs `OnBootSec=2min` and `TimeoutStartSec=120` without flapping.
+2. Attach the project's email and Slack integrations to both. Never route them through notifier: it is one of the things being watched.
+3. Copy the project's **ping key** (project Settings → Ping key) into `/etc/status/hc-ping.key`, as under First-time setup. It is a credential: never in `.env`, a tracked file or a chat.
+4. Install the unit and confirm:
+
+```bash
+sudo cp deploy/status-sweep.service /etc/systemd/system/ && sudo systemctl daemon-reload
+sudo systemctl start status-sweep.service
+journalctl -u status-sweep -n 5 -o cat | grep -i healthchecks   # nothing: every ping answered OK
+```
+
+Both checks turn green in the dashboard within a minute. **Test an alert once.** It must reach email and Slack, and the next pass turns the check green again. The key goes to curl as config on stdin, so it never appears in `ps`:
+
+```bash
+sudo sh -c 'printf "url = https://hc-ping.com/%s/co-status-sweep/fail\n" "$(cat /etc/status/hc-ping.key)" | curl -fsS -X POST -K -'
+```
+
+**Rotating the key:** healthchecks.io → project Settings → Ping key → regenerate. Then rewrite the file; the next pass reads it, and no restart is needed.
 
 ## Cutover: moving one monitor from notifier
 
@@ -228,7 +263,7 @@ notifier's disabled row stays for 7 days as the fallback. Rolling back before st
 
 ## After the cutover
 
-**The soak** (Phase 6) ends 7 days after the last handover: no earlier than 2026-10-05 18:31 UTC. Nothing watches this host (#1), so check it daily until then:
+**The soak** (Phase 6) ends 7 days after the last handover: no earlier than 2026-10-05 18:31 UTC. healthchecks.io watches the sweep (#1); check it daily anyway until then, because the counts are what the soak is about:
 
 ```bash
 systemctl list-timers 'status-sweep*'

@@ -116,7 +116,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 **`owed` that does not drain** means notifier is not accepting alerts: check notifier's `/health` from here, and `journalctl -u status-sweep` for the reason. The alerts go out, under their original keys, on the first pass notifier accepts them.
 
-**`undelivered` that does not clear** means notifier took a missing alert but a channel failed it (`failed`), or failed one of several (`partial`). `journalctl -u status-sweep | grep 'with status'` gives each dispatch id with its `monitor_id`; notifier's dispatch attempts say which channel and why. Fixing the channel does not clear it: it clears when the monitor recovers, a later renotify is delivered, or the monitor is disabled. Without `renotify_seconds` nothing resends ([#7](https://github.com/CannObserv/status/issues/7)), so tell the monitor's owner directly.
+**`undelivered` that does not clear** means notifier took a missing alert but a channel failed it (`failed`), or failed one of several (`partial`). `journalctl -u status-sweep | grep 'with status'` gives each dispatch id with its `monitor_id`; notifier's dispatch attempts say which channel and why. Fixing the channel does not clear it: it clears when the monitor recovers or a later renotify is delivered. Pausing the monitor only hides it until it is resumed. Without `renotify_seconds` nothing resends ([#7](https://github.com/CannObserv/status/issues/7)), so tell the monitor's owner directly.
 
 **healthchecks.io watches the sweep** ([monitors.md § Who watches the sweep](reference/monitors.md#who-watches-the-sweep)). An alert from it means:
 

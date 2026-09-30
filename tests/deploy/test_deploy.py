@@ -731,6 +731,20 @@ class TestOperation:
         assert result.returncode != 0
         assert "from a checkout" in result.stderr
 
+    def test_no_tailnet_address_stops_the_deploy_before_anything_switches(self, world):
+        """CR 34: verification could never pass, so the rollback would report a
+        serving old build as NOT answering. Refuse up front instead."""
+        assert_ok(world.run(world.main[0]))
+        before = world.target("live")
+        bind = world.checkout / "scripts" / "tailnet_bind.sh"
+        bind.write_text("#!/usr/bin/env bash\nexit 1\n")
+        world.reset_log()
+        result = world.run()
+        assert result.returncode == 1
+        assert "tailnet" in result.stderr
+        assert world.target("live") == before
+        assert not [c for c in world.calls() if "alembic upgrade" in c or c.startswith("sudo ")]
+
     def test_an_unknown_flag_is_refused(self, world):
         assert world.run("--live-only").returncode != 0
 

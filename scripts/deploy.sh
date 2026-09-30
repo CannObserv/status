@@ -99,6 +99,15 @@ for target in "${targets[@]}"; do
   [[ -r "$envfile" ]] || die "$envfile is missing or unreadable; the $target units need it too"
 done
 
+# The units bind the tailnet address alone, so that is where verification asks.
+# Resolved before anything switches: without it no verification could pass, and
+# the rollback would call a serving old build NOT answering (CR 34).
+host=""
+if ((restart)); then
+  host="$(STATUS_TAILNET_WAIT_SECONDS=10 "$SRC/scripts/tailnet_bind.sh" 2>/dev/null)" ||
+    die "no tailnet address to verify on (systemctl status tailscaled); nothing switched"
+fi
+
 # --- which commit ----------------------------------------------------------
 
 git -C "$SRC" fetch --quiet --prune origin
@@ -255,9 +264,7 @@ swap() { # <link> <target>: rename(2) over the old link, so there is no moment w
 }
 
 verify_http() { # <port> <build>: /ready 200 and /health naming <build>
-  local port="$1" want="$2" host health="" deadline=$((SECONDS + VERIFY_SECONDS))
-  host="$(STATUS_TAILNET_WAIT_SECONDS=10 "$SRC/scripts/tailnet_bind.sh" 2>/dev/null)" ||
-    { note "no tailnet address to verify on"; return 1; }
+  local port="$1" want="$2" health="" deadline=$((SECONDS + VERIFY_SECONDS))
   while ((SECONDS < deadline)); do
     if curl -fsS --max-time 5 "http://$host:$port/ready" >/dev/null 2>&1 &&
       health="$(curl -fsS --max-time 5 "http://$host:$port/health" 2>/dev/null)" &&

@@ -25,7 +25,8 @@
 #   5. on failure, switch back, restart, and stop. The migration stays (R7).
 #
 # Runs as exedev, the units' user; sudo for systemctl only. Exits 0 when every
-# target verified, 4 when a rollback's old build did not answer either, 1 otherwise.
+# target verified, 4 when a target is left on a build that did not answer (no
+# rollback possible, or the old build failed too), 1 otherwise.
 set -euo pipefail
 
 ROOT="${STATUS_DEPLOY_ROOT:-/srv/status}"
@@ -40,6 +41,11 @@ note() { echo "deploy: $*" >&2; }
 die() {
   note "$*"
   exit 1
+}
+# Exit 4: the target is left on a build that did not answer (CR 16, CR 25).
+dead() {
+  note "$*"
+  exit 4
 }
 
 usage() { sed -n '4,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
@@ -275,9 +281,9 @@ deploy_target() {
     note "$target is on $build"
     return
   fi
-  [[ -n "$previous" ]] || die "$target failed on $build, and there is no previous release to return to"
+  [[ -n "$previous" ]] || dead "$target failed on $build, and there is no previous release to return to"
   [[ "$previous" != "releases/$build" ]] ||
-    die "$target failed on $build, which it was already running; there is nothing to switch back to"
+    dead "$target failed on $build, which it was already running; there is nothing to switch back to"
   local old="${previous#releases/}"
   swap "$link" "$previous"
   # A crash-looping release can exhaust the unit's StartLimitBurst, and systemd
@@ -291,9 +297,8 @@ deploy_target() {
     die "$target failed on $build; switched back to $old, which is answering"
   fi
   logger -t status-deploy "$target failed on $build; switched back to $old, which is NOT answering" || true
-  note "$target failed on $build; switched back to $old, which is NOT answering:" \
+  dead "$target failed on $build; switched back to $old, which is NOT answering:" \
     "journalctl -u $api -u ${sweep%.service} -n 50"
-  exit 4
 }
 
 for target in "${targets[@]}"; do

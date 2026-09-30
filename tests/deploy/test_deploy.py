@@ -497,7 +497,7 @@ class TestVerification:
         assert_ok(world.run())
         world.reset_log()
         result = world.run(FAKE_STALE_PORT="9000")
-        assert result.returncode != 0
+        assert result.returncode == 4, "live is left on a build that did not answer (CR 25)"
         assert "already" in result.stderr
         assert "switched back" not in result.stderr
 
@@ -578,7 +578,7 @@ class TestVerification:
 
     def test_a_first_deploy_that_fails_has_nothing_to_return_to(self, world):
         result = world.run(FAKE_STALE_PORT="9001")
-        assert result.returncode != 0
+        assert result.returncode == 4, "dev is left on a build that did not answer (CR 25)"
         assert "no previous release" in result.stderr
 
 

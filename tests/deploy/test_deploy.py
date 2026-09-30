@@ -77,8 +77,7 @@ esac
 # pass still running (a timer pass that started on the old release).
 STUB_SYSTEMCTL = r"""#!/usr/bin/env bash
 echo "systemctl $*" >> "$FAKE_LOG"
-busy_file="$(dirname "$FAKE_LOG")/busy"
-[[ -f "$busy_file" ]] || echo "${FAKE_SWEEP_BUSY:-0}" > "$busy_file"
+busy_file="$(dirname "$FAKE_LOG")/busy"  # World.run writes it per run
 left="$(cat "$busy_file")"
 if [[ "$1" == show && "$left" -gt 0 ]]; then
   echo $((left - 1)) > "$busy_file"
@@ -171,6 +170,8 @@ class World:
             "FAKE_NEW_BUILD": self.build(self.main[-1]),
             **fake,
         }
+        # Per run, not per world: FAKE_SWEEP_BUSY holds for any run (CR 19).
+        (self.tmp / "busy").write_text(fake.get("FAKE_SWEEP_BUSY", "0"))
         return subprocess.run(
             [str(self.checkout / "scripts" / "deploy.sh"), *args],
             cwd=self.tmp,
@@ -518,6 +519,13 @@ class TestVerification:
         polls = [i for i, c in enumerate(calls) if c.startswith("systemctl show")]
         assert len(polls) == 3, "two busy answers, then the idle one"
         assert max(polls) < start
+
+    def test_the_busy_stub_holds_for_a_later_run_in_the_same_world(self, world):
+        """CR 19: the counter was set by a world's first run and kept after."""
+        assert_ok(world.run("--dev"))
+        world.reset_log()
+        assert_ok(world.run("--dev", FAKE_SWEEP_BUSY="2"))
+        assert len([c for c in world.calls() if c.startswith("systemctl show")]) == 3
 
     def test_a_first_deploy_that_fails_has_nothing_to_return_to(self, world):
         result = world.run(FAKE_STALE_PORT="9001")

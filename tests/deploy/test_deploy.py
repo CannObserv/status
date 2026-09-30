@@ -409,6 +409,17 @@ class TestReleases:
         assert (release / "version.txt").exists()
         assert not [c for c in world.calls() if " sync " in c]
 
+    def test_a_linked_release_deleted_by_hand_is_built_again(self, world):
+        """CR 32: nothing runs from a directory that is gone; building it is the fix."""
+        assert_ok(world.run(world.main[0]))
+        release = world.root / "releases" / world.build(world.main[0])
+        for path in [release, *release.rglob("*")]:
+            if not path.is_symlink():
+                path.chmod(path.stat().st_mode | 0o200)
+        shutil.rmtree(release)
+        assert_ok(world.run("--dev", world.main[0]))
+        assert (release / "REVISION").exists()
+
     def test_a_writable_release_is_never_reused(self, world):
         """CR 26: uv rebuilds a writable release's broken venv empty and says 0.
 

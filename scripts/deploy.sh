@@ -192,7 +192,9 @@ if [[ -z "$why" ]]; then
   note "reusing release $build"
 else
   running="$(linked_by | paste -sd' ')"
-  [[ -z "$running" ]] ||
+  # Unless it is gone altogether: nothing runs from a missing directory, and
+  # building it is the repair (CR 32).
+  [[ -z "$running" || "$why" == "not built" ]] ||
     die "release $build is $why, and $running runs it." \
       "Deploy another build to $running first; this one is then rebuilt."
   [[ "$why" == "not built" ]] || note "release $build is $why; rebuilding"

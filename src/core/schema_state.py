@@ -151,7 +151,10 @@ async def main(
     """
     try:
         async with (factory or get_session_factory())() as session:
-            state = await schema_state(session)
+            revision = await database_revision(session)
+        script = _shipped_scripts()
+        state = classify(revision, script)
+        head = code_head(script)
     except (SQLAlchemyError, OSError) as exc:
         # The type only: a driver message can carry the connection string.
         print(f"schema_state: cannot reach the database: {type(exc).__name__}", file=sys.stderr)
@@ -162,6 +165,14 @@ async def main(
             file=sys.stderr,
         )
         return EXIT_UNREADABLE
+    if state is SchemaState.AHEAD:
+        # "A revision this code does not know" is a newer release, or a branch
+        # migration that was deployed to dev and never merged (CR 7).
+        print(
+            f"schema_state: database at {revision}, unknown to this code (head {head}): "
+            "a newer release, or a branch migration never merged",
+            file=sys.stderr,
+        )
     print(state.value)
     return EXIT_BEHIND if state in FAILING else EXIT_OK
 

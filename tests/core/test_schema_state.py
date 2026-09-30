@@ -139,7 +139,10 @@ class TestMain:
     async def test_ahead_exits_0(self, db_session, capsys):
         await db_session.execute(text("UPDATE alembic_version SET version_num = 'ffffffffffff'"))
         assert await schema_state.main(_factory_for(db_session)) == 0
-        assert capsys.readouterr().out.strip() == "ahead"
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "ahead"
+        # CR 7: which revision, since "ahead" is also an orphaned branch migration.
+        assert "ffffffffffff" in captured.err
 
     async def test_behind_exits_3(self, db_session, oldest, capsys):
         await db_session.execute(text("UPDATE alembic_version SET version_num = :r"), {"r": oldest})

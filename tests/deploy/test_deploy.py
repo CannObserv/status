@@ -359,6 +359,9 @@ class TestMigrations:
         assert_ok(result)
         assert not [c for c in world.calls() if "alembic upgrade" in c]
         assert "ahead" in result.stderr
+        # CR 7: or a branch migration nobody merged, which would stop dev
+        # rehearsing migrations for good.
+        assert "branch" in result.stderr
 
     @pytest.mark.parametrize("state", ["behind", "unmigrated"])
     def test_a_database_behind_is_migrated(self, world, state):

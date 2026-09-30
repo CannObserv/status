@@ -173,7 +173,9 @@ migrate() {
   case "$rc:$state" in
     0:current | 3:behind | 3:unmigrated) ;;
     0:ahead)
-      note "$target: database is ahead of $build (a rollback); not migrating"
+      note "$target: database is ahead of $build; not migrating. Expected for a rollback."
+      note "Otherwise it holds a branch migration that was never merged: downgrade it" \
+        "(docs/DEPLOYMENT.md § Branch migrations), or dev stops rehearsing migrations."
       return
       ;;
     *) die "$target: cannot read the schema state (exit $rc); nothing switched" ;;

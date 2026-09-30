@@ -76,6 +76,15 @@ Work in a worktree (the `using-git-worktrees` skill). To run your code on :9001:
 
 A later `deploy.sh` restarts `status-dev`, so stop the hand-run server first.
 
+### Branch migrations
+
+`--dev origin/<branch>` migrates `status_dev` to the branch's head. If that migration is later rewritten or abandoned, `status_dev` is left at a revision `main` never knows. Every later deploy then reads the schema as `ahead`, skips migrating as if it were a rollback, and dev stops rehearsing migrations. It says so: `database at <rev>, unknown to this code`. Before abandoning or rewriting a branch migration, downgrade `status_dev` from the branch's checkout:
+
+```bash
+. scripts/load_env.sh
+DATABASE_URL="$DEV_DATABASE_URL" uv run alembic downgrade <revision main knows>
+```
+
 ## Health checks
 
 **On this VM, `curl http://127.0.0.1:9000/health` fails.** The units bind the tailnet address alone:

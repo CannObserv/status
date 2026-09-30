@@ -211,3 +211,6 @@ def test_the_503_is_one_model_so_generated_clients_keep_the_detail():
     assert schema["schema"] == {"$ref": "#/components/schemas/NotReadyResponse"}
     fields = spec["components"]["schemas"]["NotReadyResponse"]["properties"]
     assert {"status", "db", "database", "environment", "schema_state"} <= set(fields)
+    # CR 18: omitted when unknown, never null, so no generated client types them nullable.
+    for name in ("database", "environment", "schema_state"):
+        assert fields[name].get("type") == "string", fields[name]

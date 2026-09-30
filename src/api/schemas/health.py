@@ -8,6 +8,7 @@ belongs in ``/openapi.json``.
 """
 
 from pydantic import BaseModel
+from pydantic.json_schema import SkipJsonSchema
 
 
 class HealthResponse(BaseModel):
@@ -60,6 +61,8 @@ class NotReadyResponse(BaseModel):
 
     status: str
     db: bool
-    database: str | None = None
-    environment: str | None = None
-    schema_state: str | None = None
+    # SkipJsonSchema: absent when unknown, never null, so the published schema
+    # is a plain string and no generated client types these nullable (CR 18).
+    database: str | SkipJsonSchema[None] = None
+    environment: str | SkipJsonSchema[None] = None
+    schema_state: str | SkipJsonSchema[None] = None

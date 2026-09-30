@@ -33,7 +33,7 @@ Two further problems share this cause:
 | **R10** | **Build id is the release's `REVISION`, read by the app** (`src/core/build.py`). There is no `ExecStartPre` git stamp. It is `dev` when absent. The sweep logs `build` on every pass. | The code that ran reports itself. It is correct for the sweep, which never had a stamp, and it needs no git in a release. |
 | **R11** | **Env:** live units read `/etc/status/.env` only. Dev units read `/etc/status/dev.env` (`DEV_DATABASE_URL`, `root:exedev 0640`). **No unit reads a repo `.env`.** | Removes the PATs and API keys from production's environment (broker#22 Q6). A release has no `.env` anyway. |
 | **R12** | **Dev is deployed, not an exception.** `scripts/deploy.sh --dev <ref>` puts any pushed ref on `:9001`. The inner loop is `scripts/dev_server.sh` run by hand from a worktree, after `sudo systemctl stop status-dev`, as before. | broker#22 Q11: no named loophole. The dev endpoint carries watcher's non-production traffic, so it deserves a deploy too. |
-| **R13** | **`scripts/deploy.sh` runs as `exedev`,** with `sudo` for `systemctl` only, serialized by `flock`. It keeps the 5 newest releases plus whatever `live` and `dev` point at. | A deploy should be runnable by an agent or an operator alike. The retention covers several rollbacks and costs about 100 MB. |
+| **R13** | **`scripts/deploy.sh` runs as `exedev`,** with `sudo` for `systemctl` only, serialized by `flock`. It keeps the 5 most recently deployed releases plus whatever `live` and `dev` point at. | A deploy should be runnable by an agent or an operator alike. The retention covers several rollbacks and costs about 100 MB. |
 
 **Deferred** (none blocks this):
 
@@ -54,12 +54,12 @@ Two further problems share this cause:
 4. **For each target** (`dev`, then `live`), with its environment file:
    1. Read the schema state from the new release. Unless it is `ahead`, run `alembic upgrade head` (R9).
    2. Record the old target, then swap the symlink (`ln -s` to a temporary name, then `mv -T`).
-   3. `sudo systemctl restart` the API unit, then `sudo systemctl start` the sweep service, which waits for the pass.
+   3. `sudo systemctl restart` the API unit. Wait out any sweep pass already running, because it started on the old release and `start` would join it. Then `sudo systemctl start` the sweep service, which waits for the pass.
    4. Verify: the sweep exited 0; `/ready` is 200 with `schema` `current` or `ahead`; `/health` `build` equals `<build>`. Poll up to 60 s, on the tailnet address.
-   5. If verification fails, swap back, restart, and exit 1, naming the step.
+   5. If verification fails, swap back, `reset-failed` (a crash loop may have hit the start limit), restart, check that the old build answers, and exit 1, naming the step. A failure on live leaves dev on the new build.
 5. **Prune** (R13).
 
-Every external command goes through a variable (`GIT`, `UV`, `SYSTEMCTL`, `CURL`) and the root through `STATUS_DEPLOY_ROOT`, so the tests run the script against a throwaway directory with stub commands.
+The root and env directory come from `STATUS_DEPLOY_ROOT` and `STATUS_DEPLOY_ENV_DIR`. The tests run the script against a throwaway root and a temporary origin, with stub `uv`, `sudo`, `systemctl`, `curl`, `logger` and `rm` on `PATH`.
 
 ### Units
 
@@ -76,7 +76,7 @@ Every external command goes through a variable (`GIT`, `UV`, `SYSTEMCTL`, `CURL`
 The check is used in three places:
 
 - **Sweep:** inside `run_sweep`'s `try`, before the pass, so a behind schema sends `/fail` with body `SchemaBehind`.
-- **API:** `/ready`, with a `schema` field on both payloads.
+- **API:** `/ready`, with `schema_state` on the 200 payload, and on the 503 whenever the database was reached (one `NotReadyResponse` model).
 - **Deploy and `dev_server.sh`:** the CLI `python -m src.core.schema_state`, which prints the state. Exit 0 means `current` or `ahead`, 3 means `behind` or `unmigrated`, 2 means anything else (unreachable, refused, crashed); never 1, which is any uncaught exception. This replaces `dev_server.sh`'s bash `alembic current` test.
 
 ## broker#22's questions

@@ -14,7 +14,8 @@ Four states, from ``alembic_version`` against the code's single Alembic head:
   a failure.
 - ``unmigrated``: no revision at all.
 
-Nothing here refuses a start (broker#22 goal 3). The sweep fails its pass, which
+Nothing here refuses a start (broker#22 goal 3); only ``scripts/dev_server.sh``
+chooses to, for the developer at the keyboard. The sweep fails its pass, which
 also sends ``/fail`` to healthchecks.io; ``/ready`` answers 503. Run as a module,
 it prints the state for ``scripts/deploy.sh`` and ``scripts/dev_server.sh``, and
 exits 0 (current, ahead), 3 (behind, unmigrated) or 2 (anything else: unreachable,

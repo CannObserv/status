@@ -34,10 +34,10 @@ scripts/deploy.sh --help
 1. **Migrate** the target's database. This is skipped when the database is *ahead* of the release, which is what a rollback looks like.
 2. **Switch** the symlink (an atomic rename).
 3. **Restart** the API, then force one sweep pass. Any pass already running started on the old release, so the deploy first waits for it to end: `systemctl start` on a oneshot mid-pass joins that pass rather than starting another. `systemctl start` then waits for the new pass to finish.
-4. **Verify.** The pass must exit 0, `/ready` must be 200, and `/health` must report `build` equal to `<build>`, all within 60 s.
+4. **Verify.** The pass must exit 0, bounded by the unit's `TimeoutStartSec=120`. Then, within 60 s, `/ready` must be 200 and `/health` must report `build` equal to `<build>`.
 5. **On failure,** switch back, clear the unit's start limit, restart, check that the old build answers, and exit non-zero naming the step and whether the old build came back. The migration stays applied.
 
-A failure on dev stops the deploy before live is touched. The deploy keeps the 5 most recently deployed releases, plus whatever `live` and `dev` point at. Every switch and rollback is logged: `journalctl -t status-deploy`.
+A failure on dev stops the deploy before live is touched. A failure on live leaves dev on the new build, so redeploy dev from the old build if that matters. The deploy keeps the 5 most recently deployed releases, plus whatever `live` and `dev` point at. Every switch and rollback is logged: `journalctl -t status-deploy`.
 
 ## Rules the design depends on
 
@@ -65,7 +65,7 @@ The old release still exists (within the 5 kept), so nothing is rebuilt. Its Ale
 | `behind` | fails: `SchemaBehind`, `/fail` ping | 503, names the database | refuses; prints the migration |
 | `unmigrated` | fails, as `behind` | 503 | refuses |
 
-Nothing refuses to start a unit: a refused API start would record no check-ins at all. `python -m src.core.schema_state` prints the state, and exits 0 for `current` or `ahead`, 3 for `behind` or `unmigrated`, and 2 for anything else (unreachable, refused by `db_safety`, crashed). `deploy.sh` migrates only on a state it printed.
+Nothing refuses to start a unit, because a refused API start would record no check-ins at all. The one exception is `dev_server.sh`, which refuses `behind` or `unmigrated` (it already refused an unmigrated database, notifier#23). `python -m src.core.schema_state` prints the state, and exits 0 for `current` or `ahead`, 3 for `behind` or `unmigrated`, and 2 for anything else (unreachable, refused by `db_safety`, crashed). `deploy.sh` migrates only on a state it printed.
 
 ## Development
 

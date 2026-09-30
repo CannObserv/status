@@ -458,8 +458,34 @@ class TestVerification:
         """The old build not answering either is the loudest failure there is."""
         assert_ok(world.run(world.main[0]))
         result = world.run(FAKE_STALE_PORT="9000", FAKE_STALE_ALWAYS="1")
-        assert result.returncode != 0
+        assert result.returncode == 4, "distinct from a clean rollback's 1 (CR 16)"
         assert "NOT answering" in result.stderr
+        logged = [c for c in world.calls() if c.startswith("logger ")]
+        assert not [c for c in logged if "rolled back to" in c], "never claim it"
+        assert [c for c in logged if "NOT answering" in c]
+
+    def test_a_rollback_proves_the_old_sweep_too(self, world):
+        """CR 16: a migration that was not really expand-only breaks the old
+        sweep, not the old API; the rollback must find out now, not at the
+        next timer pass."""
+        assert_ok(world.run(world.main[0]))
+        world.reset_log()
+        assert world.run(FAKE_STALE_PORT="9000").returncode == 1
+        calls = world.calls()
+        restarts = [i for i, c in enumerate(calls) if c == "sudo systemctl restart status"]
+        passes = [i for i, c in enumerate(calls) if c == "sudo systemctl start status-sweep.service"]
+        assert len(passes) == 2 and passes[1] > restarts[1]
+        logged = [c for c in calls if c.startswith("logger ")]
+        assert [c for c in logged if "rolled back to" in c]
+
+    def test_redeploying_the_running_build_has_nothing_to_switch_back_to(self, world):
+        """CR 16: previous == new; "switched back" would be a lie."""
+        assert_ok(world.run())
+        world.reset_log()
+        result = world.run(FAKE_STALE_PORT="9000")
+        assert result.returncode != 0
+        assert "already" in result.stderr
+        assert "switched back" not in result.stderr
 
     def test_a_failing_sweep_pass_is_switched_back(self, world):
         assert_ok(world.run(world.main[0]))

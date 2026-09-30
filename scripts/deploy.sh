@@ -24,7 +24,8 @@
 #   4. verify: the pass exited 0, /ready is 200, /health names this build
 #   5. on failure, switch back, restart, and stop. The migration stays (R7).
 #
-# Runs as exedev, the units' user; sudo for systemctl only.
+# Runs as exedev, the units' user; sudo for systemctl only. Exits 0 when every
+# target verified, 4 when a rollback's old build did not answer either, 1 otherwise.
 set -euo pipefail
 
 ROOT="${STATUS_DEPLOY_ROOT:-/srv/status}"
@@ -270,16 +271,24 @@ deploy_target() {
     return
   fi
   [[ -n "$previous" ]] || die "$target failed on $build, and there is no previous release to return to"
+  [[ "$previous" != "releases/$build" ]] ||
+    die "$target failed on $build, which it was already running; there is nothing to switch back to"
+  local old="${previous#releases/}"
   swap "$link" "$previous"
   # A crash-looping release can exhaust the unit's StartLimitBurst, and systemd
-  # then refuses this restart too. Clear it, and prove the old build answers
-  # before saying it does (CR 3).
+  # then refuses this restart too. Clear it, then prove the old build as the new
+  # one was proved: its API and a sweep pass, since a migration that was not
+  # really expand-only breaks the old sweep before anything else (CR 3, CR 16).
   sudo systemctl reset-failed "$api" || true
   sudo systemctl restart "$api" || true
-  logger -t status-deploy "$target rolled back to ${previous#releases/} after $build failed" || true
-  verify_http "$port" "${previous#releases/}" ||
-    die "$target failed on $build; switched back to ${previous#releases/}, which is NOT answering: journalctl -u $api -n 50"
-  die "$target failed on $build; switched back to ${previous#releases/}, which is answering"
+  if wait_for_idle_sweep "$sweep" && sudo systemctl start "$sweep" && verify_http "$port" "$old"; then
+    logger -t status-deploy "$target rolled back to $old after $build failed" || true
+    die "$target failed on $build; switched back to $old, which is answering"
+  fi
+  logger -t status-deploy "$target failed on $build; switched back to $old, which is NOT answering" || true
+  note "$target failed on $build; switched back to $old, which is NOT answering:" \
+    "journalctl -u $api -u ${sweep%.service} -n 50"
+  exit 4
 }
 
 for target in "${targets[@]}"; do

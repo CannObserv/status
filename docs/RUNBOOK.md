@@ -4,7 +4,7 @@ Setting up the co-status VM, running it, and moving monitors over from notifier.
 
 ## First-time setup
 
-**Run 2026-09-28 (Phase 3)** on `co-status`: node `status`, `100.88.216.92`, `tag:status`. Corrected against the machine where it was wrong.
+**Run 2026-09-28 (Phase 3)** on `co-status`: node `status`, `100.88.216.92`, `tag:status`. Corrected against the machine where it was wrong. The units moved from the development checkout to `/srv/status` releases on 2026-09-30 (#9).
 
 Prerequisites the operator supplies (spec § Infrastructure): `TAILSCALE_KEY_STATUS` (single-tag `tag:status`, pre-approved, non-ephemeral), the ACL rows, and both notifier API keys.
 
@@ -47,21 +47,23 @@ sudo -u postgres psql -c "CREATE DATABASE status OWNER status;"
 sudo -u postgres psql -c "CREATE DATABASE status_test OWNER status;"
 sudo -u postgres psql -c "CREATE DATABASE status_dev OWNER status;"
 
-# The dev endpoint's database, in the git-ignored repo .env — never in
-# /etc/status/.env, which is the production file.
-cd /home/exedev/status
-grep -q '^DEV_DATABASE_URL=' .env 2>/dev/null || \
-  echo 'DEV_DATABASE_URL=postgresql+asyncpg://status:<generated>@localhost:5432/status_dev' >> .env
+# The dev units' database (#9, R11): its own file, never /etc/status/.env,
+# which is the production file. The development checkout's git-ignored .env
+# carries DEV_DATABASE_URL and TEST_DATABASE_URL too, for hand-run servers and
+# pytest; no unit reads it.
+sudo install -m 640 -o root -g exedev /dev/null /etc/status/dev.env
+echo 'DEV_DATABASE_URL=postgresql+asyncpg://status:<generated>@localhost:5432/status_dev' \
+  | sudo tee /etc/status/dev.env > /dev/null
 
-# Dependencies, then migrations on both databases: an unmigrated status_dev
-# makes status-dev refuse to start.
-uv sync
-. scripts/load_env.sh
-uv run alembic upgrade head
-DATABASE_URL="$DEV_DATABASE_URL" uv run alembic upgrade head
+# The deploy root (docs/DEPLOYMENT.md). The first deploy builds a release from
+# origin/main, migrates status_dev then status, and links both targets;
+# --no-restart because no unit is installed yet.
+sudo mkdir /srv/status && sudo chown exedev: /srv/status
+cd /home/exedev/status && scripts/deploy.sh --no-restart
 
-# Units: the API on :9000, the dev API on :9001, and both sweeps. The sweep
-# *timers* are enabled; their .service units are started by the timers.
+# Units: the API on :9000, the dev API on :9001, and both sweeps, all running
+# /srv/status/{live,dev}. The sweep *timers* are enabled; their .service units
+# are started by the timers.
 sudo cp deploy/status.service deploy/status-dev.service \
         deploy/status-sweep.service deploy/status-sweep.timer \
         deploy/status-sweep-dev.service deploy/status-sweep-dev.timer \
@@ -107,8 +109,10 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 | Situation | Action |
 |---|---|
-| Code committed to main | `sudo systemctl restart status status-dev` |
-| After model changes | `. scripts/load_env.sh && uv run alembic upgrade head`, the same with `DATABASE_URL="$DEV_DATABASE_URL"`, then restart both |
+| Ship what is on `origin/main` | `scripts/deploy.sh`: migrates, switches, restarts and verifies dev and then live, and switches back on failure ([DEPLOYMENT.md](DEPLOYMENT.md)) |
+| Try a pushed branch on :9001 | `scripts/deploy.sh --dev origin/<branch>` |
+| Roll back | `journalctl -t status-deploy -n 20`, then `scripts/deploy.sh <previous build>` |
+| What is running | `readlink /srv/status/live /srv/status/dev`; `build` in `/health` and in every sweep line |
 | Is the sweep firing? | `systemctl list-timers 'status-sweep*'` |
 | What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable`, `undelivered` every pass |
 | Force a pass | `sudo systemctl start status-sweep.service` |

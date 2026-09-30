@@ -33,6 +33,8 @@ Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 | `src/core/sweep.py` | The pass that marks missing monitors and sends/owes their alerts |
 | `src/core/heartbeat.py` | healthchecks.io pings after each production pass (#1); never fails the sweep |
 | `src/core/importer.py` | One monitor in from notifier's export, disabled |
+| `src/core/schema_state.py` | Database vs the code's Alembic head; `behind` fails a pass and `/ready`, never a start (#9) |
+| `src/core/build.py` | Build id = the release's `REVISION`, else `dev` |
 | `src/api/routes/monitors.py` | CRUD and the check-in |
 | `tests/fixtures/notifier-checkin-contract.json` | notifier's check-in contract, compared by `tests/api/test_contract.py` |
 
@@ -49,7 +51,7 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` �
 | Sweep (live / dev) | systemd timer, 60s | `status` / `status_dev` |
 | Public status pages | **8000 — reserved; nothing binds it in the MVP** | — |
 
-**This checkout is the deployment.** Every unit above runs from `/home/exedev/status`, working tree included. The sweeps reload the code every pass, so a model change that adds a column breaks both of them **on save**. Do schema work in a worktree, or migrate `status_dev` and `status` first (RUNBOOK § Routine ops), then `sudo systemctl restart status status-dev`. `/health` is on the tailnet address, not localhost.
+**Units run releases, never a checkout** (#9): `/srv/status/{live,dev}` → `releases/<build>`, a read-only `git archive` of one pushed commit with its own venv. Nothing done in a checkout reaches a unit until deployed. **Shipping is `scripts/deploy.sh`** (dev, then live: migrate, switch, restart, verify, switch back on failure). That replaces `shipping-work-python-fastapi`'s migrate-then-restart step. **Migrations are expand-only**: the previous release must run on the new schema. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). `/health` is on the tailnet address, not localhost.
 
 **Which notifier is derived, never configured:** production → `http://notifier:9000`, development → `http://notifier:9001`, from co-status's own database name.
 
@@ -64,7 +66,9 @@ Setup, routine ops and the cutover: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 Two env files, loaded in order by `scripts/load_env.sh` (later values override):
 
 1. **`/etc/status/.env`** — production secrets (`DATABASE_URL`); on the co-status VM only.
-2. **`.env`** (repo root, git-ignored) — `TEST_DATABASE_URL`, `DEV_DATABASE_URL`. Never commit it.
+2. **`.env`** (repo root, git-ignored) — `TEST_DATABASE_URL`, `DEV_DATABASE_URL`. Never commit it. For pytest and hand-run servers; no unit reads it.
+
+Units read `/etc/status/` only: live `.env`, dev `dev.env` (`DEV_DATABASE_URL`).
 
 Source them with `. scripts/load_env.sh`; never word-split through `xargs`.
 
@@ -82,7 +86,7 @@ uv run pre-commit install                     # once per clone
 
 ## Server Lifecycle
 
-**Never hand-run uvicorn.** `scripts/serve.sh` (production unit) and `scripts/dev_server.sh` (dev unit, or by hand after `sudo systemctl stop status-dev`) are the only launchers; `src/core/db_safety.py` refuses a database not ending `_test`/`_dev` unless the unit opts in with `STATUS_ALLOW_PROD_DB=1`.
+**Never hand-run uvicorn.** `scripts/serve.sh` (production unit) and `scripts/dev_server.sh` (dev unit, or by hand from a worktree after `sudo systemctl stop status-dev`) are the only launchers; `src/core/db_safety.py` refuses a database not ending `_test`/`_dev` unless the unit opts in with `STATUS_ALLOW_PROD_DB=1`. Launchers `uv run --frozen --no-sync`: in a checkout, `uv sync` yourself.
 
 ## Agent Skills
 
@@ -126,5 +130,6 @@ Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `noti
 
 - [docs/reference/monitors.md](docs/reference/monitors.md) — the dead-man's timer: model, API, what gets sent, the owed alert, who watches the sweep
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) — first-time setup (Phase 3), routine ops, moving a monitor from notifier
-- [docs/specs/](docs/specs/) — the MVP spec
-- [docs/plans/](docs/plans/) — the Phases 1–2 plan
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — releases, `deploy.sh`, rollback, the schema check, health checks
+- [docs/specs/](docs/specs/) — the MVP spec; the deploy spec (#9)
+- [docs/plans/](docs/plans/) — the Phases 1–2 plan and later ones

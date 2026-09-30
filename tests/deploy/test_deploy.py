@@ -473,7 +473,9 @@ class TestVerification:
         assert world.run(FAKE_STALE_PORT="9000").returncode == 1
         calls = world.calls()
         restarts = [i for i, c in enumerate(calls) if c == "sudo systemctl restart status"]
-        passes = [i for i, c in enumerate(calls) if c == "sudo systemctl start status-sweep.service"]
+        passes = [
+            i for i, c in enumerate(calls) if c == "sudo systemctl start status-sweep.service"
+        ]
         assert len(passes) == 2 and passes[1] > restarts[1]
         logged = [c for c in calls if c.startswith("logger ")]
         assert [c for c in logged if "rolled back to" in c]

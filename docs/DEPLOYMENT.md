@@ -33,9 +33,9 @@ scripts/deploy.sh --help
 
 1. **Migrate** the target's database. This is skipped when the database is *ahead* of the release, which is what a rollback looks like.
 2. **Switch** the symlink (an atomic rename).
-3. **Restart** the API, then force one sweep pass. Any pass already running started on the old release, so the deploy first waits for it to end: `systemctl start` on a oneshot mid-pass joins that pass rather than starting another. `systemctl start` then waits for the new pass to finish.
+3. **Restart** the API, then force one sweep pass. Any pass already running started on the old release, so the deploy first waits for it to end (up to 150 s): `systemctl start` on a oneshot mid-pass joins that pass rather than starting another. `systemctl start` then waits for the new pass to finish.
 4. **Verify.** The pass must exit 0, bounded by the unit's `TimeoutStartSec=120`. Then, within 60 s, `/ready` must be 200 and `/health` must report `build` equal to `<build>`.
-5. **On failure,** switch back, clear the unit's start limit, restart, check that the old build answers, and exit non-zero naming the step and whether the old build came back. The migration stays applied.
+5. **On failure,** switch back, clear the unit's start limit, restart, and prove the old build the same way: its sweep pass, then its API. Exit 1 when the old build answers and 4 when it does not, naming the step either way. The journal records the outcome only after that check. The migration stays applied. A deploy of the build a target already ran has nothing to switch back to, and says so.
 
 A failure on dev stops the deploy before live is touched. A failure on live leaves dev on the new build, so redeploy dev from the old build if that matters. The deploy keeps the 5 most recently deployed releases, plus whatever `live` and `dev` point at. Every switch and rollback is logged: `journalctl -t status-deploy`.
 
@@ -52,7 +52,7 @@ journalctl -t status-deploy -n 20      # "live -> <build> (was releases/<old>)"
 scripts/deploy.sh <old build>          # still on origin/main, so it may go live
 ```
 
-The old release still exists (within the 5 kept), so nothing is rebuilt. Its Alembic does not know the newer revision, so the schema reads `ahead` and the migration is skipped. By the expand-only rule, the old code runs. A rollback never downgrades the schema.
+The old release still exists (within the 5 kept), so nothing is rebuilt, unless its venv no longer runs. A release that `live` or `dev` still runs is never rebuilt in place: the deploy stops, names the target, and asks for another build there first. Its Alembic does not know the newer revision, so the schema reads `ahead` and the migration is skipped. By the expand-only rule, the old code runs. A rollback never downgrades the schema.
 
 ## The schema check
 

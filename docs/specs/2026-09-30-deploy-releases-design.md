@@ -50,13 +50,13 @@ Two further problems share this cause:
 
 1. **Refuse** if running as root, or if another deploy holds the lock.
 2. **Resolve.** `git fetch --prune origin` in the checkout the script sits in, then resolve `<ref>` to a commit and check it (R3).
-3. **Build** `releases/<build>` unless a complete one exists (R4). `<build>` is `git rev-parse --short=12`. Before building, check that the release has exactly one Alembic head.
+3. **Build** `releases/<build>` unless a complete one exists whose venv still runs (R4). One that no longer runs is rebuilt only if no target links it; otherwise the deploy stops. `<build>` is `git rev-parse --short=12`. Before building, check that the release has exactly one Alembic head.
 4. **For each target** (`dev`, then `live`), with its environment file:
-   1. Read the schema state from the new release. Unless it is `ahead`, run `alembic upgrade head` (R9).
+   1. Read the schema state from the new release. For `current`, `behind` or `unmigrated`, run `alembic upgrade head`; for `ahead`, skip it (R9). Any other result (refused, unreachable, crashed) aborts before anything switches.
    2. Record the old target, then swap the symlink (`ln -s` to a temporary name, then `mv -T`).
    3. `sudo systemctl restart` the API unit. Wait out any sweep pass already running, because it started on the old release and `start` would join it. Then `sudo systemctl start` the sweep service, which waits for the pass.
-   4. Verify: the sweep exited 0; `/ready` is 200 with `schema` `current` or `ahead`; `/health` `build` equals `<build>`. Poll up to 60 s, on the tailnet address.
-   5. If verification fails, swap back, `reset-failed` (a crash loop may have hit the start limit), restart, check that the old build answers, and exit 1, naming the step. A failure on live leaves dev on the new build.
+   4. Verify: the sweep exited 0; `/ready` is 200 (so `schema_state` is `current` or `ahead`); `/health` `build` equals `<build>`. Poll up to 60 s, on the tailnet address.
+   5. If verification fails, swap back, `reset-failed` (a crash loop may have hit the start limit), restart, prove the old build with a sweep pass and `/ready`/`/health`, and exit 1 (old build answering) or 4 (not), naming the step. A failure on live leaves dev on the new build.
 5. **Prune** (R13).
 
 The root and env directory come from `STATUS_DEPLOY_ROOT` and `STATUS_DEPLOY_ENV_DIR`. The tests run the script against a throwaway root and a temporary origin, with stub `uv`, `sudo`, `systemctl`, `curl`, `logger` and `rm` on `PATH`.

@@ -1,7 +1,7 @@
 ---
 title: Deploy releases — production stops running the working tree (#9)
 date: 2026-09-30
-status: in progress
+status: done
 ---
 
 # Deploy releases
@@ -63,7 +63,7 @@ Each is TDD, in the worktree `9-deploy-releases`. The development checkout is st
    - RUNBOOK: setup and Routine ops.
    - New `docs/DEPLOYMENT.md`.
    - monitors.md, and the `/health` docstrings.
-8. **Cutover** (spec § Cutover). Merge, push, CI green, then deploy and switch the units. Verify `build`, `/ready`, the timers, and healthchecks.io. Comment on #2 and #9.
+8. **Cutover** (spec § Cutover). **Done 2026-09-30 22:59Z**: `fad715ea7eef` live and dev, both verified. Merge, push, CI green, then deploy and switch the units. Verify `build`, `/ready`, the timers, and healthchecks.io. Comment on #2 and #9.
 
 ## Open questions / risks
 

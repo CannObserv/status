@@ -122,7 +122,6 @@ make_writable() { chmod -R u+w "$1"; }
 
 build_release() {
   if [[ -e "$release" ]]; then
-    note "removing an interrupted or broken build of $build"
     make_writable "$release"
     rm -rf "$release"
   fi
@@ -156,23 +155,39 @@ linked_by() { # the targets whose link names this release
 # A release a target runs is never rebuilt in place: that pulls the code out
 # from under its sweep and API, unverified, and a failed sync leaves the target
 # with no release at all (CR 15).
-if [[ ! -f "$release/REVISION" ]]; then
-  build_release
-elif [[ -w "$release" ]]; then
-  # Finished releases are read-only. A writable one was cut short between
-  # REVISION and chmod, or half-pruned, and uv would quietly rebuild its venv
-  # empty rather than fail the probe below (CR 26).
-  probe="writable, so never finished"
-  [[ -z "$(linked_by)" ]] || die "release $build is $probe, and $(linked_by | paste -sd' ') runs it."
-  note "release $build is $probe; rebuilding"
-  build_release
-elif probe="$(in_release python -c 'import fastapi, sqlalchemy, alembic' 2>&1)"; then
+# Why this release cannot be reused as it stands; nothing when it can.
+#   - No REVISION: an interrupted build (R4).
+#   - Writable: finished releases are read-only, so this one was cut short
+#     between REVISION and chmod, or half-pruned; uv would quietly rebuild its
+#     venv empty rather than fail the probe (CR 26).
+#   - The probe fails: its venv no longer runs, say a uv-managed interpreter
+#     since removed (CR 9). It imports dependencies, as `import sys` passes on
+#     an empty venv.
+unusable() {
+  local out
+  if [[ ! -e "$release" ]]; then
+    echo "not built"
+  elif [[ ! -f "$release/REVISION" ]]; then
+    echo "an interrupted build"
+  elif [[ -w "$release" ]]; then
+    echo "writable, so never finished"
+  elif ! out="$(in_release python -c 'import fastapi, sqlalchemy, alembic' 2>&1)"; then
+    echo "a venv that no longer runs (${out:-no output})"
+  fi
+}
+
+# A release a target runs is never rebuilt in place, whatever is wrong with it:
+# that pulls the code out from under its sweep and API, unverified, and a
+# failed sync leaves the target with no release at all (CR 15, CR 27).
+why="$(unusable)"
+if [[ -z "$why" ]]; then
   note "reusing release $build"
-elif [[ -n "$(linked_by)" ]]; then
-  die "release $build no longer runs (${probe:-no output}), and $(linked_by | paste -sd' ') runs it." \
-    "Deploy another build to $(linked_by | paste -sd' ') first; this one is then rebuilt."
 else
-  note "release $build no longer runs (${probe:-no output}); rebuilding"
+  running="$(linked_by | paste -sd' ')"
+  [[ -z "$running" ]] ||
+    die "release $build is $why, and $running runs it." \
+      "Deploy another build to $running first; this one is then rebuilt."
+  [[ "$why" == "not built" ]] || note "release $build is $why; rebuilding"
   build_release
 fi
 touch "$release" # prune by last deploy, not first build

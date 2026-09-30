@@ -396,6 +396,19 @@ class TestReleases:
         half = world.root / "releases" / world.build(world.main[0])
         assert half.exists() and not (half / "REVISION").exists()
 
+    def test_a_linked_release_without_revision_is_never_deleted(self, world):
+        """CR 27: every rebuild path checks the links, not only the broken-venv one."""
+        assert_ok(world.run(world.main[0]))
+        release = world.root / "releases" / world.build(world.main[0])
+        release.chmod(0o755)
+        (release / "REVISION").chmod(0o644)
+        (release / "REVISION").unlink()
+        world.reset_log()
+        result = world.run("--dev", world.main[0])
+        assert result.returncode != 0
+        assert (release / "version.txt").exists()
+        assert not [c for c in world.calls() if " sync " in c]
+
     def test_a_writable_release_is_never_reused(self, world):
         """CR 26: uv rebuilds a writable release's broken venv empty and says 0.
 

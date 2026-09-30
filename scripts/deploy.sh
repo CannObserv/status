@@ -272,6 +272,8 @@ linked=" $(readlink "$ROOT/live" 2>/dev/null || true) $(readlink "$ROOT/dev" 2>/
 ls -1t "$ROOT/releases" | tail -n +$((KEEP + 1)) | while read -r old; do
   [[ "$linked" == *" releases/$old "* ]] && continue
   note "pruning release $old"
-  make_writable "$ROOT/releases/$old"
-  rm -rf "${ROOT:?}/releases/$old"
+  # Both targets are verified by now: a failed prune is a note, never a failed
+  # deploy (CR 10).
+  { make_writable "$ROOT/releases/$old" && rm -rf "${ROOT:?}/releases/$old"; } ||
+    note "prune failed for $old; remove it by hand (chmod -R u+w first)"
 done

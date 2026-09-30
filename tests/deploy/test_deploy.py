@@ -88,6 +88,11 @@ elif [[ "$1" == show ]]; then
 fi
 """
 
+STUB_RM = r"""#!/usr/bin/env bash
+[[ -n "${FAKE_RM_FAIL:-}" ]] && exit 1
+exec /bin/rm "$@"
+"""
+
 STUB_LOGGER = r"""#!/usr/bin/env bash
 echo "logger $*" >> "$FAKE_LOG"
 """
@@ -147,6 +152,7 @@ class World:
             ("curl", STUB_CURL),
             ("logger", STUB_LOGGER),
             ("systemctl", STUB_SYSTEMCTL),
+            ("rm", STUB_RM),
         ):
             stub = self.stubs / name
             stub.write_text(body)
@@ -352,6 +358,14 @@ class TestReleases:
         assert_ok(world.run(world.main[2], STATUS_DEPLOY_KEEP="1"))
         kept = {p.name for p in (world.root / "releases").iterdir()}
         assert kept == {world.build(world.main[2])}
+
+    def test_a_failed_prune_does_not_fail_a_deploy_that_succeeded(self, world):
+        """CR 10: both targets are verified by then; say so, and exit 0."""
+        assert_ok(world.run(world.main[0]))
+        assert_ok(world.run(world.main[1]))
+        result = world.run(world.main[2], STATUS_DEPLOY_KEEP="1", FAKE_RM_FAIL="1")
+        assert_ok(result)
+        assert "prune" in result.stderr
 
     def test_pruning_spares_what_dev_still_runs(self, world):
         assert_ok(world.run(world.main[0]))

@@ -81,7 +81,8 @@ flock -n 9 || die "another deploy is running (it holds $ROOT/.deploy.lock)"
 if ((!restart)); then
   for target in "${targets[@]}"; do
     [[ ! -L "$ROOT/$target" ]] ||
-      die "--no-restart is for the first deploy only: $target already runs $(readlink "$ROOT/$target")"
+      die "--no-restart is for the first deploy only: $target already runs $(readlink "$ROOT/$target")." \
+        "If no unit runs $ROOT yet (a first deploy that failed half way): rm $ROOT/$target, and retry (CR 17)."
   done
 fi
 

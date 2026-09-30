@@ -540,6 +540,8 @@ class TestOperation:
         assert result.returncode != 0
         assert "first deploy" in result.stderr
         assert world.target("live") == before
+        # CR 17: a first deploy that failed half way retries by removing the link.
+        assert f"rm {world.root}/dev" in result.stderr
 
     def test_a_concurrent_deploy_is_refused(self, world):
         with open(world.root / ".deploy.lock", "w") as held:

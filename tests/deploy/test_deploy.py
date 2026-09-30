@@ -454,6 +454,10 @@ class TestVerification:
         restarts = [i for i, c in enumerate(calls) if c == "sudo systemctl restart status"]
         assert restarts[0] < reset < restarts[1]
         assert [c for c in calls[restarts[1] :] if c.endswith(":9000/health")]
+        # CR 20: the old build itself answered, and the message says which.
+        old = world.build(world.main[0])
+        assert f"switched back to {old}, which is answering" in result.stderr
+        assert "NOT" not in result.stderr
 
     def test_a_rollback_that_does_not_come_back_says_so(self, world):
         """The old build not answering either is the loudest failure there is."""

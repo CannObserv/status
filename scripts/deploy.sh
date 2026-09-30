@@ -142,10 +142,18 @@ build_release() {
   chmod -R a-w "$release"
 }
 
+# The build a target's link names, by its last component: a link made by hand
+# during recovery may be absolute, and every comparison must still see it (CR 28).
+release_of() {
+  local link
+  link="$(readlink "$ROOT/$1" 2>/dev/null)" || return 0
+  basename "$link"
+}
+
 linked_by() { # the targets whose link names this release
   local target
   for target in live dev; do
-    [[ "$(readlink "$ROOT/$target" 2>/dev/null)" == "releases/$build" ]] && echo "$target"
+    [[ "$(release_of "$target")" == "$build" ]] && echo "$target"
   done
   return 0
 }
@@ -290,7 +298,7 @@ deploy_target() {
     dev) api=status-dev sweep=status-sweep-dev.service port=9001 ;;
   esac
   link="$ROOT/$target"
-  previous="$(readlink "$link" 2>/dev/null || true)"
+  previous="$(release_of "$target")"
 
   migrate "$target"
   swap "$link" "releases/$build"
@@ -305,10 +313,10 @@ deploy_target() {
     return
   fi
   [[ -n "$previous" ]] || dead "$target failed on $build, and there is no previous release to return to"
-  [[ "$previous" != "releases/$build" ]] ||
+  [[ "$previous" != "$build" ]] ||
     dead "$target failed on $build, which it was already running; there is nothing to switch back to"
-  local old="${previous#releases/}"
-  swap "$link" "$previous"
+  local old="$previous"
+  swap "$link" "releases/$old"
   # A crash-looping release can exhaust the unit's StartLimitBurst, and systemd
   # then refuses this restart too. Clear it, then prove the old build as the new
   # one was proved: its API and a sweep pass, since a migration that was not
@@ -330,10 +338,10 @@ done
 
 # --- prune -----------------------------------------------------------------
 
-linked=" $(readlink "$ROOT/live" 2>/dev/null || true) $(readlink "$ROOT/dev" 2>/dev/null || true) "
+linked=" $(release_of live) $(release_of dev) "
 # shellcheck disable=SC2012 # names are 12 hex characters
 ls -1t "$ROOT/releases" | tail -n +$((KEEP + 1)) | while read -r old; do
-  [[ "$linked" == *" releases/$old "* ]] && continue
+  [[ "$linked" == *" $old "* ]] && continue
   note "pruning release $old"
   # Both targets are verified by now: a failed prune is a note, never a failed
   # deploy (CR 10).

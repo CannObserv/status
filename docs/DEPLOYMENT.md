@@ -48,7 +48,7 @@ A failure on dev stops the deploy before live is touched. A failure on live leav
 ## Rollback
 
 ```bash
-journalctl -t status-deploy -n 20      # "live -> <build> (was releases/<old>)"
+journalctl -t status-deploy -n 20      # "live -> <build> (was <old>)"
 scripts/deploy.sh <old build>          # still on origin/main, so it may go live
 ```
 

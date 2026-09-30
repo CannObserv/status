@@ -430,6 +430,17 @@ class TestReleases:
         (probe,) = [c for c in world.calls() if "python -c" in c]
         assert "import fastapi" in probe
 
+    def test_an_absolute_link_made_by_hand_still_protects_its_release(self, world):
+        """CR 28: every check compared the relative spelling deploy.sh writes."""
+        assert_ok(world.run(world.main[0]))
+        assert_ok(world.run("--dev", world.main[1]))
+        live = world.root / "live"
+        target = world.root / "releases" / world.build(world.main[0])
+        live.unlink()
+        live.symlink_to(target)
+        assert_ok(world.run("--dev", world.main[2], STATUS_DEPLOY_KEEP="1"))
+        assert target.exists(), "prune deleted the release live runs"
+
     def test_pruning_spares_what_dev_still_runs(self, world):
         assert_ok(world.run(world.main[0]))
         assert_ok(world.run("--dev", "origin/feature"))

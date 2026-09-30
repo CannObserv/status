@@ -20,11 +20,12 @@ import pytest
 import respx
 from httpx import ASGITransport, AsyncClient
 from notifier_client import NotifierClient, RetryConfig
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from ulid import ULID
 
 from src.api.deps import get_db_session
+from src.core import schema_state
 from src.core.alerting import NOTIFIER_URLS, Alerter
 from src.core.logging import AUDIT_SOCKET_ENV
 from src.core.models import ApiKey, Base, Tenant
@@ -146,14 +147,34 @@ def anyio_backend():
     return "asyncio"
 
 
+async def _stamp_at_head(conn) -> None:
+    """Stamp ``alembic_version`` at the code's head, as ``alembic upgrade`` would.
+
+    ``create_all`` builds the schema but not the stamp, and the sweep and
+    ``/ready`` both check it (#9, src/core/schema_state.py). CI's ``migrations``
+    job is what proves the chain itself reaches this head.
+    """
+    head = schema_state.code_head(schema_state.script_directory())
+    await conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS alembic_version "
+            "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+        )
+    )
+    await conn.execute(text("DELETE FROM alembic_version"))
+    await conn.execute(text("INSERT INTO alembic_version VALUES (:head)"), {"head": head})
+
+
 @pytest.fixture(scope="session")
 async def test_engine():
     engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _stamp_at_head(conn)
     yield engine
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
     await engine.dispose()
 
 

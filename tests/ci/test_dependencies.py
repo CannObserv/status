@@ -83,10 +83,6 @@ IMPORT_LESS = {
             "SQLAlchemy's async driver, selected by the postgresql+asyncpg:// "
             "URL scheme rather than by import"
         ),
-        "alembic": (
-            "migration CLI; the only module that imports it is alembic/env.py, "
-            "which alembic itself loads"
-        ),
     }.items()
 }
 

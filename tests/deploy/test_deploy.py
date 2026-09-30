@@ -490,6 +490,21 @@ class TestOperation:
         assert result.returncode != 0
         assert "dev.env" in result.stderr
 
+    def test_a_url_missing_from_its_env_file_is_not_taken_from_the_shell(self, world):
+        """CR 5: after `. scripts/load_env.sh` the shell exports both URLs.
+
+        The unit reads only the file, so the deploy must too: falling back on
+        the caller's environment migrates a database the unit never opens.
+        """
+        (world.etc / "dev.env").write_text("# DEV_DATABASE_URL forgotten\n")
+        result = world.run(
+            DEV_DATABASE_URL="postgresql+asyncpg://u@h/from_the_shell_dev",
+            DATABASE_URL="postgresql+asyncpg://u@h/status",
+        )
+        assert result.returncode != 0
+        assert not [c for c in world.calls() if "from_the_shell" in c]
+        assert "no database URL for dev" in result.stderr
+
     def test_an_unknown_flag_is_refused(self, world):
         assert world.run("--live-only").returncode != 0
 

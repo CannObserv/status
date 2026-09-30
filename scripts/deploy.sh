@@ -140,6 +140,9 @@ touch "$release" # prune by last deploy, not first build
 
 database_url() {
   (
+    # The file's value or nothing: after `. scripts/load_env.sh` the caller's
+    # shell exports both, and the unit reads only the file (CR 5).
+    unset DATABASE_URL DEV_DATABASE_URL
     set -a
     # shellcheck disable=SC1090
     . "$ENV_DIR/$([[ "$1" == live ]] && echo .env || echo dev.env)"

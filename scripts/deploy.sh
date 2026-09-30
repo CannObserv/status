@@ -190,9 +190,22 @@ verify_http() {
   return 1
 }
 
+# `systemctl start` on a oneshot mid-pass merges into that pass instead of
+# running another, and a pass already running started on the old release. Wait
+# it out, so the forced pass is one that started on this one (CR 2). Bounded
+# past the units' TimeoutStartSec=120.
+wait_for_idle_sweep() {
+  local sweep="$1" deadline=$((SECONDS + 150))
+  while [[ "$(systemctl show -p ActiveState --value "$sweep")" == activating ]]; do
+    ((SECONDS < deadline)) || { note "$sweep has been running for 150s"; return 1; }
+    sleep 1
+  done
+}
+
 restart_and_verify() {
   local api="$1" sweep="$2" port="$3"
   sudo systemctl restart "$api" || { note "systemctl restart $api failed"; return 1; }
+  wait_for_idle_sweep "$sweep" || return 1
   sudo systemctl start "$sweep" ||
     { note "the $sweep pass failed on $build: journalctl -u ${sweep%.service} -n 50"; return 1; }
   verify_http "$port"

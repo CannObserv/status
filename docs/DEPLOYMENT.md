@@ -33,7 +33,7 @@ scripts/deploy.sh --help
 
 1. **Migrate** the target's database. This is skipped when the database is *ahead* of the release, which is what a rollback looks like.
 2. **Switch** the symlink (an atomic rename).
-3. **Restart** the API, then force one sweep pass. `systemctl start` on the oneshot waits for the pass to finish.
+3. **Restart** the API, then force one sweep pass. Any pass already running started on the old release, so the deploy first waits for it to end: `systemctl start` on a oneshot mid-pass joins that pass rather than starting another. `systemctl start` then waits for the new pass to finish.
 4. **Verify.** The pass must exit 0, `/ready` must be 200, and `/health` must report `build` equal to `<build>`, all within 60 s.
 5. **On failure,** switch back, restart, and exit non-zero naming the step. The migration stays applied.
 

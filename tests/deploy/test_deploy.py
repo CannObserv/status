@@ -68,6 +68,21 @@ case "$url" in
 esac
 """
 
+# `systemctl show` needs no sudo. FAKE_SWEEP_BUSY is how many polls report a
+# pass still running (a timer pass that started on the old release).
+STUB_SYSTEMCTL = r"""#!/usr/bin/env bash
+echo "systemctl $*" >> "$FAKE_LOG"
+busy_file="$(dirname "$FAKE_LOG")/busy"
+[[ -f "$busy_file" ]] || echo "${FAKE_SWEEP_BUSY:-0}" > "$busy_file"
+left="$(cat "$busy_file")"
+if [[ "$1" == show && "$left" -gt 0 ]]; then
+  echo $((left - 1)) > "$busy_file"
+  echo activating
+elif [[ "$1" == show ]]; then
+  echo inactive
+fi
+"""
+
 STUB_LOGGER = r"""#!/usr/bin/env bash
 echo "logger $*" >> "$FAKE_LOG"
 """
@@ -126,6 +141,7 @@ class World:
             ("sudo", STUB_SUDO),
             ("curl", STUB_CURL),
             ("logger", STUB_LOGGER),
+            ("systemctl", STUB_SYSTEMCTL),
         ):
             stub = self.stubs / name
             stub.write_text(body)
@@ -387,6 +403,20 @@ class TestVerification:
         assert result.returncode != 0
         assert world.target("live") == live_before
         assert world.target("dev") == live_before
+
+    def test_the_forced_pass_waits_out_one_already_running(self, world):
+        """CR 2: `systemctl start` on a oneshot mid-pass merges into that pass.
+
+        A timer pass that started before the switch runs the old release, so
+        merging into it would verify the old code. Verified on this host's
+        systemd; a pass that starts after the switch runs the new release.
+        """
+        assert_ok(world.run("--dev", FAKE_SWEEP_BUSY="2"))
+        calls = world.calls()
+        start = calls.index("sudo systemctl start status-sweep-dev.service")
+        polls = [i for i, c in enumerate(calls) if c.startswith("systemctl show")]
+        assert len(polls) == 3, "two busy answers, then the idle one"
+        assert max(polls) < start
 
     def test_a_first_deploy_that_fails_has_nothing_to_return_to(self, world):
         result = world.run(FAKE_STALE_PORT="9001")

@@ -77,7 +77,7 @@ The check is used in three places:
 
 - **Sweep:** inside `run_sweep`'s `try`, before the pass, so a behind schema sends `/fail` with body `SchemaBehind`.
 - **API:** `/ready`, with a `schema` field on both payloads.
-- **Deploy and `dev_server.sh`:** the CLI `python -m src.core.schema_state`, which prints the state. Exit 0 means `current` or `ahead`, 1 means `behind` or `unmigrated`, 2 means unreachable. This replaces `dev_server.sh`'s bash `alembic current` test.
+- **Deploy and `dev_server.sh`:** the CLI `python -m src.core.schema_state`, which prints the state. Exit 0 means `current` or `ahead`, 3 means `behind` or `unmigrated`, 2 means anything else (unreachable, refused, crashed); never 1, which is any uncaught exception. This replaces `dev_server.sh`'s bash `alembic current` test.
 
 ## broker#22's questions
 

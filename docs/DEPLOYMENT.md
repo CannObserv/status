@@ -65,7 +65,7 @@ The old release still exists (within the 5 kept), so nothing is rebuilt. Its Ale
 | `behind` | fails: `SchemaBehind`, `/fail` ping | 503, names the database | refuses; prints the migration |
 | `unmigrated` | fails, as `behind` | 503 | refuses |
 
-Nothing refuses to start a unit: a refused API start would record no check-ins at all. `python -m src.core.schema_state` prints the state, and exits 0 for `current` or `ahead`, 1 for `behind` or `unmigrated`, 2 when the database is unreachable.
+Nothing refuses to start a unit: a refused API start would record no check-ins at all. `python -m src.core.schema_state` prints the state, and exits 0 for `current` or `ahead`, 3 for `behind` or `unmigrated`, and 2 for anything else (unreachable, refused by `db_safety`, crashed). `deploy.sh` migrates only on a state it printed.
 
 ## Development
 

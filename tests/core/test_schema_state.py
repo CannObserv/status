@@ -126,7 +126,11 @@ def _factory_for(session):
 
 
 class TestMain:
-    """The CLI deploy.sh and dev_server.sh read: state on stdout, exit 0/1/2."""
+    """The CLI deploy.sh and dev_server.sh read: state on stdout, exit 0/3/2.
+
+    Behind is 3, not 1: Python exits 1 on any uncaught exception, and a caller
+    that read 1 as "behind" would migrate a database the guard had refused.
+    """
 
     async def test_current_exits_0(self, db_session, capsys):
         assert await schema_state.main(_factory_for(db_session)) == 0
@@ -137,15 +141,26 @@ class TestMain:
         assert await schema_state.main(_factory_for(db_session)) == 0
         assert capsys.readouterr().out.strip() == "ahead"
 
-    async def test_behind_exits_1(self, db_session, oldest, capsys):
+    async def test_behind_exits_3(self, db_session, oldest, capsys):
         await db_session.execute(text("UPDATE alembic_version SET version_num = :r"), {"r": oldest})
-        assert await schema_state.main(_factory_for(db_session)) == 1
+        assert await schema_state.main(_factory_for(db_session)) == 3
         assert capsys.readouterr().out.strip() == "behind"
 
-    async def test_unmigrated_exits_1(self, db_session, capsys):
+    async def test_unmigrated_exits_3(self, db_session, capsys):
         await db_session.execute(text("DROP TABLE alembic_version"))
-        assert await schema_state.main(_factory_for(db_session)) == 1
+        assert await schema_state.main(_factory_for(db_session)) == 3
         assert capsys.readouterr().out.strip() == "unmigrated"
+
+    async def test_any_other_failure_exits_2_and_prints_no_state(self, capsys):
+        """CR 1: a refusal or crash must never read as "behind"."""
+
+        def refusing_factory():
+            raise RuntimeError("DATABASE_URL environment variable is not set")
+
+        assert await schema_state.main(refusing_factory) == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "RuntimeError" in captured.err
 
 
 def _run_module(database_url: str) -> subprocess.CompletedProcess:
@@ -164,6 +179,22 @@ def test_the_module_runs_as_a_script(test_engine):
     result = _run_module(os.environ["TEST_DATABASE_URL"])
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "current"
+
+
+def test_a_refused_production_url_exits_2_not_behind():
+    """CR 1: db_safety's refusal, the case that would migrate production."""
+    env = {k: v for k, v in os.environ.items() if k != "STATUS_ALLOW_PROD_DB"}
+    result = subprocess.run(
+        [sys.executable, "-m", "src.core.schema_state"],
+        cwd=REPO_ROOT,
+        env={**env, "DATABASE_URL": "postgresql+asyncpg://u@127.0.0.1:1/status"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "ProductionDatabaseError" in result.stderr
 
 
 def test_an_unreachable_database_exits_2():

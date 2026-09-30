@@ -55,11 +55,11 @@ def test_dev_server_delegates_the_migration_check_to_python():
 
 
 def test_dev_server_refuses_a_database_behind_the_code(tmp_path):
-    """schema_state exits 1: say what to run, and never reach uvicorn."""
+    """schema_state exits 3: say what to run, and never reach uvicorn."""
     fake = tmp_path / "uv"
     fake.write_text(
         "#!/usr/bin/env bash\n"
-        'if [[ "$*" == *schema_state* ]]; then echo behind; exit 1; fi\n'
+        'if [[ "$*" == *schema_state* ]]; then echo behind; exit 3; fi\n'
         'echo "uv $*"\n'
     )
     fake.chmod(0o755)

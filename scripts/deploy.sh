@@ -155,11 +155,17 @@ against() {
 migrate() {
   local target="$1" state rc=0
   state="$(against "$target" python -m src.core.schema_state)" || rc=$?
-  ((rc <= 1)) || die "$target: cannot read the schema state; nothing switched"
-  if [[ "$state" == ahead ]]; then
-    note "$target: database is ahead of $build (a rollback); not migrating"
-    return
-  fi
+  # Only a state the check actually printed. Anything else (db_safety refusing
+  # the URL, a crash) exits 2 or 1 with no state, and must never become an
+  # upgrade: alembic/env.py has no guard of its own (CR 1).
+  case "$rc:$state" in
+    0:current | 3:behind | 3:unmigrated) ;;
+    0:ahead)
+      note "$target: database is ahead of $build (a rollback); not migrating"
+      return
+      ;;
+    *) die "$target: cannot read the schema state (exit $rc); nothing switched" ;;
+  esac
   against "$target" alembic upgrade head || die "$target: migration failed; nothing switched"
 }
 

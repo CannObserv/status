@@ -17,7 +17,9 @@ Four states, from ``alembic_version`` against the code's single Alembic head:
 Nothing here refuses a start (broker#22 goal 3). The sweep fails its pass, which
 also sends ``/fail`` to healthchecks.io; ``/ready`` answers 503. Run as a module,
 it prints the state for ``scripts/deploy.sh`` and ``scripts/dev_server.sh``, and
-exits 0 (current, ahead), 1 (behind, unmigrated) or 2 (unreachable).
+exits 0 (current, ahead), 3 (behind, unmigrated) or 2 (anything else: unreachable,
+refused, crashed). Never 1, which is what Python exits with on an uncaught
+exception, so a refusal can never read as "behind, migrate it".
 """
 
 import asyncio
@@ -44,8 +46,8 @@ logger = get_logger(__name__)
 ALEMBIC_INI = CODE_ROOT / "alembic.ini"
 
 EXIT_OK = 0
-EXIT_BEHIND = 1
-EXIT_UNREACHABLE = 2
+EXIT_UNREADABLE = 2
+EXIT_BEHIND = 3
 
 
 class SchemaState(StrEnum):
@@ -141,13 +143,25 @@ async def require_current(session: AsyncSession) -> SchemaState:
 async def main(
     factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] | None = None,
 ) -> int:
-    """Print the state; exit 0 (current, ahead), 1 (behind, unmigrated), 2 (unreachable)."""
+    """Print the state; exit 0 (current, ahead), 3 (behind, unmigrated), 2 (anything else).
+
+    Every failure is 2 with nothing on stdout: ``db_safety`` refusing the URL,
+    a missing ``DATABASE_URL``, two heads. A caller that migrates on "behind"
+    must never mistake one of those for it (CR 1).
+    """
     try:
         async with (factory or get_session_factory())() as session:
             state = await schema_state(session)
     except (SQLAlchemyError, OSError) as exc:
+        # The type only: a driver message can carry the connection string.
         print(f"schema_state: cannot reach the database: {type(exc).__name__}", file=sys.stderr)
-        return EXIT_UNREACHABLE
+        return EXIT_UNREADABLE
+    except Exception as exc:
+        print(
+            f"schema_state: cannot read the schema state: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return EXIT_UNREADABLE
     print(state.value)
     return EXIT_BEHIND if state in FAILING else EXIT_OK
 

@@ -48,12 +48,12 @@ uv run --frozen --no-sync python -m src.core.db_safety
 # authenticated request with "relation ... does not exist" (issue notifier#23),
 # and one merely behind the code 500s on whatever touches the missing column
 # (#9). src.core.schema_state is the check the sweep and /ready use too: it
-# prints the state, and exits 1 when behind or unmigrated, 2 when unreachable.
+# prints the state, and exits 3 when behind or unmigrated, 2 for anything else.
 schema_rc=0
 schema="$(uv run --frozen --no-sync python -m src.core.schema_state)" || schema_rc=$?
 case "$schema_rc" in
   0) ;;
-  1)
+  3)
     cat >&2 <<MSG
 dev_server: the dev database is ${schema:-behind this code}. Migrate it first:
 

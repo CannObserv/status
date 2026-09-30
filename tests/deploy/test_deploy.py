@@ -36,9 +36,10 @@ case "$*" in
     [[ -n "${FAKE_SYNC_FAIL:-}" ]] && exit 1
     mkdir -p .venv ;;
   *schema_state*)
+    [[ -n "${FAKE_SCHEMA_CRASH:-}" ]] && exit "$FAKE_SCHEMA_CRASH"
     state="${FAKE_SCHEMA:-current}"
     echo "$state"
-    [[ "$state" == behind || "$state" == unmigrated ]] && exit 1 ;;
+    [[ "$state" == behind || "$state" == unmigrated ]] && exit 3 ;;
   *"alembic heads"*)
     for ((i = 0; i < ${FAKE_HEADS:-1}; i++)); do echo "head$i (head)"; done ;;
   *"alembic upgrade"*)
@@ -337,6 +338,19 @@ class TestMigrations:
         assert_ok(result)
         assert not [c for c in world.calls() if "alembic upgrade" in c]
         assert "ahead" in result.stderr
+
+    @pytest.mark.parametrize("state", ["behind", "unmigrated"])
+    def test_a_database_behind_is_migrated(self, world, state):
+        assert_ok(world.run(FAKE_SCHEMA=state))
+        assert len([c for c in world.calls() if "alembic upgrade" in c]) == 2
+
+    @pytest.mark.parametrize("rc", ["1", "2"], ids=["crash", "unreadable"])
+    def test_an_unreadable_schema_state_is_never_migrated(self, world, rc):
+        """CR 1: db_safety refusing dev.env's URL must not become an upgrade."""
+        result = world.run(FAKE_SCHEMA_CRASH=rc)
+        assert result.returncode != 0
+        assert not [c for c in world.calls() if "alembic upgrade" in c]
+        assert world.target("dev") is None
 
     def test_a_failed_migration_switches_nothing(self, world):
         result = world.run(FAKE_MIGRATE_RC="1")

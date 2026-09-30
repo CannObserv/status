@@ -12,7 +12,7 @@
 # reimplements it, so the two cannot diverge.
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd -P "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if [[ "${STATUS_DEV_SERVER_SKIP_ENV_FILES:-}" != "1" ]]; then
   # Resolved from this script's own location, not the cwd — so it does not
@@ -42,7 +42,7 @@ fi
 
 export DATABASE_URL="$DEV_DATABASE_URL"
 
-uv run python -m src.core.db_safety
+uv run --frozen --no-sync python -m src.core.db_safety
 
 # An unmigrated dev database starts cleanly and then 500s on every
 # authenticated request with "relation ... does not exist" (issue notifier#23),
@@ -82,7 +82,7 @@ fi
 # business on 0.0.0.0 than :9000 does.
 HOST="$("$(dirname "${BASH_SOURCE[0]}")/tailnet_bind.sh")"
 
-exec uv run uvicorn src.api.main:app \
+exec uv run --frozen --no-sync uvicorn src.api.main:app \
   --host "$HOST" \
   --port 9001 \
   "${reload_args[@]}" \

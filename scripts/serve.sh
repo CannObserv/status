@@ -17,13 +17,14 @@
 # open. STATUS_ALLOW_PROD_DB stays the unit's business.
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd -P "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # Blocks until tailscaled has assigned an address, then fails loudly rather
 # than falling back to a bind reachable from anywhere else (observo#473/#479).
 HOST="$("$(dirname "${BASH_SOURCE[0]}")/tailnet_bind.sh")"
 
-exec uv run uvicorn src.api.main:app \
+# --frozen --no-sync: run what scripts/deploy.sh built; never sync at start (#9, R5).
+exec uv run --frozen --no-sync uvicorn src.api.main:app \
   --host "$HOST" \
   --port 9000 \
   --log-config src/core/log_config.json

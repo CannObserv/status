@@ -11,7 +11,7 @@
 # production opt-in, which the dev timer must never inherit.
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd -P "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if [[ "${STATUS_SWEEP_DEV:-0}" == "1" ]]; then
   # Resolved from this script's own location, not the cwd — so it does not
@@ -47,6 +47,8 @@ if [[ ! -s "${CREDENTIALS_DIRECTORY:-/nonexistent}/notifier-key" ]]; then
 fi
 
 # The URL check lives in python only; bash never reimplements the parsing.
-uv run python -m src.core.db_safety
+# --frozen --no-sync: run what scripts/deploy.sh built. A bare `uv run` synced
+# the environment every pass, so a lock edit reached production (#9, R5).
+uv run --frozen --no-sync python -m src.core.db_safety
 
-exec uv run python scripts/sweep_monitors.py
+exec uv run --frozen --no-sync python scripts/sweep_monitors.py

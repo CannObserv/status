@@ -174,19 +174,19 @@ swap() { # <link> <target>: rename(2) over the old link, so there is no moment w
   mv -Tf "$1.new" "$1"
 }
 
-verify_http() {
-  local port="$1" host health="" deadline=$((SECONDS + VERIFY_SECONDS))
+verify_http() { # <port> <build>: /ready 200 and /health naming <build>
+  local port="$1" want="$2" host health="" deadline=$((SECONDS + VERIFY_SECONDS))
   host="$(STATUS_TAILNET_WAIT_SECONDS=10 "$SRC/scripts/tailnet_bind.sh" 2>/dev/null)" ||
     { note "no tailnet address to verify on"; return 1; }
   while ((SECONDS < deadline)); do
     if curl -fsS --max-time 5 "http://$host:$port/ready" >/dev/null 2>&1 &&
       health="$(curl -fsS --max-time 5 "http://$host:$port/health" 2>/dev/null)" &&
-      [[ "$health" == *"\"build\":\"$build\""* ]]; then
+      [[ "$health" == *"\"build\":\"$want\""* ]]; then
       return 0
     fi
     sleep 1
   done
-  note ":$port did not report ready on $build within ${VERIFY_SECONDS}s (last /health: ${health:-none})"
+  note ":$port did not report ready on $want within ${VERIFY_SECONDS}s (last /health: ${health:-none})"
   return 1
 }
 
@@ -208,7 +208,7 @@ restart_and_verify() {
   wait_for_idle_sweep "$sweep" || return 1
   sudo systemctl start "$sweep" ||
     { note "the $sweep pass failed on $build: journalctl -u ${sweep%.service} -n 50"; return 1; }
-  verify_http "$port"
+  verify_http "$port" "$build"
 }
 
 deploy_target() {
@@ -234,9 +234,15 @@ deploy_target() {
   fi
   [[ -n "$previous" ]] || die "$target failed on $build, and there is no previous release to return to"
   swap "$link" "$previous"
+  # A crash-looping release can exhaust the unit's StartLimitBurst, and systemd
+  # then refuses this restart too. Clear it, and prove the old build answers
+  # before saying it does (CR 3).
+  sudo systemctl reset-failed "$api" || true
   sudo systemctl restart "$api" || true
   logger -t status-deploy "$target rolled back to ${previous#releases/} after $build failed" || true
-  die "$target failed on $build; switched back to ${previous#releases/}"
+  verify_http "$port" "${previous#releases/}" ||
+    die "$target failed on $build; switched back to ${previous#releases/}, which is NOT answering: journalctl -u $api -n 50"
+  die "$target failed on $build; switched back to ${previous#releases/}, which is answering"
 }
 
 for target in "${targets[@]}"; do

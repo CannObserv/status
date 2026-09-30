@@ -61,7 +61,10 @@ url="${@: -1}"
 echo "curl $url" >> "$FAKE_LOG"
 case "$url" in *:9000/*) link=live ;; *:9001/*) link=dev ;; esac
 build="$(basename "$(readlink "$STATUS_DEPLOY_ROOT/$link")")"
-[[ "$url" == *":${FAKE_STALE_PORT:-none}/"* ]] && build=stale
+# Stale only while the link names the newest main commit, unless always.
+if [[ "$url" == *":${FAKE_STALE_PORT:-none}/"* ]]; then
+  [[ -n "${FAKE_STALE_ALWAYS:-}" || "$build" == "${FAKE_NEW_BUILD:-$build}" ]] && build=stale
+fi
 case "$url" in
   */ready) echo '{"status":"ready","schema_state":"current"}' ;;
   */health) echo "{\"status\":\"ok\",\"build\":\"$build\"}" ;;
@@ -156,6 +159,8 @@ class World:
             "STATUS_DEPLOY_VERIFY_SECONDS": "2",
             "STATUS_BIND_HOST": "127.0.0.1",
             "FAKE_LOG": str(self.log),
+            # The build FAKE_STALE_PORT refuses to report: the one being deployed.
+            "FAKE_NEW_BUILD": self.build(self.main[-1]),
             **fake,
         }
         return subprocess.run(
@@ -387,6 +392,30 @@ class TestVerification:
         assert world.target("live") == previous
         restarts = [c for c in world.calls() if c == "sudo systemctl restart status"]
         assert len(restarts) == 2, "restarted onto the new build, then back"
+
+    def test_a_rollback_clears_the_start_limit_and_proves_the_old_build(self, world):
+        """CR 3: a crash-looping release can exhaust StartLimitBurst.
+
+        systemd then refuses the rollback's restart too, and the deploy would
+        report "switched back" over a dead API. reset-failed comes first, and
+        the old build must answer before the message claims it does.
+        """
+        assert_ok(world.run(world.main[0]))
+        world.reset_log()
+        result = world.run(FAKE_STALE_PORT="9000")
+        assert result.returncode != 0
+        calls = world.calls()
+        reset = calls.index("sudo systemctl reset-failed status")
+        restarts = [i for i, c in enumerate(calls) if c == "sudo systemctl restart status"]
+        assert restarts[0] < reset < restarts[1]
+        assert [c for c in calls[restarts[1]:] if c.endswith(":9000/health")]
+
+    def test_a_rollback_that_does_not_come_back_says_so(self, world):
+        """The old build not answering either is the loudest failure there is."""
+        assert_ok(world.run(world.main[0]))
+        result = world.run(FAKE_STALE_PORT="9000", FAKE_STALE_ALWAYS="1")
+        assert result.returncode != 0
+        assert "NOT answering" in result.stderr
 
     def test_a_failing_sweep_pass_is_switched_back(self, world):
         assert_ok(world.run(world.main[0]))

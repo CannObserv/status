@@ -35,7 +35,7 @@ scripts/deploy.sh --help
 2. **Switch** the symlink (an atomic rename).
 3. **Restart** the API, then force one sweep pass. Any pass already running started on the old release, so the deploy first waits for it to end: `systemctl start` on a oneshot mid-pass joins that pass rather than starting another. `systemctl start` then waits for the new pass to finish.
 4. **Verify.** The pass must exit 0, `/ready` must be 200, and `/health` must report `build` equal to `<build>`, all within 60 s.
-5. **On failure,** switch back, restart, and exit non-zero naming the step. The migration stays applied.
+5. **On failure,** switch back, clear the unit's start limit, restart, check that the old build answers, and exit non-zero naming the step and whether the old build came back. The migration stays applied.
 
 A failure on dev stops the deploy before live is touched. The deploy keeps the 5 most recently deployed releases, plus whatever `live` and `dev` point at. Every switch and rollback is logged: `journalctl -t status-deploy`.
 

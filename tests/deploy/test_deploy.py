@@ -52,7 +52,13 @@ exit 0
 
 STUB_SUDO = r"""#!/usr/bin/env bash
 echo "sudo $*" >> "$FAKE_LOG"
-[[ "$1" == systemctl && "$2" == start && "$3" == "${FAKE_SWEEP_FAIL:-none}" ]] && exit 1
+# FAKE_SWEEP_FAIL fails that unit's pass, but only while its target runs
+# FAKE_SWEEP_FAIL_BUILD when that is set: a broken build, not a broken unit (CR 24).
+if [[ "$1" == systemctl && "$2" == start && "$3" == "${FAKE_SWEEP_FAIL:-none}" ]]; then
+  case "$3" in status-sweep.service) link=live ;; *) link=dev ;; esac
+  running="$(basename "$(readlink "$STATUS_DEPLOY_ROOT/$link")")"
+  [[ -z "${FAKE_SWEEP_FAIL_BUILD:-}" || "$running" == "$FAKE_SWEEP_FAIL_BUILD" ]] && exit 1
+fi
 exit 0
 """
 
@@ -498,16 +504,35 @@ class TestVerification:
     def test_a_failing_sweep_pass_is_switched_back(self, world):
         assert_ok(world.run(world.main[0]))
         previous = world.target("live")
-        result = world.run(FAKE_SWEEP_FAIL="status-sweep.service")
-        assert result.returncode != 0
+        result = world.run(
+            FAKE_SWEEP_FAIL="status-sweep.service",
+            FAKE_SWEEP_FAIL_BUILD=world.build(world.main[-1]),
+        )
+        assert result.returncode == 1, "the old build's own pass succeeds (CR 24)"
         assert world.target("live") == previous
         assert "status-sweep" in result.stderr
+        assert "which is answering" in result.stderr
+
+    def test_an_old_build_whose_sweep_fails_too_is_reported_dead(self, world):
+        """CR 24: CR 16's own case. The new API fails; switching back finds the
+        old sweep broken as well (a migration that was not expand-only)."""
+        assert_ok(world.run(world.main[0]))
+        result = world.run(
+            FAKE_STALE_PORT="9000",
+            FAKE_SWEEP_FAIL="status-sweep.service",
+            FAKE_SWEEP_FAIL_BUILD=world.build(world.main[0]),
+        )
+        assert result.returncode == 4
+        assert "NOT answering" in result.stderr
 
     def test_a_failing_dev_stops_the_deploy_before_live(self, world):
         assert_ok(world.run(world.main[0]))
         live_before = world.target("live")
-        result = world.run(FAKE_SWEEP_FAIL="status-sweep-dev.service")
-        assert result.returncode != 0
+        result = world.run(
+            FAKE_SWEEP_FAIL="status-sweep-dev.service",
+            FAKE_SWEEP_FAIL_BUILD=world.build(world.main[-1]),
+        )
+        assert result.returncode == 1
         assert world.target("live") == live_before
         assert world.target("dev") == live_before
 

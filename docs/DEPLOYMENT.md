@@ -27,6 +27,16 @@ scripts/deploy.sh --dev origin/<branch> # any pushed branch, :9001 only
 scripts/deploy.sh --help
 ```
 
+The defaults are what production uses. The variables exist for the tests and for an unusual recovery:
+
+| Variable | Default | What |
+|---|---|---|
+| `STATUS_DEPLOY_ROOT` | `/srv/status` | releases and the `live`/`dev` links |
+| `STATUS_DEPLOY_ENV_DIR` | `/etc/status` | `.env` (live) and `dev.env` (dev) |
+| `STATUS_DEPLOY_KEEP` | `5` | releases kept besides the linked ones |
+| `STATUS_DEPLOY_VERIFY_SECONDS` | `60` | how long `/ready` and `/health` have to answer |
+| `STATUS_DEPLOY_SWEEP_WAIT_SECONDS` | `150` | how long to wait out a pass already running |
+
 **What goes live** is a commit on `origin/main`. Dev takes any commit on an `origin/*` branch. Anything unpushed is refused.
 
 **Order, per target, dev first:**

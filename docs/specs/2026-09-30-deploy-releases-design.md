@@ -50,7 +50,7 @@ Two further problems share this cause:
 
 1. **Refuse** if running as root, or if another deploy holds the lock.
 2. **Resolve.** `git fetch --prune origin` in the checkout the script sits in, then resolve `<ref>` to a commit and check it (R3).
-3. **Build** `releases/<build>` unless a complete one exists whose venv still runs (R4). One that no longer runs is rebuilt only if no target links it; otherwise the deploy stops. `<build>` is `git rev-parse --short=12`. Before building, check that the release has exactly one Alembic head.
+3. **Build** `releases/<build>` unless a complete one exists whose venv still runs (R4). One that no longer runs is rebuilt only if no target links it; otherwise the deploy stops. `<build>` is `git rev-parse --short=12`. After `uv sync`, and before `REVISION` is written, check that the release has exactly one Alembic head.
 4. **For each target** (`dev`, then `live`), with its environment file:
    1. Read the schema state from the new release. For `current`, `behind` or `unmigrated`, run `alembic upgrade head`; for `ahead`, skip it (R9). Any other result (refused, unreachable, crashed) aborts before anything switches.
    2. Record the old target, then swap the symlink (`ln -s` to a temporary name, then `mv -T`).
@@ -59,7 +59,7 @@ Two further problems share this cause:
    5. If verification fails, swap back, `reset-failed` (a crash loop may have hit the start limit), restart, prove the old build with a sweep pass and `/ready`/`/health`, and exit 1 (old build answering) or 4 (not), naming the step. A failure on live leaves dev on the new build.
 5. **Prune** (R13).
 
-The root and env directory come from `STATUS_DEPLOY_ROOT` and `STATUS_DEPLOY_ENV_DIR`. The tests run the script against a throwaway root and a temporary origin, with stub `uv`, `sudo`, `systemctl`, `curl`, `logger` and `rm` on `PATH`.
+The root, env directory, retention and time bounds come from `STATUS_DEPLOY_ROOT`, `STATUS_DEPLOY_ENV_DIR`, `STATUS_DEPLOY_KEEP`, `STATUS_DEPLOY_VERIFY_SECONDS` and `STATUS_DEPLOY_SWEEP_WAIT_SECONDS` (DEPLOYMENT.md lists the defaults). The tests run the script against a throwaway root and a temporary origin, with stub `uv`, `sudo`, `systemctl`, `curl`, `logger` and `rm` on `PATH`.
 
 ### Units
 

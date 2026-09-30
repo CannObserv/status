@@ -56,7 +56,7 @@ Two further problems share this cause:
    2. Record the old target, then swap the symlink (`ln -s` to a temporary name, then `mv -T`).
    3. `sudo systemctl restart` the API unit. Wait out any sweep pass already running, because it started on the old release and `start` would join it. Then `sudo systemctl start` the sweep service, which waits for the pass.
    4. Verify: the sweep exited 0; `/ready` is 200 (so `schema_state` is `current` or `ahead`); `/health` `build` equals `<build>`. Poll up to 60 s, on the tailnet address.
-   5. If verification fails, swap back, `reset-failed` (a crash loop may have hit the start limit), restart, prove the old build with a sweep pass and `/ready`/`/health`, and exit 1 (old build answering) or 4 (not), naming the step. A failure on live leaves dev on the new build.
+   5. If verification fails, swap back, `reset-failed` (a crash loop may have hit the start limit), restart, prove the old build with a sweep pass and `/ready`/`/health`, and exit 1 when the old build answers, or 4 when the target is left on a build that does not answer (the old build failed too, or there was nothing to switch back to), naming the step. A failure on live leaves dev on the new build.
 5. **Prune** (R13).
 
 The root, env directory, retention and time bounds come from `STATUS_DEPLOY_ROOT`, `STATUS_DEPLOY_ENV_DIR`, `STATUS_DEPLOY_KEEP`, `STATUS_DEPLOY_VERIFY_SECONDS` and `STATUS_DEPLOY_SWEEP_WAIT_SECONDS` (DEPLOYMENT.md lists the defaults). The tests run the script against a throwaway root and a temporary origin, with stub `uv`, `sudo`, `systemctl`, `curl`, `logger` and `rm` on `PATH`.

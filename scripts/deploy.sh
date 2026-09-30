@@ -258,6 +258,16 @@ migrate() {
   against "$target" alembic upgrade head || die "$target: migration failed; nothing switched"
 }
 
+# What the tree a link names reports as its build: its REVISION, else "dev",
+# the rule src/core/build.py applies. A link restored by hand may name a
+# checkout, which answers "dev", not its directory's name (CR 36).
+served_build() {
+  local dir rev
+  dir="$(cd "$ROOT" && cd -P "$1" 2>/dev/null && pwd)" || { echo dev; return 0; }
+  rev="$(cat "$dir/REVISION" 2>/dev/null)" || rev=""
+  echo "${rev:-dev}"
+}
+
 swap() { # <link> <target>: rename(2) over the old link, so there is no moment without one
   ln -sfn "$2" "$1.new"
   mv -Tf "$1.new" "$1"
@@ -328,7 +338,8 @@ deploy_target() {
   [[ -n "$previous" ]] || dead "$target failed on $build, and there is no previous release to return to"
   [[ "$previous" != "$build" ]] ||
     dead "$target failed on $build, which it was already running; there is nothing to switch back to"
-  local old="$previous"
+  local old
+  old="$(served_build "$previous_link")"
   swap "$link" "$previous_link"
   # A crash-looping release can exhaust the unit's StartLimitBurst, and systemd
   # then refuses this restart too. Clear it, then prove the old build as the new

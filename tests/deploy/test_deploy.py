@@ -68,7 +68,9 @@ STUB_CURL = r"""#!/usr/bin/env bash
 url="${@: -1}"
 echo "curl $url" >> "$FAKE_LOG"
 case "$url" in *:9000/*) link=live ;; *:9001/*) link=dev ;; esac
-build="$(basename "$(readlink "$STATUS_DEPLOY_ROOT/$link")")"
+# As src/core/build.py does: the served tree's REVISION, else "dev" (CR 36).
+served="$(cd "$STATUS_DEPLOY_ROOT" && cd -P "$(readlink "$link")" 2>/dev/null && pwd)"
+build="$(cat "$served/REVISION" 2>/dev/null || echo dev)"
 # Stale only while the link names the newest main commit, unless always.
 if [[ "$url" == *":${FAKE_STALE_PORT:-none}/"* ]]; then
   [[ -n "${FAKE_STALE_ALWAYS:-}" || "$build" == "${FAKE_NEW_BUILD:-$build}" ]] && build=stale
@@ -571,7 +573,8 @@ class TestVerification:
         live.unlink()
         live.symlink_to(elsewhere)
         result = world.run(FAKE_STALE_PORT="9000")
-        assert result.returncode != 0
+        assert result.returncode == 1, "a checkout answers as 'dev', and it did (CR 36)"
+        assert "which is answering" in result.stderr
         assert os.readlink(live) == str(elsewhere)
         logged = [c for c in world.calls() if c.startswith("logger ") and " -> " in c]
         assert any(str(elsewhere) in c for c in logged), "the journal names the real old link"

@@ -29,3 +29,6 @@ coverage.xml
 # Git worktrees
 .worktrees/
 .claude/worktrees/
+
+# Release build id: scripts/deploy.sh writes it into a release, never a checkout (#9)
+/REVISION

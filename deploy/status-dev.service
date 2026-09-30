@@ -22,18 +22,13 @@ StartLimitBurst=5
 [Service]
 Type=simple
 User=exedev
-WorkingDirectory=/home/exedev/status
-
-# Same runtime dir as the production unit, created here too because start
-# order between the two is not specified — whichever runs first makes it.
-ExecStartPre=+/bin/bash -c 'mkdir -p /run/status && chown exedev:exedev /run/status'
-
-# Report the commit being served, so a bug filed against :9001 names a SHA
-# instead of "dev". Written to its own file: the two units serve one working
-# tree but restart independently, and sharing /run/status/build-id would
-# have them racing to write it.
-ExecStartPre=/bin/bash -c 'echo BUILD_ID=$(git rev-parse --short HEAD) > /run/status/build-id-dev'
-EnvironmentFile=-/run/status/build-id-dev
+# A release, never a checkout (#9): scripts/deploy.sh builds read-only releases
+# under /srv/status/releases and swaps this symlink. Nothing done in the
+# development checkout reaches this unit until it is deployed.
+# Dev is deployed like live, any pushed ref (R12); the hand-run inner loop is
+# scripts/dev_server.sh from a worktree, after `sudo systemctl stop status-dev`.
+# /health on :9001 names the release's REVISION (src/core/build.py).
+WorkingDirectory=/srv/status/dev
 
 # Deliberately NO STATUS_ALLOW_PROD_DB here. The production opt-in belongs
 # to status.service alone. Non-production check-ins point at this endpoint;
@@ -47,18 +42,19 @@ Environment=STATUS_DEV_RELOAD=0
 # production key has no business reaching notifier_dev.
 LoadCredential=notifier-key:/etc/status/notifier-api-dev.key
 
-# No EnvironmentFile= line for the secret files: the script sources
-# /etc/status/.env and the repo .env itself, then overrides DATABASE_URL
-# with DEV_DATABASE_URL. Loading them here too would just re-import the
-# production DATABASE_URL one layer earlier for no gain. The build-id file
-# above is the exception and holds nothing but BUILD_ID.
+# DEV_DATABASE_URL, and nothing else (#9, R11). The script sources
+# /etc/status/.env itself and then overrides DATABASE_URL with it; loading
+# /etc/status/.env here too would re-import the production DATABASE_URL one
+# layer earlier for no gain. Never a repo .env: a release has none, and the
+# development checkout's carries PATs and API keys.
+EnvironmentFile=/etc/status/dev.env
 #
 # ExecStart is the guarded script, never a hand-rolled uvicorn line. The
 # script unsets the production opt-in, swaps in DEV_DATABASE_URL, delegates
 # the URL check to src.core.db_safety, and refuses an unmigrated database.
 # A second uvicorn spelling here would be a second code path that can drift
 # out from under all four checks (issues notifier#22, notifier#23, notifier#24).
-ExecStart=/home/exedev/status/scripts/dev_server.sh
+ExecStart=/srv/status/dev/scripts/dev_server.sh
 
 Restart=on-failure
 RestartSec=15

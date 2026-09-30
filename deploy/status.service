@@ -21,13 +21,10 @@ StartLimitBurst=5
 [Service]
 Type=simple
 User=exedev
-WorkingDirectory=/home/exedev/status
-
-# Create runtime dir (runs as root before User= takes effect with + prefix)
-ExecStartPre=+/bin/bash -c 'mkdir -p /run/status && chown exedev:exedev /run/status'
-
-# Write current git SHA to a runtime env file before starting
-ExecStartPre=/bin/bash -c 'echo BUILD_ID=$(git rev-parse --short HEAD) > /run/status/build-id'
+# A release, never a checkout (#9): scripts/deploy.sh builds read-only releases
+# under /srv/status/releases and swaps this symlink. Nothing done in the
+# development checkout reaches this unit until it is deployed.
+WorkingDirectory=/srv/status/live
 
 # The production database opt-in for src/core/db_safety.py. This MUST stay in
 # the unit and never move into an EnvironmentFile below — anything in those
@@ -66,16 +63,16 @@ OOMScoreAdjust=-500
 # tests/deploy/test_notifier_credential.py holds this.
 LoadCredential=notifier-key:/etc/status/notifier-api.key
 
-# Load BUILD_ID, then system secrets, then optional repo-local overrides
-EnvironmentFile=-/run/status/build-id
+# Production's env file alone (#9, R11). Never a repo .env: the development
+# checkout's carries PATs and API keys, and a release has none. The build id
+# is the release's REVISION, read by the app (src/core/build.py).
 EnvironmentFile=/etc/status/.env
-EnvironmentFile=-/home/exedev/status/.env
 
 # Never a uvicorn line here. Besides the one-spelling rule status-dev.service
 # has held since notifier#24, systemd reads every EnvironmentFile= *before* ExecStartPre
 # runs — so no ExecStartPre can resolve this host's tailnet address into the
 # environment ExecStart would see. Resolving and binding must share a process.
-ExecStart=/home/exedev/status/scripts/serve.sh
+ExecStart=/srv/status/live/scripts/serve.sh
 Restart=on-failure
 RestartSec=5
 

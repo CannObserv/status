@@ -2,8 +2,9 @@
 
 The production opt-in flag must live in the unit itself. Anything placed in an
 EnvironmentFile is inherited by every process that sources that file, which
-re-opens the hole for exactly the hand-run servers the guard targets — and
-this unit loads both /etc/status/.env and the repo .env.
+re-opens the hole for exactly the hand-run servers the guard targets. The
+units load /etc/status/.env (live) and /etc/status/dev.env (dev), and no repo
+.env since #9.
 """
 
 from pathlib import Path
@@ -37,7 +38,7 @@ def test_unit_sets_the_production_opt_in_flag():
 
 
 @pytest.mark.parametrize(
-    "env_file", [Path("/etc/status/.env"), REPO_ROOT / ".env"], ids=["etc", "repo"]
+    "env_file", [Path("/etc/status/.env"), Path("/etc/status/dev.env")], ids=["live", "dev"]
 )
 def test_opt_in_flag_is_not_in_any_env_file_on_the_unit_load_path(env_file):
     """VM-local check. Skips loudly off-VM rather than passing vacuously."""
@@ -115,7 +116,7 @@ def test_bind_override_is_not_baked_into_either_unit():
 
 
 @pytest.mark.parametrize(
-    "env_file", [Path("/etc/status/.env"), REPO_ROOT / ".env"], ids=["etc", "repo"]
+    "env_file", [Path("/etc/status/.env"), Path("/etc/status/dev.env")], ids=["live", "dev"]
 )
 def test_bind_override_is_not_in_any_env_file_on_the_unit_load_path(env_file):
     """VM-local check. Skips loudly off-VM rather than passing vacuously."""

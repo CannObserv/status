@@ -27,10 +27,10 @@ if [[ "${STATUS_SWEEP_DEV:-0}" == "1" ]]; then
 sweep: DEV_DATABASE_URL is not set.
 
 The dev sweep must not open the production database — it would alert on
-production monitors and dispatch to production channels to do it. Point
-DEV_DATABASE_URL at the dev database in the repo .env (git-ignored):
+production monitors and dispatch to production channels to do it. The dev
+units read DEV_DATABASE_URL from /etc/status/dev.env (docs/RUNBOOK.md):
 
-  echo 'DEV_DATABASE_URL=postgresql+asyncpg://USER@localhost/status_dev' >> .env
+  DEV_DATABASE_URL=postgresql+asyncpg://USER@localhost/status_dev
 MSG
     exit 1
   fi

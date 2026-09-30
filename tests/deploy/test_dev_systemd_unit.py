@@ -13,7 +13,6 @@ ExecStart spelling is a second code path that can drift out from under all
 four checks.
 """
 
-import re
 from pathlib import Path
 
 from src.core import db_safety
@@ -118,22 +117,6 @@ def test_dev_unit_survives_a_slow_database_at_boot():
         "StartLimitIntervalSec is shorter than the retries it is meant to count, "
         "so the limit can never actually trip and the loop runs forever"
     )
-
-
-def test_dev_unit_reports_which_commit_it_is_serving():
-    """/health on :9001 must not answer `dev` while :9000 answers a SHA (notifier#24).
-
-    A bug reported against the dev endpoint is unactionable without it. Kept
-    off the production unit's /run/status/build-id so the two units never
-    race to write one file.
-    """
-    body = directives(DEV_UNIT)
-    assert "BUILD_ID=" in body
-    assert "build-id-dev" in body
-    # Every mention must be the -dev file. An end-of-line check would miss the
-    # one that matters: the write target sits mid-line inside the ExecStartPre
-    # shell quoting, and reverting only that half is what recreates the race.
-    assert re.search(r"/run/status/build-id(?!-dev)", body) is None
 
 
 def test_dev_unit_starts_at_boot():

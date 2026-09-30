@@ -8,7 +8,10 @@ After=network.target postgresql.service tailscaled.service
 [Service]
 Type=oneshot
 User=exedev
-WorkingDirectory=/home/exedev/status
+# A release, never a checkout (#9): scripts/deploy.sh builds read-only releases
+# under /srv/status/releases and swaps this symlink. Nothing done in the
+# development checkout reaches this unit until it is deployed.
+WorkingDirectory=/srv/status/dev
 
 TimeoutStartSec=120
 
@@ -23,11 +26,11 @@ TimeoutStartSec=120
 # dev_server.sh performs for the :9001 endpoint.
 Environment=STATUS_SWEEP_DEV=1
 
-# No EnvironmentFile= lines: the script sources /etc/status/.env and the
-# repo .env itself and then replaces DATABASE_URL. Loading them here too would
-# just re-import the production DATABASE_URL one layer earlier for no gain.
+# DEV_DATABASE_URL, and nothing else (#9, R11), as status-dev.service: the
+# script sources /etc/status/.env itself and then replaces DATABASE_URL.
+EnvironmentFile=/etc/status/dev.env
 # The same notifier key as the API unit for this environment (spec D13): the
 # sweep is the other half of alerting. tests/deploy/test_notifier_credential.py.
 LoadCredential=notifier-key:/etc/status/notifier-api-dev.key
 
-ExecStart=/home/exedev/status/scripts/sweep.sh
+ExecStart=/srv/status/dev/scripts/sweep.sh

@@ -45,7 +45,7 @@ case "$*" in
   *"alembic upgrade"*)
     exit "${FAKE_MIGRATE_RC:-0}" ;;
   *"python -c"*)
-    [[ -n "${FAKE_BROKEN_VENV:-}" ]] && exit 1 ;;
+    [[ -n "${FAKE_BROKEN_VENV:-}" ]] && { echo "probe: no interpreter" >&2; exit 2; } ;;
 esac
 exit 0
 """
@@ -330,12 +330,30 @@ class TestReleases:
         assert_ok(world.run(world.main[0]))
         assert not [c for c in world.calls() if " sync " in c]
 
-    def test_a_reused_release_whose_interpreter_is_gone_is_rebuilt(self, world):
+    def test_an_unlinked_release_whose_interpreter_is_gone_is_rebuilt(self, world):
         """CR 9: REVISION says the build finished, not that its venv still runs."""
         assert_ok(world.run(world.main[0]))
+        assert_ok(world.run(world.main[1]))
         world.reset_log()
-        assert_ok(world.run(world.main[0], FAKE_BROKEN_VENV="1"))
+        result = world.run(world.main[0], FAKE_BROKEN_VENV="1")
+        assert_ok(result)
         assert [c for c in world.calls() if " sync " in c]
+        assert "probe: no interpreter" in result.stderr, "why it rebuilt"
+
+    def test_a_linked_release_whose_interpreter_is_gone_is_never_deleted(self, world):
+        """CR 15: live runs from it. Rebuilding it in place would pull the code
+        out from under the running sweep and API, unverified, and a failed sync
+        would leave live with no release at all."""
+        assert_ok(world.run(world.main[0]))
+        release = world.root / "releases" / world.build(world.main[0])
+        world.reset_log()
+        result = world.run("--dev", world.main[0], FAKE_BROKEN_VENV="1")
+        assert result.returncode != 0
+        assert (release / "REVISION").exists()
+        assert (release / ".venv").exists()
+        assert not [c for c in world.calls() if " sync " in c]
+        assert "probe: no interpreter" in result.stderr
+        assert "live" in result.stderr
 
     def test_an_interrupted_build_is_rebuilt(self, world):
         """No REVISION means the build never finished: start it again."""

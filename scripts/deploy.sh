@@ -133,11 +133,28 @@ build_release() {
   chmod -R a-w "$release"
 }
 
+linked_by() { # the targets whose link names this release
+  local target
+  for target in live dev; do
+    [[ "$(readlink "$ROOT/$target" 2>/dev/null)" == "releases/$build" ]] && echo "$target"
+  done
+  return 0
+}
+
 # REVISION says the build finished, not that its venv still runs: a
 # uv-managed interpreter removed since would fail every rollback to it (CR 9).
-if [[ -f "$release/REVISION" ]] && in_release python -c 'import sys' 2>/dev/null; then
+# A release a target runs is never rebuilt in place: that pulls the code out
+# from under its sweep and API, unverified, and a failed sync leaves the target
+# with no release at all (CR 15).
+if [[ ! -f "$release/REVISION" ]]; then
+  build_release
+elif probe="$(in_release python -c 'import sys' 2>&1)"; then
   note "reusing release $build"
+elif [[ -n "$(linked_by)" ]]; then
+  die "release $build no longer runs (${probe:-no output}), and $(linked_by | paste -sd' ') runs it." \
+    "Deploy another build to $(linked_by | paste -sd' ') first; this one is then rebuilt."
 else
+  note "release $build no longer runs (${probe:-no output}); rebuilding"
   build_release
 fi
 touch "$release" # prune by last deploy, not first build

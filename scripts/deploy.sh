@@ -292,17 +292,21 @@ restart_and_verify() {
 }
 
 deploy_target() {
-  local target="$1" api sweep port link previous
+  local target="$1" api sweep port link previous previous_link
   case "$target" in
     live) api=status sweep=status-sweep.service port=9000 ;;
     dev) api=status-dev sweep=status-sweep-dev.service port=9001 ;;
   esac
   link="$ROOT/$target"
+  # The link exactly as it was, to put back on failure: one made by hand during
+  # a recovery may point anywhere, not only into releases/ (CR 31). Its name is
+  # for comparing and for messages.
+  previous_link="$(readlink "$link" 2>/dev/null || true)"
   previous="$(release_of "$target")"
 
   migrate "$target"
   swap "$link" "releases/$build"
-  logger -t status-deploy "$target -> $build (was ${previous:-nothing})" || true
+  logger -t status-deploy "$target -> $build (was ${previous_link:-nothing})" || true
 
   if ((!restart)); then
     note "$target linked to $build; units not restarted (--no-restart)"
@@ -316,7 +320,7 @@ deploy_target() {
   [[ "$previous" != "$build" ]] ||
     dead "$target failed on $build, which it was already running; there is nothing to switch back to"
   local old="$previous"
-  swap "$link" "releases/$old"
+  swap "$link" "$previous_link"
   # A crash-looping release can exhaust the unit's StartLimitBurst, and systemd
   # then refuses this restart too. Clear it, then prove the old build as the new
   # one was proved: its API and a sweep pass, since a migration that was not

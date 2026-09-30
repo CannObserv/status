@@ -550,6 +550,21 @@ class TestVerification:
         assert "already" in result.stderr
         assert "switched back" not in result.stderr
 
+    def test_a_rollback_restores_a_hand_made_link_exactly(self, world):
+        """CR 31: live pointed by hand at somewhere outside releases/ during a
+        recovery. Switching back must restore that link, not releases/<name>."""
+        assert_ok(world.run(world.main[0]))
+        elsewhere = world.tmp / "elsewhere"
+        elsewhere.mkdir()
+        live = world.root / "live"
+        live.unlink()
+        live.symlink_to(elsewhere)
+        result = world.run(FAKE_STALE_PORT="9000")
+        assert result.returncode != 0
+        assert os.readlink(live) == str(elsewhere)
+        logged = [c for c in world.calls() if c.startswith("logger ") and " -> " in c]
+        assert any(str(elsewhere) in c for c in logged), "the journal names the real old link"
+
     def test_a_failing_sweep_pass_is_switched_back(self, world):
         assert_ok(world.run(world.main[0]))
         previous = world.target("live")

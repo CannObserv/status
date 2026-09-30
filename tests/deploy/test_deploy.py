@@ -93,8 +93,9 @@ elif [[ "$1" == show ]]; then
 fi
 """
 
+# FAKE_RM_FAIL fails the recursive delete, as a real prune failure would.
 STUB_RM = r"""#!/usr/bin/env bash
-[[ -n "${FAKE_RM_FAIL:-}" ]] && exit 1
+[[ -n "${FAKE_RM_FAIL:-}" && "$1" == -rf ]] && exit 1
 exec /bin/rm "$@"
 """
 
@@ -391,6 +392,30 @@ class TestReleases:
         result = world.run(world.main[2], STATUS_DEPLOY_KEEP="1", FAKE_RM_FAIL="1")
         assert_ok(result)
         assert "prune" in result.stderr
+        # CR 26: a half-pruned release reads as interrupted, never as complete.
+        half = world.root / "releases" / world.build(world.main[0])
+        assert half.exists() and not (half / "REVISION").exists()
+
+    def test_a_writable_release_is_never_reused(self, world):
+        """CR 26: uv rebuilds a writable release's broken venv empty and says 0.
+
+        A finished release is read-only; a writable one with REVISION was cut
+        short between REVISION and chmod, or half-pruned.
+        """
+        assert_ok(world.run(world.main[0]))
+        assert_ok(world.run(world.main[1]))
+        (world.root / "releases" / world.build(world.main[0])).chmod(0o755)
+        world.reset_log()
+        assert_ok(world.run(world.main[0]))
+        assert [c for c in world.calls() if " sync " in c]
+
+    def test_the_reuse_probe_imports_the_dependencies_not_just_python(self, world):
+        """CR 26: `import sys` passes on an empty venv."""
+        assert_ok(world.run(world.main[0]))
+        world.reset_log()
+        assert_ok(world.run(world.main[0]))
+        (probe,) = [c for c in world.calls() if "python -c" in c]
+        assert "import fastapi" in probe
 
     def test_pruning_spares_what_dev_still_runs(self, world):
         assert_ok(world.run(world.main[0]))

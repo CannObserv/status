@@ -158,7 +158,15 @@ linked_by() { # the targets whose link names this release
 # with no release at all (CR 15).
 if [[ ! -f "$release/REVISION" ]]; then
   build_release
-elif probe="$(in_release python -c 'import sys' 2>&1)"; then
+elif [[ -w "$release" ]]; then
+  # Finished releases are read-only. A writable one was cut short between
+  # REVISION and chmod, or half-pruned, and uv would quietly rebuild its venv
+  # empty rather than fail the probe below (CR 26).
+  probe="writable, so never finished"
+  [[ -z "$(linked_by)" ]] || die "release $build is $probe, and $(linked_by | paste -sd' ') runs it."
+  note "release $build is $probe; rebuilding"
+  build_release
+elif probe="$(in_release python -c 'import fastapi, sqlalchemy, alembic' 2>&1)"; then
   note "reusing release $build"
 elif [[ -n "$(linked_by)" ]]; then
   die "release $build no longer runs (${probe:-no output}), and $(linked_by | paste -sd' ') runs it." \
@@ -314,6 +322,9 @@ ls -1t "$ROOT/releases" | tail -n +$((KEEP + 1)) | while read -r old; do
   note "pruning release $old"
   # Both targets are verified by now: a failed prune is a note, never a failed
   # deploy (CR 10).
-  { make_writable "$ROOT/releases/$old" && rm -rf "${ROOT:?}/releases/$old"; } ||
+  # REVISION first: a prune cut short leaves an interrupted build, never a
+  # "complete" one with half its files (CR 26).
+  { make_writable "$ROOT/releases/$old" && rm -f "$ROOT/releases/$old/REVISION" &&
+    rm -rf "${ROOT:?}/releases/$old"; } ||
     note "prune failed for $old; remove it by hand (chmod -R u+w first)"
 done

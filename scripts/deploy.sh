@@ -4,7 +4,7 @@
 #
 #   scripts/deploy.sh [<ref>]            dev, then live; <ref> on origin/main
 #   scripts/deploy.sh --dev [<ref>]      dev only; <ref> on any origin branch
-#   scripts/deploy.sh --no-restart ...   build, migrate and link; touch no unit
+#   scripts/deploy.sh --no-restart ...   first deploy only: build, migrate, link
 #
 # <ref> defaults to origin/main. A rollback is a deploy of the previous build.
 #
@@ -70,6 +70,15 @@ ref="${ref:-origin/main}"
 
 exec 9>"$ROOT/.deploy.lock"
 flock -n 9 || die "another deploy is running (it holds $ROOT/.deploy.lock)"
+
+# The sweeps resolve their link on every pass, so relinking a running target
+# puts the build live within 60 s, unverified, whatever this flag says (CR 4).
+if ((!restart)); then
+  for target in "${targets[@]}"; do
+    [[ ! -L "$ROOT/$target" ]] ||
+      die "--no-restart is for the first deploy only: $target already runs $(readlink "$ROOT/$target")"
+  done
+fi
 
 for target in "${targets[@]}"; do
   envfile="$ENV_DIR/$([[ "$target" == live ]] && echo .env || echo dev.env)"

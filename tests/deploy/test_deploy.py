@@ -461,6 +461,16 @@ class TestOperation:
         assert not [c for c in world.calls() if c.startswith(("sudo ", "curl "))]
         assert [c for c in world.calls() if "alembic upgrade" in c]
 
+    def test_no_restart_is_refused_once_a_target_runs_a_release(self, world):
+        """CR 4: the sweeps resolve the link every pass, so a relink goes live
+        within 60 s whatever the flag says, and unverified."""
+        assert_ok(world.run(world.main[0]))
+        before = world.target("live")
+        result = world.run("--no-restart")
+        assert result.returncode != 0
+        assert "first deploy" in result.stderr
+        assert world.target("live") == before
+
     def test_a_concurrent_deploy_is_refused(self, world):
         with open(world.root / ".deploy.lock", "w") as held:
             fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)

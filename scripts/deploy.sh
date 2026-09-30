@@ -32,6 +32,8 @@ ROOT="${STATUS_DEPLOY_ROOT:-/srv/status}"
 ENV_DIR="${STATUS_DEPLOY_ENV_DIR:-/etc/status}"
 KEEP="${STATUS_DEPLOY_KEEP:-5}"
 VERIFY_SECONDS="${STATUS_DEPLOY_VERIFY_SECONDS:-60}"
+# Past the sweep units' TimeoutStartSec=120: a pass still running after this is stuck.
+SWEEP_WAIT_SECONDS="${STATUS_DEPLOY_SWEEP_WAIT_SECONDS:-150}"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 note() { echo "deploy: $*" >&2; }
@@ -231,12 +233,11 @@ verify_http() { # <port> <build>: /ready 200 and /health naming <build>
 
 # `systemctl start` on a oneshot mid-pass merges into that pass instead of
 # running another, and a pass already running started on the old release. Wait
-# it out, so the forced pass is one that started on this one (CR 2). Bounded
-# past the units' TimeoutStartSec=120.
+# it out, so the forced pass is one that started on this one (CR 2).
 wait_for_idle_sweep() {
-  local sweep="$1" deadline=$((SECONDS + 150))
+  local sweep="$1" deadline=$((SECONDS + SWEEP_WAIT_SECONDS))
   while [[ "$(systemctl show -p ActiveState --value "$sweep")" == activating ]]; do
-    ((SECONDS < deadline)) || { note "$sweep has been running for 150s"; return 1; }
+    ((SECONDS < deadline)) || { note "$sweep has been running for ${SWEEP_WAIT_SECONDS}s"; return 1; }
     sleep 1
   done
 }

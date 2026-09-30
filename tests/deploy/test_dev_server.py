@@ -216,3 +216,27 @@ def test_dev_server_still_guards_when_the_reloader_is_off(tmp_path):
     """The toggle must not become a way around the checks."""
     line = _run_dev_server(tmp_path, STATUS_DEV_RELOAD="0")
     assert "--port 9001" in line
+
+
+def test_dev_server_does_not_offer_a_migration_it_cannot_justify(tmp_path):
+    """CR 21: exit 2 (refused, unreachable, crashed) is not "behind"."""
+    fake = tmp_path / "uv"
+    fake.write_text(
+        '#!/usr/bin/env bash\nif [[ "$*" == *schema_state* ]]; then exit 2; fi\necho "uv $*"\n'
+    )
+    fake.chmod(0o755)
+    env = {
+        **os.environ,
+        "STATUS_DEV_SERVER_SKIP_ENV_FILES": "1",
+        "DEV_DATABASE_URL": "postgresql+asyncpg://u@h/status_dev",
+        "STATUS_BIND_HOST": "127.0.0.1",
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+    }
+    env.pop("STATUS_ALLOW_PROD_DB", None)
+    result = subprocess.run(
+        [str(DEV_SERVER)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode != 0
+    assert "cannot read migration state" in result.stderr
+    assert "alembic upgrade head" not in result.stderr
+    assert "uvicorn" not in result.stdout

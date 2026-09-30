@@ -524,6 +524,14 @@ class TestVerification:
         assert len(polls) == 3, "two busy answers, then the idle one"
         assert max(polls) < start
 
+    def test_a_pass_that_never_ends_fails_the_target_and_switches_back(self, world):
+        """CR 21: the wait is bounded, and running out of it is a failed verify."""
+        assert_ok(world.run(world.main[0]))
+        result = world.run(FAKE_SWEEP_BUSY="3", STATUS_DEPLOY_SWEEP_WAIT_SECONDS="1")
+        assert result.returncode == 1
+        assert "has been running" in result.stderr
+        assert "switched back" in result.stderr
+
     def test_the_busy_stub_holds_for_a_later_run_in_the_same_world(self, world):
         """CR 19: the counter was set by a world's first run and kept after."""
         assert_ok(world.run("--dev"))

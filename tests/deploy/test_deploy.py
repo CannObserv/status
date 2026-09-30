@@ -531,6 +531,26 @@ class TestOperation:
         assert not [c for c in world.calls() if "from_the_shell" in c]
         assert "no database URL for dev" in result.stderr
 
+    def test_run_from_outside_a_checkout_says_where_to_run_it(self, world):
+        """CR 11: /srv/status/live/scripts/deploy.sh exists too, with no .git."""
+        release_scripts = world.tmp / "release" / "scripts"
+        release_scripts.mkdir(parents=True)
+        shutil.copy(DEPLOY, release_scripts / "deploy.sh")
+        result = subprocess.run(
+            [str(release_scripts / "deploy.sh")],
+            env={
+                "PATH": f"{world.stubs}:{os.environ['PATH']}",
+                "STATUS_DEPLOY_ROOT": str(world.root),
+                "STATUS_DEPLOY_ENV_DIR": str(world.etc),
+                "FAKE_LOG": str(world.log),
+            },
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0
+        assert "from a checkout" in result.stderr
+
     def test_an_unknown_flag_is_refused(self, world):
         assert world.run("--live-only").returncode != 0
 

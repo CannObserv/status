@@ -66,6 +66,10 @@ ref="${ref:-origin/main}"
 # would be root's, and the units could not read their own venvs.
 [[ "$(id -u)" -eq 0 ]] && die "run as exedev, not root; the script sudoes for systemctl itself"
 
+# A release has a copy of this script and no .git to build from (CR 11).
+git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 ||
+  die "run from a checkout (/home/exedev/status/scripts/deploy.sh); $SRC is not one"
+
 [[ -d "$ROOT" ]] || die "$ROOT does not exist. Once: sudo mkdir $ROOT && sudo chown exedev: $ROOT"
 
 exec 9>"$ROOT/.deploy.lock"

@@ -45,22 +45,27 @@ export DATABASE_URL="$DEV_DATABASE_URL"
 uv run python -m src.core.db_safety
 
 # An unmigrated dev database starts cleanly and then 500s on every
-# authenticated request with "relation ... does not exist" (issue notifier#23), so
-# check migration state here where the message can say what to do about it.
-# `alembic current` prints the revision on stdout: non-zero means the database
-# is unreachable, empty stdout means reachable but never migrated.
-if ! revision="$(uv run alembic current 2>/dev/null)"; then
-  echo "dev_server: cannot read migration state — is the dev database reachable?" >&2
-  exit 1
-fi
-if [[ -z "${revision//[[:space:]]/}" ]]; then
-  cat >&2 <<'MSG'
-dev_server: the dev database has no migrations applied.
+# authenticated request with "relation ... does not exist" (issue notifier#23),
+# and one merely behind the code 500s on whatever touches the missing column
+# (#9). src.core.schema_state is the check the sweep and /ready use too: it
+# prints the state, and exits 1 when behind or unmigrated, 2 when unreachable.
+schema_rc=0
+schema="$(uv run --frozen --no-sync python -m src.core.schema_state)" || schema_rc=$?
+case "$schema_rc" in
+  0) ;;
+  1)
+    cat >&2 <<MSG
+dev_server: the dev database is ${schema:-behind this code}. Migrate it first:
 
-  DATABASE_URL="$DEV_DATABASE_URL" uv run alembic upgrade head
+  DATABASE_URL="\$DEV_DATABASE_URL" uv run alembic upgrade head
 MSG
-  exit 1
-fi
+    exit 1
+    ;;
+  *)
+    echo "dev_server: cannot read migration state — is the dev database reachable?" >&2
+    exit 1
+    ;;
+esac
 
 # --reload is right for a hand-run server and wrong for a service. Under
 # systemd an edit mid-request drops a consumer's connection, and a syntax

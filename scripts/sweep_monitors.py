@@ -9,7 +9,9 @@ thing it watches stops reporting exactly when it is needed (notifier#56).
 This process needs Postgres, notifier and no part of the API to be up.
 
 Each production pass then reports itself to healthchecks.io (#1,
-:mod:`src.core.heartbeat`): the watcher of the watcher, outside the cohort.
+:mod:`src.core.heartbeat`): the watcher of the watcher, outside the cohort. A
+pass whose code is ahead of the database's migrations fails as ``SchemaBehind``
+(#9, :mod:`src.core.schema_state`).
 """
 
 import asyncio
@@ -22,6 +24,7 @@ from src.core.alerting import Alerter, alerter_from_environment
 from src.core.database import get_session_factory
 from src.core.heartbeat import Heartbeat, heartbeat_from_environment
 from src.core.logging import configure_logging, get_logger
+from src.core.schema_state import require_current
 from src.core.sweep import SweepReport, sweep_monitors
 
 logger = get_logger(__name__)
@@ -43,6 +46,9 @@ async def run_sweep(
     only once the pass is committed.
     """
     try:
+        # Before anything is marked or sent: code that does not match the
+        # schema fails here, by name, rather than on its first column (#9).
+        await require_current(session)
         report = await sweep_monitors(session, alerter)
         await session.commit()
     except Exception as exc:

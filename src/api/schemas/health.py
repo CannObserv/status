@@ -31,7 +31,9 @@ class ReadyResponse(BaseModel):
 
     ``HealthResponse.database`` is derived from ``DATABASE_URL``; this one
     comes from ``current_database()`` on the live session. The two disagreeing
-    is a misconfiguration no other check would surface.
+    is a misconfiguration no other check would surface. ``schema_state`` is
+    ``current``, or ``ahead`` while an older release runs against a newer
+    schema (#9, :mod:`src.core.schema_state`).
 
     Every field is required. Making them optional so one model could also
     describe the 503 would publish them as nullable on the success path, where
@@ -43,6 +45,7 @@ class ReadyResponse(BaseModel):
     db: bool
     database: str
     environment: str
+    schema_state: str
 
 
 class NotReadyResponse(BaseModel):
@@ -55,3 +58,17 @@ class NotReadyResponse(BaseModel):
 
     status: str
     db: bool
+
+
+class SchemaBehindResponse(BaseModel):
+    """The 503 when the database was reached but is behind the code (#9, R8).
+
+    It names the database, unlike :class:`NotReadyResponse`: there was a
+    connection to ask, and the fix is a migration against exactly this one.
+    """
+
+    status: str
+    db: bool
+    database: str
+    environment: str
+    schema_state: str

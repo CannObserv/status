@@ -11,14 +11,15 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from scripts import sweep_monitors
 from scripts.sweep_monitors import run_sweep
-from src.core import build
+from src.core import build, schema_state
 from src.core.alerting import EndpointMismatch
 from src.core.models.monitor import Monitor
 from src.core.monitors import MonitorState
+from src.core.schema_state import SchemaBehind
 from src.core.sweep import SweepReport
 from tests.conftest import CHANNELS
 
@@ -135,6 +136,22 @@ class TestHeartbeat:
             await run_sweep(db_session, alerter, heartbeat)
         assert heartbeat.failed == [raised.value]
         assert heartbeat.completed == []
+
+    async def test_a_database_behind_the_code_fails_the_pass_by_name(
+        self, db_session, overdue_monitor, alerter, notifier
+    ):
+        """#9: 2026-09-29's 38 column errors, as one named /fail instead.
+
+        The monitor is overdue and must stay unswept: nothing is marked or
+        sent against a schema the code does not match.
+        """
+        oldest = schema_state.script_directory().get_base()
+        await db_session.execute(text("UPDATE alembic_version SET version_num = :r"), {"r": oldest})
+        heartbeat = FakeHeartbeat()
+        with pytest.raises(SchemaBehind) as raised:
+            await run_sweep(db_session, alerter, heartbeat)
+        assert heartbeat.failed == [raised.value]
+        assert notifier.dispatched() == []
 
     async def test_no_heartbeat_is_a_pass_like_any_other(
         self, db_session, overdue_monitor, alerter, notifier

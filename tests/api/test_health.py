@@ -23,12 +23,13 @@ from collections.abc import AsyncGenerator
 from typing import NoReturn
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from src.api.deps import get_db_session
 from src.api.main import app
 from src.api.routes.health import _resolve_database
-from src.core import build
+from src.core import build, schema_state
 from src.core.db_safety import database_name
 
 
@@ -146,3 +147,44 @@ async def test_ready_reports_503_without_naming_a_database(client):
 
     assert response.status_code == 503
     assert response.json() == {"status": "not_ready", "db": False}
+
+
+@pytest.mark.asyncio
+async def test_ready_reports_a_current_schema(client):
+    """What deploy.sh checks after a switch (#9, R6)."""
+    response = await client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["schema_state"] == "current"
+
+
+@pytest.mark.asyncio
+async def test_ready_is_503_when_the_database_is_behind_the_code(client, db_session):
+    """2026-09-29's forgotten migration, as a probe answer (#9, R8).
+
+    The database *was* reached, so the 503 names it: the fix is a migration
+    against that database, and the payload says which one.
+    """
+    oldest = schema_state.script_directory().get_base()
+    await db_session.execute(text("UPDATE alembic_version SET version_num = :r"), {"r": oldest})
+
+    response = await client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "db": True,
+        "database": database_name(os.environ["TEST_DATABASE_URL"]),
+        "environment": "development",
+        "schema_state": "behind",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ready_passes_a_database_ahead_of_the_code(client, db_session):
+    """The old release mid-deploy, or after a rollback: ready, and saying so."""
+    await db_session.execute(text("UPDATE alembic_version SET version_num = 'ffffffffffff'"))
+
+    response = await client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["schema_state"] == "ahead"

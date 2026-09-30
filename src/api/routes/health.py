@@ -10,9 +10,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db_session
-from src.api.schemas.health import HealthResponse, NotReadyResponse, ReadyResponse
+from src.api.schemas.health import (
+    HealthResponse,
+    NotReadyResponse,
+    ReadyResponse,
+    SchemaBehindResponse,
+)
 from src.core import build
 from src.core.db_safety import database_name, environment_label
+from src.core.schema_state import FAILING, schema_state
 
 router = APIRouter(tags=["health"])
 
@@ -61,25 +67,43 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok", build=BUILD_ID, database=DATABASE, environment=ENVIRONMENT)
 
 
-@router.get("/ready", response_model=ReadyResponse, responses={503: {"model": NotReadyResponse}})
+@router.get(
+    "/ready",
+    response_model=ReadyResponse,
+    responses={503: {"model": NotReadyResponse | SchemaBehindResponse}},
+)
 async def ready(session: Annotated[AsyncSession, Depends(get_db_session)]) -> JSONResponse:
-    """Readiness probe — checks DB connectivity. Returns 503 on failure.
+    """Readiness probe — the database, and its schema against this code. 503 on failure.
 
     ``current_database()`` rather than ``SELECT 1``: same round trip, and it
     names the database on the other end of the connection instead of the one
     ``DATABASE_URL`` claims. ``/health`` and ``/ready`` disagreeing is the
     only signal that those two have diverged.
+
+    A database behind the code is not ready: the routes that touch a missing
+    column fail. One ahead of it is, since migrations are expand-only.
     """
     try:
         result = await session.execute(text("SELECT current_database()"))
         name = str(result.scalar_one())
-        payload = ReadyResponse(
-            status="ready",
-            db=True,
-            database=name,
-            environment=environment_label(name),
-        )
-        return JSONResponse(status_code=200, content=payload.model_dump())
+        state = await schema_state(session)
     except SQLAlchemyError:
         not_ready = NotReadyResponse(status="not_ready", db=False)
         return JSONResponse(status_code=503, content=not_ready.model_dump())
+    if state in FAILING:
+        behind = SchemaBehindResponse(
+            status="not_ready",
+            db=True,
+            database=name,
+            environment=environment_label(name),
+            schema_state=state,
+        )
+        return JSONResponse(status_code=503, content=behind.model_dump())
+    payload = ReadyResponse(
+        status="ready",
+        db=True,
+        database=name,
+        environment=environment_label(name),
+        schema_state=state,
+    )
+    return JSONResponse(status_code=200, content=payload.model_dump())

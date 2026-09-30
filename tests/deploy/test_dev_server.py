@@ -42,9 +42,43 @@ def test_dev_server_sources_the_loader_by_resolved_path():
     assert ". scripts/load_env.sh" not in body
 
 
-def test_dev_server_checks_the_dev_database_is_migrated():
-    """An unmigrated dev DB starts cleanly and 500s on every request (notifier#23)."""
-    assert "alembic current" in DEV_SERVER.read_text()
+def test_dev_server_delegates_the_migration_check_to_python():
+    """An unmigrated dev DB starts cleanly and 500s on every request (notifier#23).
+
+    Since #9 the check is src.core.schema_state, the one the sweep and /ready
+    use, so it also catches a database merely *behind* the code, not only an
+    empty one: bash no longer decides what "migrated" means.
+    """
+    body = DEV_SERVER.read_text()
+    assert "src.core.schema_state" in body
+    assert "alembic current" not in body
+
+
+def test_dev_server_refuses_a_database_behind_the_code(tmp_path):
+    """schema_state exits 1: say what to run, and never reach uvicorn."""
+    fake = tmp_path / "uv"
+    fake.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$*" == *schema_state* ]]; then echo behind; exit 1; fi\n'
+        'echo "uv $*"\n'
+    )
+    fake.chmod(0o755)
+    env = {
+        **os.environ,
+        "STATUS_DEV_SERVER_SKIP_ENV_FILES": "1",
+        "DEV_DATABASE_URL": "postgresql+asyncpg://u@h/status_dev",
+        "STATUS_BIND_HOST": "127.0.0.1",
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+    }
+    env.pop("STATUS_ALLOW_PROD_DB", None)
+    result = subprocess.run(
+        [str(DEV_SERVER)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "behind" in combined
+    assert "alembic upgrade head" in combined
+    assert "uvicorn" not in result.stdout
 
 
 def test_dev_server_refuses_an_unreachable_dev_database():
@@ -132,8 +166,7 @@ def _fake_uv_path(tmp_path):
 
     Lets the launch path be exercised end to end — guard call, migration
     check, final uvicorn line — with no database and no server. The migration
-    check only asks whether `alembic current` printed anything, so echoing
-    satisfies it.
+    check reads schema_state's exit status, so exiting 0 satisfies it.
     """
     fake = tmp_path / "uv"
     fake.write_text('#!/usr/bin/env bash\necho "uv $*"\n')

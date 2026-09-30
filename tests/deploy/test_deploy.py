@@ -408,7 +408,7 @@ class TestVerification:
         reset = calls.index("sudo systemctl reset-failed status")
         restarts = [i for i, c in enumerate(calls) if c == "sudo systemctl restart status"]
         assert restarts[0] < reset < restarts[1]
-        assert [c for c in calls[restarts[1]:] if c.endswith(":9000/health")]
+        assert [c for c in calls[restarts[1] :] if c.endswith(":9000/health")]
 
     def test_a_rollback_that_does_not_come_back_says_so(self, world):
         """The old build not answering either is the loudest failure there is."""

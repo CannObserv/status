@@ -3,8 +3,8 @@
 The production opt-in flag must live in the unit itself. Anything placed in an
 EnvironmentFile is inherited by every process that sources that file, which
 re-opens the hole for exactly the hand-run servers the guard targets. The
-units load /etc/status/.env (live) and /etc/status/dev.env (dev), and no repo
-.env since #9.
+units load /etc/status/.env (live) and /etc/status/dev.env (dev); the repo .env
+is no unit's since #9, but every hand-run process still sources it.
 """
 
 from pathlib import Path
@@ -37,9 +37,13 @@ def test_unit_sets_the_production_opt_in_flag():
     assert f"Environment={db_safety.ALLOW_PROD_ENV_VAR}=1" in body
 
 
-@pytest.mark.parametrize(
-    "env_file", [Path("/etc/status/.env"), Path("/etc/status/dev.env")], ids=["live", "dev"]
-)
+# The units' two files, and the repo .env that scripts/load_env.sh still
+# sources into every hand-run process (notifier#22; CR 6).
+ENV_FILES = [Path("/etc/status/.env"), Path("/etc/status/dev.env"), REPO_ROOT / ".env"]
+ENV_FILE_IDS = ["live", "dev", "repo"]
+
+
+@pytest.mark.parametrize("env_file", ENV_FILES, ids=ENV_FILE_IDS)
 def test_opt_in_flag_is_not_in_any_env_file_on_the_unit_load_path(env_file):
     """VM-local check. Skips loudly off-VM rather than passing vacuously."""
     if not env_file.exists():
@@ -115,9 +119,7 @@ def test_bind_override_is_not_baked_into_either_unit():
         assert BIND_OVERRIDE not in directives(unit), f"{unit.name} pins the bind override"
 
 
-@pytest.mark.parametrize(
-    "env_file", [Path("/etc/status/.env"), Path("/etc/status/dev.env")], ids=["live", "dev"]
-)
+@pytest.mark.parametrize("env_file", ENV_FILES, ids=ENV_FILE_IDS)
 def test_bind_override_is_not_in_any_env_file_on_the_unit_load_path(env_file):
     """VM-local check. Skips loudly off-VM rather than passing vacuously."""
     if not env_file.exists():

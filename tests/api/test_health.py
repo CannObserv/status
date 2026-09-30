@@ -28,6 +28,7 @@ from sqlalchemy.exc import OperationalError
 
 from src.api.deps import get_db_session
 from src.api.main import app
+from src.api.routes import health as health_route
 from src.api.routes.health import _resolve_database
 from src.core import build, schema_state
 from src.core.db_safety import database_name
@@ -188,3 +189,25 @@ async def test_ready_passes_a_database_ahead_of_the_code(client, db_session):
 
     assert response.status_code == 200
     assert response.json()["schema_state"] == "ahead"
+
+
+@pytest.mark.asyncio
+async def test_two_stamped_heads_are_a_503_not_a_500(client, monkeypatch):
+    """CR 8: a probe answers; it never raises."""
+
+    async def two_heads(session):
+        raise schema_state.MultipleHeads("the database is stamped at 2 heads")
+
+    monkeypatch.setattr(health_route, "schema_state", two_heads)
+    response = await client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["schema_state"] == "unknown"
+
+
+def test_the_503_is_one_model_so_generated_clients_keep_the_detail():
+    """CR 8: anyOf[NotReady, SchemaBehind] with a superset second parses as the first."""
+    spec = app.openapi()
+    schema = spec["paths"]["/ready"]["get"]["responses"]["503"]["content"]["application/json"]
+    assert schema["schema"] == {"$ref": "#/components/schemas/NotReadyResponse"}
+    fields = spec["components"]["schemas"]["NotReadyResponse"]["properties"]
+    assert {"status", "db", "database", "environment", "schema_state"} <= set(fields)

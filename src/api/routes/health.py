@@ -10,17 +10,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db_session
-from src.api.schemas.health import (
-    HealthResponse,
-    NotReadyResponse,
-    ReadyResponse,
-    SchemaBehindResponse,
-)
+from src.api.schemas.health import HealthResponse, NotReadyResponse, ReadyResponse
 from src.core import build
 from src.core.db_safety import database_name, environment_label
-from src.core.schema_state import FAILING, schema_state
+from src.core.schema_state import FAILING, MultipleHeads, schema_state
 
 router = APIRouter(tags=["health"])
+
+#: ``schema_state`` when the check itself cannot decide (two heads stamped).
+UNKNOWN_SCHEMA = "unknown"
 
 
 def _resolve_database() -> tuple[str, str]:
@@ -70,7 +68,7 @@ async def health() -> HealthResponse:
 @router.get(
     "/ready",
     response_model=ReadyResponse,
-    responses={503: {"model": NotReadyResponse | SchemaBehindResponse}},
+    responses={503: {"model": NotReadyResponse}},
 )
 async def ready(session: Annotated[AsyncSession, Depends(get_db_session)]) -> JSONResponse:
     """Readiness probe — the database, and its schema against this code. 503 on failure.
@@ -86,19 +84,24 @@ async def ready(session: Annotated[AsyncSession, Depends(get_db_session)]) -> JS
     try:
         result = await session.execute(text("SELECT current_database()"))
         name = str(result.scalar_one())
+    except SQLAlchemyError:
+        return _not_ready(NotReadyResponse(status="not_ready", db=False))
+    try:
         state = await schema_state(session)
     except SQLAlchemyError:
-        not_ready = NotReadyResponse(status="not_ready", db=False)
-        return JSONResponse(status_code=503, content=not_ready.model_dump())
-    if state in FAILING:
-        behind = SchemaBehindResponse(
-            status="not_ready",
-            db=True,
-            database=name,
-            environment=environment_label(name),
-            schema_state=state,
+        return _not_ready(NotReadyResponse(status="not_ready", db=False))
+    except MultipleHeads:
+        state = UNKNOWN_SCHEMA
+    if state in FAILING or state == UNKNOWN_SCHEMA:
+        return _not_ready(
+            NotReadyResponse(
+                status="not_ready",
+                db=True,
+                database=name,
+                environment=environment_label(name),
+                schema_state=state,
+            )
         )
-        return JSONResponse(status_code=503, content=behind.model_dump())
     payload = ReadyResponse(
         status="ready",
         db=True,
@@ -107,3 +110,8 @@ async def ready(session: Annotated[AsyncSession, Depends(get_db_session)]) -> JS
         schema_state=state,
     )
     return JSONResponse(status_code=200, content=payload.model_dump())
+
+
+def _not_ready(payload: NotReadyResponse) -> JSONResponse:
+    """503, without the fields an unreachable database cannot fill."""
+    return JSONResponse(status_code=503, content=payload.model_dump(exclude_none=True))

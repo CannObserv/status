@@ -49,26 +49,17 @@ class ReadyResponse(BaseModel):
 
 
 class NotReadyResponse(BaseModel):
-    """The 503 payload — no connection, so nothing to name.
+    """The 503 payload: one model, so a generated client keeps every detail (CR 8).
 
-    A separate model rather than a loosened ``ReadyResponse``: the 503 says
-    only that the database could not be reached, and the shape it has carried
-    since before the probes learned to name a database is the honest one.
+    Database unreachable: ``status`` and ``db`` alone, since there was no
+    connection to name. Reached but behind the code (#9): the database, its
+    environment and ``schema_state`` too, because the fix is a migration
+    against exactly that one. The response omits the fields it cannot fill
+    rather than publishing nulls a caller would have to check for.
     """
 
     status: str
     db: bool
-
-
-class SchemaBehindResponse(BaseModel):
-    """The 503 when the database was reached but is behind the code (#9, R8).
-
-    It names the database, unlike :class:`NotReadyResponse`: there was a
-    connection to ask, and the fix is a migration against exactly this one.
-    """
-
-    status: str
-    db: bool
-    database: str
-    environment: str
-    schema_state: str
+    database: str | None = None
+    environment: str | None = None
+    schema_state: str | None = None

@@ -44,6 +44,8 @@ case "$*" in
     for ((i = 0; i < ${FAKE_HEADS:-1}; i++)); do echo "head$i (head)"; done ;;
   *"alembic upgrade"*)
     exit "${FAKE_MIGRATE_RC:-0}" ;;
+  *"python -c"*)
+    [[ -n "${FAKE_BROKEN_VENV:-}" ]] && exit 1 ;;
 esac
 exit 0
 """
@@ -321,6 +323,13 @@ class TestReleases:
         world.reset_log()
         assert_ok(world.run(world.main[0]))
         assert not [c for c in world.calls() if " sync " in c]
+
+    def test_a_reused_release_whose_interpreter_is_gone_is_rebuilt(self, world):
+        """CR 9: REVISION says the build finished, not that its venv still runs."""
+        assert_ok(world.run(world.main[0]))
+        world.reset_log()
+        assert_ok(world.run(world.main[0], FAKE_BROKEN_VENV="1"))
+        assert [c for c in world.calls() if " sync " in c]
 
     def test_an_interrupted_build_is_rebuilt(self, world):
         """No REVISION means the build never finished: start it again."""

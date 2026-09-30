@@ -108,7 +108,7 @@ make_writable() { chmod -R u+w "$1"; }
 
 build_release() {
   if [[ -e "$release" ]]; then
-    note "removing an interrupted build of $build"
+    note "removing an interrupted or broken build of $build"
     make_writable "$release"
     rm -rf "$release"
   fi
@@ -129,7 +129,9 @@ build_release() {
   chmod -R a-w "$release"
 }
 
-if [[ -f "$release/REVISION" ]]; then
+# REVISION says the build finished, not that its venv still runs: a
+# uv-managed interpreter removed since would fail every rollback to it (CR 9).
+if [[ -f "$release/REVISION" ]] && in_release python -c 'import sys' 2>/dev/null; then
   note "reusing release $build"
 else
   build_release

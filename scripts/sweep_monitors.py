@@ -17,6 +17,7 @@ import sys
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core import build
 from src.core.alerting import Alerter, alerter_from_environment
 from src.core.database import get_session_factory
 from src.core.heartbeat import Heartbeat, heartbeat_from_environment
@@ -51,6 +52,7 @@ async def run_sweep(
     logger.info(
         "monitor sweep complete",
         extra={
+            "build": build.build_id(),
             "checked": report.checked,
             "alerted": report.alerted,
             "owed": report.owed,

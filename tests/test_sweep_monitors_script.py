@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from scripts import sweep_monitors
 from scripts.sweep_monitors import run_sweep
+from src.core import build
 from src.core.alerting import EndpointMismatch
 from src.core.models.monitor import Monitor
 from src.core.monitors import MonitorState
@@ -86,6 +87,17 @@ async def test_the_line_names_the_undelivered_monitors(
 
     (line,) = [r for r in caplog.records if r.message == "monitor sweep complete"]
     assert line.undelivered[str(overdue_monitor.id)] == "failed"
+
+
+async def test_the_line_names_the_build_that_ran(
+    db_session, overdue_monitor, alerter, notifier, caplog
+):
+    """#9: the sweep starts fresh every pass, so only its own line can say what ran."""
+    with caplog.at_level("INFO"):
+        await run_sweep(db_session, alerter)
+
+    (line,) = [r for r in caplog.records if r.message == "monitor sweep complete"]
+    assert line.build == build.build_id()
 
 
 class FakeHeartbeat:

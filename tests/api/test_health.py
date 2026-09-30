@@ -3,22 +3,19 @@
 Two things the probes must get right, and one of them is why the other
 exists.
 
-**Which deployment answered** (notifier#58). ``build`` cannot say: the two units
-serve one working tree, so the commit agrees on both ports and always will.
-``database`` and ``environment`` can, and the assertion that matters is that
-the two probes *agree* — ``/health`` classifies the configured URL, ``/ready``
-the live connection, so a match is what says those have not diverged.
-Asserting only that ``environment`` holds one of its two legal values passes
-for either and cannot fail on the bug the feature exists to prevent.
+**Which deployment answered** (notifier#58). ``build`` alone cannot say: dev and
+live may run the same release. ``database`` and ``environment`` can, and the
+assertion that matters is that the two probes *agree* — ``/health`` classifies
+the configured URL, ``/ready`` the live connection, so a match is what says
+those have not diverged. Asserting only that ``environment`` holds one of its
+two legal values passes for either and cannot fail on the bug the feature
+exists to prevent.
 
-**The build stamp.** Both systemd units write it with
+**The build.** The release's ``REVISION`` (#9, R10), read by
+:mod:`src.core.build` and tested there; here only that ``/health`` carries it.
 
-    echo BUILD_ID=$(git rev-parse --short HEAD) > /run/status/build-id…
-
-and `echo` exits 0 even when the command substitution comes back empty — a
-failing `git` is not a failing ExecStartPre. So the app must treat an empty
-BUILD_ID exactly like a missing one; `os.environ.get(name, default)` does not,
-because the default fires only on absence.
+**The schema** (#9, R8). ``/ready`` is 503 when the database is behind the
+code, and says where it stands either way.
 """
 
 import os
@@ -30,25 +27,14 @@ from sqlalchemy.exc import OperationalError
 
 from src.api.deps import get_db_session
 from src.api.main import app
-from src.api.routes.health import _resolve_build_id, _resolve_database
+from src.api.routes.health import _resolve_database
+from src.core import build
 from src.core.db_safety import database_name
 
 
-def test_uses_the_stamp_when_one_is_written(monkeypatch):
-    monkeypatch.setenv("BUILD_ID", "6c760bf")
-    assert _resolve_build_id() == "6c760bf"
-
-
-@pytest.mark.parametrize("value", ["", "   "], ids=["empty", "whitespace"])
-def test_falls_back_when_the_stamp_is_blank(monkeypatch, value):
-    """A blank stamp reads as a broken health endpoint, not a missing build."""
-    monkeypatch.setenv("BUILD_ID", value)
-    assert _resolve_build_id() == "dev"
-
-
-def test_falls_back_when_unset(monkeypatch):
-    monkeypatch.delenv("BUILD_ID", raising=False)
-    assert _resolve_build_id() == "dev"
+@pytest.mark.asyncio
+async def test_health_reports_the_release_build(client):
+    assert (await client.get("/health")).json()["build"] == build.build_id()
 
 
 def test_names_the_database_and_classifies_it(monkeypatch):

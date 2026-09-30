@@ -11,22 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db_session
 from src.api.schemas.health import HealthResponse, NotReadyResponse, ReadyResponse
+from src.core import build
 from src.core.db_safety import database_name, environment_label
 
 router = APIRouter(tags=["health"])
-
-
-def _resolve_build_id() -> str:
-    """The commit this process is serving, or ``"dev"`` when unstamped.
-
-    Blank counts as unstamped. Both systemd units write the stamp with
-    ``echo BUILD_ID=$(git rev-parse --short HEAD)``, and ``echo`` exits 0 even
-    when the substitution comes back empty — so a failing ``git`` produces a
-    successful ExecStartPre and a ``BUILD_ID=`` line. ``os.environ.get`` with a
-    default would hand that straight through, and ``{"build": ""}`` reads as a
-    broken health endpoint rather than a missing build stamp.
-    """
-    return os.environ.get("BUILD_ID", "").strip() or "dev"
 
 
 def _resolve_database() -> tuple[str, str]:
@@ -50,7 +38,7 @@ def _resolve_database() -> tuple[str, str]:
     return name, environment_label(name)
 
 
-BUILD_ID = _resolve_build_id()
+BUILD_ID = build.build_id()
 DATABASE, ENVIRONMENT = _resolve_database()
 
 
@@ -60,7 +48,7 @@ async def health() -> HealthResponse:
 
     Unauthenticated, so a consumer can establish which deployment it is
     talking to before it has a key that works. ``build`` cannot answer that:
-    both endpoints serve one working tree, so the commit agrees on either.
+    dev and live may run the same release, so the commit can agree on either.
 
     ``database`` and ``environment`` are read from the configured URL, which
     is what keeps this a no-DB probe; ``/ready`` reports the database actually

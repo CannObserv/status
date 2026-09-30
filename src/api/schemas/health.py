@@ -13,8 +13,8 @@ from pydantic import BaseModel
 class HealthResponse(BaseModel):
     """Liveness payload, including which deployment answered.
 
-    ``build`` cannot distinguish the two endpoints: both units serve one
-    working tree, so the SHA agreeing is correct and will keep agreeing
+    ``build`` cannot distinguish the two endpoints: dev and live may run the
+    same release (#9), so the SHA agreeing is no signal either way
     (notifier#58). ``environment`` is the field to assert on, and it carries the same
     vocabulary as an API key's own marking — so a consumer sees the mismatch
     here before the 403 in ``require_api_key`` tells it the same thing.

@@ -450,9 +450,10 @@ class TestVerification:
         result = world.run(FAKE_STALE_PORT="9000")
         assert result.returncode != 0
         calls = world.calls()
-        reset = calls.index("sudo systemctl reset-failed status")
+        resets = [i for i, c in enumerate(calls) if c == "sudo systemctl reset-failed status"]
         restarts = [i for i, c in enumerate(calls) if c == "sudo systemctl restart status"]
-        assert restarts[0] < reset < restarts[1]
+        # One before each restart: forward (CR 23) and rollback (CR 3).
+        assert resets[0] < restarts[0] < resets[1] < restarts[1]
         assert [c for c in calls[restarts[1] :] if c.endswith(":9000/health")]
         # CR 20: the old build itself answered, and the message says which.
         old = world.build(world.main[0])
@@ -538,6 +539,17 @@ class TestVerification:
         world.reset_log()
         assert_ok(world.run("--dev", FAKE_SWEEP_BUSY="2"))
         assert len([c for c in world.calls() if c.startswith("systemctl show")]) == 3
+
+    def test_a_deploy_clears_the_start_limit_before_starting_the_fix(self, world):
+        """CR 23: the deploy that fixes a crash loop is the one that hits the limit.
+
+        systemd refuses a start past StartLimitBurst, manual ones included, so
+        the forward restart needs reset-failed as much as the rollback does.
+        """
+        assert_ok(world.run("--dev"))
+        calls = world.calls()
+        reset = calls.index("sudo systemctl reset-failed status-dev")
+        assert reset < calls.index("sudo systemctl restart status-dev")
 
     def test_a_first_deploy_that_fails_has_nothing_to_return_to(self, world):
         result = world.run(FAKE_STALE_PORT="9001")

@@ -244,6 +244,9 @@ wait_for_idle_sweep() {
 
 restart_and_verify() {
   local api="$1" sweep="$2" port="$3"
+  # The deploy that fixes a crash loop is the one that finds the unit past its
+  # StartLimitBurst, and systemd refuses manual starts there too (CR 23).
+  sudo systemctl reset-failed "$api" || true
   sudo systemctl restart "$api" || { note "systemctl restart $api failed"; return 1; }
   wait_for_idle_sweep "$sweep" || return 1
   sudo systemctl start "$sweep" ||

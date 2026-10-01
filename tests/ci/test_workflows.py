@@ -9,11 +9,12 @@ job that installs dependencies and stops would satisfy every other check in
 this file, and "present in form, doing nothing" is precisely what notifier#27 was
 filed about. The rest are conditions a reader cannot see in the YAML:
 
-* **The test database must be named with a ``_test`` suffix.** ``db_safety``
-  matches the suffix, not a substring, and ``get_database_url()`` is the
-  chokepoint every connection crosses. A service container named ``status``
-  fails the whole suite at fixture setup with what reads like a security
-  refusal rather than the config typo it is.
+* **Both databases must be named with a ``_test`` suffix.** ``db_safety``
+  matches the suffix, not a substring, and every connection crosses it,
+  ``alembic/env.py``'s included (#15). A service container named ``status``
+  fails the whole suite at fixture setup, or the migrations job at
+  ``upgrade head``, with what reads like a security refusal rather than the
+  config typo it is.
 * **The migrations job needs its own database.** ``tests/conftest.py`` builds
   schema with ``Base.metadata.create_all``; pointing ``alembic upgrade head``
   at a database pytest has touched fails on "relation already exists".
@@ -159,6 +160,14 @@ def test_migrations_job_uses_a_database_pytest_never_touches(ci):
     assert migrations_db != test_db
 
 
+def test_migrations_job_database_carries_the_non_production_suffix(ci):
+    """alembic crosses `db_safety` too (#15), and the job has no opt-in."""
+    job = ci["jobs"]["migrations"]
+    name = service_env(job)["POSTGRES_DB"]
+    assert name.endswith("_test"), f"{name!r} reads as production to alembic/env.py"
+    assert job["env"]["DATABASE_URL"].endswith(f"/{name}")
+
+
 def test_migrations_job_builds_from_scratch_and_checks_for_drift(ci):
     """The one gate the suite structurally cannot be: conftest builds schema
     with create_all, so a broken migration chain surfaces only on deploy."""
@@ -168,8 +177,9 @@ def test_migrations_job_builds_from_scratch_and_checks_for_drift(ci):
 
 
 def test_no_job_carries_the_production_opt_in(ci):
-    """alembic is exempt from the guard by design (src/core/db_safety.py), so
-    the migrations job needs no escape hatch — and nothing else may grow one.
+    """The opt-in belongs to the systemd units and to deploy.sh's live
+    migration. CI opens only ``_test`` databases, alembic included, so no job
+    needs it — and none may grow one.
 
     Checked against the parsed workflow, not the raw text: ci.yml explains in
     a comment why the flag is absent, and matching raw text would make that

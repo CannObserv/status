@@ -110,8 +110,8 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      # No STATUS_ALLOW_PROD_DB. alembic/env.py reads os.environ directly and
-      # never calls the guard — a documented carve-out, not an oversight.
+      # No STATUS_ALLOW_PROD_DB. alembic/env.py crosses src/core/db_safety.py
+      # (#15), and the database's _test suffix is what lets it through.
       DATABASE_URL: postgresql+asyncpg://status:status@localhost:5432/status_migrations_test
     steps:
       - uses: actions/checkout@v7

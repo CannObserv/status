@@ -1,4 +1,10 @@
-"""Alembic migration environment — async PostgreSQL."""
+"""Alembic migration environment — async PostgreSQL.
+
+Online runs cross ``src.core.db_safety`` like every other connection (#15).
+Production is migrated by ``scripts/deploy.sh``, which opts in for live only;
+a hand-run ``alembic upgrade head`` against it is refused. Offline (``--sql``)
+runs are exempt: they print SQL and connect to nothing.
+"""
 
 import asyncio
 import os
@@ -7,6 +13,7 @@ from logging.config import fileConfig
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
+from src.core.db_safety import ProductionDatabaseError, assert_safe_database_url
 from src.core.models import Base
 from src.core.models.base import ULIDType
 
@@ -33,6 +40,25 @@ def get_url() -> str:
     )
 
 
+def guarded_url() -> str:
+    """The URL to connect to, refused if production without the opt-in.
+
+    The guard's own advice is to set ``STATUS_ALLOW_PROD_DB=1``, which is
+    wrong for a migration: that flag belongs to ``deploy.sh``. So the refusal
+    is re-raised naming the deploy, with the guard's reason chained above it.
+    """
+    url = get_url()
+    try:
+        assert_safe_database_url(url)
+    except ProductionDatabaseError as exc:
+        raise ProductionDatabaseError(
+            "alembic will not migrate production by hand: scripts/deploy.sh does, "
+            "after dev (docs/DEPLOYMENT.md). For dev: "
+            'DATABASE_URL="$DEV_DATABASE_URL" uv run alembic upgrade head'
+        ) from exc
+    return url
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode — emit SQL without connecting."""
     context.configure(
@@ -57,7 +83,7 @@ def do_run_migrations(connection) -> None:
 
 async def run_async_migrations() -> None:
     """Run migrations in 'online' mode — async connection."""
-    connectable = create_async_engine(get_url())
+    connectable = create_async_engine(guarded_url())
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()

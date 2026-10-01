@@ -9,9 +9,9 @@
 #
 # <ref> defaults to origin/main. A rollback is a deploy of the previous build.
 #
-# Live only once the commit's CI passed: its push run on main, lint, test and
-# migrations all green, asked of GitHub before anything is built (#11;
-# docs/DEPLOYMENT.md § The CI gate). Dev is never gated.
+# Live only once the commit's CI passed: its push run on main and every job in
+# it green, lint, test and migrations among them, asked of GitHub before anything
+# is built (#11; docs/DEPLOYMENT.md § The CI gate). Dev is never gated.
 #
 # On 2026-09-29 the units ran the development checkout, and an unmigrated model
 # edit crashed the production sweep for 40 minutes. Now each unit runs
@@ -43,7 +43,8 @@ SWEEP_WAIT_SECONDS="${STATUS_DEPLOY_SWEEP_WAIT_SECONDS:-150}"
 # CI takes about 2 minutes; a run still going after this is wedged or queued behind one.
 CI_WAIT_SECONDS="${STATUS_DEPLOY_CI_WAIT_SECONDS:-600}"
 CI_POLL_SECONDS="${STATUS_DEPLOY_CI_POLL_SECONDS:-30}"
-# Every job in .github/workflows/ci.yml; test_deploy.py holds the two together.
+# The jobs a run must have, as tests/ci holds ci.yml to; every job a run lists
+# must pass too, named here or not (CR 6).
 CI_JOBS=(lint test migrations)
 GITHUB_API="https://api.github.com/repos/CannObserv/status"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -195,23 +196,26 @@ finished_run() {
   done
 }
 
-# Each job by name, success only: a skipped job leaves the run itself "success".
+# Success only, from the run itself, every job it lists, and at least CI_JOBS.
+# A skipped job leaves the run "success", so the jobs are read too. CI_JOBS is
+# only the floor: it comes from this checkout, which may be older than ci.yml,
+# and a job it does not name still counts (CR 6).
 ci_gate() {
-  local run url jobs job conclusion list failed=()
+  local run url conclusion jobs problems
   run="$(finished_run)" || exit 1
   url="$(jq -r .html_url <<<"$run")"
+  conclusion="$(jq -r '.conclusion // "nothing"' <<<"$run")"
   jobs="$(github "actions/runs/$(jq -r .id <<<"$run")/jobs?per_page=100")" || exit 1
-  for job in "${CI_JOBS[@]}"; do
-    conclusion="$(jq -r --arg name "$job" \
-      'first(.jobs[] | select(.name == $name) | .conclusion // .status) // "not in the run"' <<<"$jobs")" ||
-      die "GitHub's answer about $build's CI jobs is not the JSON expected; nothing was built"
-    [[ "$conclusion" == success ]] || failed+=("$job ($conclusion)")
-  done
-  if ((${#failed[@]})); then
-    printf -v list '%s, ' "${failed[@]}"
-    die "CI did not pass for $build: ${list%, }. Nothing was built; fix it on main, or put it on" \
+  problems="$(jq -r --arg required "${CI_JOBS[*]}" '[
+      (.jobs[] | select(.conclusion != "success") | "\(.name) (\(.conclusion // .status))"),
+      (($required | split(" "))[] as $name | select(any(.jobs[]; .name == $name) | not)
+        | "\($name) (not in the run)")
+    ] | join(", ")' <<<"$jobs")" ||
+    die "GitHub's answer about $build's CI jobs is not the JSON expected; nothing was built"
+  [[ "$conclusion" == success ]] || problems="run concluded $conclusion${problems:+; $problems}"
+  [[ -z "$problems" ]] ||
+    die "CI did not pass for $build: $problems. Nothing was built; fix it on main, or put it on" \
       "dev alone with --dev. Run: $url"
-  fi
   note "CI passed for $build: $url"
   logger -t status-deploy "live: CI passed for $build ($url)" || true
 }

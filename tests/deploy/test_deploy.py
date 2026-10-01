@@ -157,6 +157,7 @@ def ci_run(
     event: str = "push",
     branch: str = "main",
     status: str = "completed",
+    conclusion: str = "success",
     created: str = "2026-10-01T00:00:00Z",
 ) -> dict:
     """One workflow run as GitHub's Actions API lists it."""
@@ -166,7 +167,7 @@ def ci_run(
         "event": event,
         "head_branch": branch,
         "status": status,
-        "conclusion": "success" if status == "completed" else None,
+        "conclusion": conclusion if status == "completed" else None,
         "created_at": created,
         "html_url": f"https://github.test/runs/{run_id}",
     }
@@ -486,6 +487,40 @@ class TestTheCIGate:
         assert "migrations (" in result.stderr
         assert_nothing_happened(world)
 
+    def test_a_failed_job_the_checkout_does_not_know_is_refused(self, world):
+        """CR 6: CI_JOBS comes from the checkout running deploy.sh, which may
+        predate a job added to ci.yml since. Every job the run lists counts."""
+        world.ci_answers([ci_run(7, world.main[-1], conclusion="failure")])
+        world.ci_jobs(7, e2e="failure")
+        result = world.run()
+        assert result.returncode == 1
+        assert "e2e (failure)" in result.stderr
+        assert_nothing_happened(world)
+
+    def test_a_cancelled_run_says_so(self, world):
+        """CR 6: a run cancelled while queued (ci.yml's concurrency group) lists no jobs."""
+        world.ci_answers([ci_run(7, world.main[-1], conclusion="cancelled")])
+        world.ci_jobs(7, lint="absent", test="absent", migrations="absent")
+        result = world.run()
+        assert result.returncode == 1
+        assert "run concluded cancelled" in result.stderr
+        assert "migrations (not in the run)" in result.stderr
+        assert_nothing_happened(world)
+
+    def test_a_run_that_did_not_conclude_success_is_refused_whatever_its_jobs(self, world):
+        world.ci_answers([ci_run(7, world.main[-1], conclusion="failure")])
+        world.ci_jobs(7)
+        result = world.run()
+        assert result.returncode == 1
+        assert "run concluded failure" in result.stderr
+        assert_nothing_happened(world)
+
+    def test_a_run_from_before_a_job_was_added_still_passes(self, world):
+        """CR 6: a rollback's run has the jobs ci.yml had then; CI_JOBS is the floor."""
+        world.ci_answers([ci_run(7, world.main[-1])])
+        world.ci_jobs(7)  # lint, test, migrations: no job added since
+        assert_ok(world.run())
+
     def test_a_run_still_going_when_the_wait_ends_is_refused(self, world):
         world.ci_answers([ci_run(7, world.main[-1], status="in_progress")])
         result = world.run(STATUS_DEPLOY_CI_WAIT_SECONDS="0")
@@ -613,13 +648,15 @@ class TestTheCIGate:
         assert_ok(result)
         assert "--skip-ci" in result.stdout
 
-    def test_the_gate_requires_exactly_the_jobs_ci_yml_runs_on_a_push_to_main(self):
-        """A job renamed or added in ci.yml must change the gate too."""
+    def test_the_jobs_the_gate_requires_are_ones_ci_yml_runs_on_a_push_to_main(self):
+        """A job renamed in ci.yml must change the gate too. A job added need
+        not: every job a run lists counts (CR 6), and tests/ci holds ci.yml to
+        lint, test and migrations at least."""
         required = re.search(r"^CI_JOBS=\((.*)\)$", DEPLOY.read_text(), re.M)
         assert required, "deploy.sh names its jobs in CI_JOBS=(...)"
         workflow = yaml.safe_load(CI_WORKFLOW.read_text())
         jobs = {job.get("name", key) for key, job in workflow["jobs"].items()}
-        assert set(required.group(1).split()) == jobs
+        assert set(required.group(1).split()) <= jobs
         # PyYAML reads a bare `on:` as True; a quoted one stays "on" (CR 4).
         assert "main" in workflow.get(True, workflow.get("on"))["push"]["branches"]
 

@@ -38,6 +38,7 @@ The defaults are what production uses. The variables exist for the tests and for
 | `STATUS_DEPLOY_VERIFY_SECONDS` | `60` | how long `/ready` and `/health` have to answer |
 | `STATUS_DEPLOY_SWEEP_WAIT_SECONDS` | `150` | how long to wait out a pass already running |
 | `STATUS_DEPLOY_CI_WAIT_SECONDS` | `600` | how long a live deploy waits for the commit's CI |
+| `STATUS_DEPLOY_CI_POLL_SECONDS` | `30` | how often it asks GitHub meanwhile |
 
 **What goes live** is a commit on `origin/main` whose CI passed ([§ The CI gate](#the-ci-gate)). Dev takes any commit on an `origin/*` branch. Anything unpushed is refused.
 

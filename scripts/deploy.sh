@@ -42,7 +42,7 @@ VERIFY_SECONDS="${STATUS_DEPLOY_VERIFY_SECONDS:-60}"
 SWEEP_WAIT_SECONDS="${STATUS_DEPLOY_SWEEP_WAIT_SECONDS:-150}"
 # CI takes about 2 minutes; a run still going after this is wedged or queued behind one.
 CI_WAIT_SECONDS="${STATUS_DEPLOY_CI_WAIT_SECONDS:-600}"
-CI_POLL_SECONDS=30
+CI_POLL_SECONDS="${STATUS_DEPLOY_CI_POLL_SECONDS:-30}"
 # Every job in .github/workflows/ci.yml; test_deploy.py holds the two together.
 CI_JOBS=(lint test migrations)
 GITHUB_API="https://api.github.com/repos/CannObserv/status"

@@ -26,6 +26,7 @@ import re
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -417,6 +418,11 @@ class TestWhatMayBeDeployed:
         assert not (release / "REVISION").exists()
 
 
+# A wait no stubbed poll can outlast, polled at once: SECONDS ticks on the
+# wall clock's second, so a 1 s wait can be spent before its first answer (CR 1).
+PROMPT_POLLS = {"STATUS_DEPLOY_CI_WAIT_SECONDS": "60", "STATUS_DEPLOY_CI_POLL_SECONDS": "0"}
+
+
 def assert_nothing_happened(world: World) -> None:
     """Refused before the build: no release, no migration, no unit touched."""
     assert not (world.root / "releases").exists()
@@ -491,15 +497,17 @@ class TestTheCIGate:
     def test_a_run_that_finishes_within_the_wait_is_deployed(self, world):
         sha = world.main[-1]
         world.ci_answers([ci_run(7, sha, status="in_progress")], [ci_run(7, sha)])
-        result = world.run(STATUS_DEPLOY_CI_WAIT_SECONDS="1")
+        started = time.monotonic()
+        result = world.run(**PROMPT_POLLS)
         assert_ok(result)
+        assert time.monotonic() - started < 15, "polled every 30 s, not as told"
         assert "waiting for CI" in result.stderr
         assert len([c for c in world.github_calls() if "/runs?" in c]) == 2
 
     def test_the_tip_just_pushed_waits_for_its_run_to_appear(self, world):
         """GitHub queues the push run a few seconds after the push."""
         world.ci_answers([], [ci_run(7, world.main[-1])])
-        assert_ok(world.run(STATUS_DEPLOY_CI_WAIT_SECONDS="1"))
+        assert_ok(world.run(**PROMPT_POLLS))
 
     def test_the_tip_with_no_run_when_the_wait_ends_is_refused(self, world):
         world.ci_answers([])

@@ -17,6 +17,7 @@ import respx
 
 from src.core import heartbeat
 from src.core.heartbeat import (
+    API_BODY_LIMIT,
     API_CHECK,
     API_READY_URL,
     CREDENTIAL_NAME,
@@ -173,7 +174,7 @@ class TestApiChecked:
     async def test_a_long_answer_is_cut_short(self, pings, api):
         api.routes["ready"].respond(500, text="x" * 10_000)
         await Heartbeat(KEY).api_checked()
-        assert len(pings.calls[0].request.content) < 300
+        assert pings.calls[0].request.content == b"500 " + b"x" * API_BODY_LIMIT
 
     @pytest.mark.parametrize(
         ("error", "body"),

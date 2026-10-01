@@ -11,18 +11,22 @@ opens a connection crosses — the FastAPI app, ``scripts/seed_tenant.py``, and
 anything added later — and directly from ``alembic/env.py``, which builds its
 own engine.
 
+Two rules about who may open production:
+
 * **Alembic is guarded like everything else** (#15). It was once exempt,
   because ``main`` was the deployed code and a hand-run ``alembic upgrade
   head`` against production was the deploy. Since #9 production runs
-  releases, and ``scripts/deploy.sh`` is the opt-in: it sets the flag for
-  live's migration and for nothing else. A hand-run migration against
-  production now skips dev's rehearsal and the deploy's order, so it is
-  refused. Offline (``--sql``) runs connect to nothing and are not checked.
-* **The escape flag lives in the systemd unit, never an EnvironmentFile.**
-  The live units read ``/etc/status/.env``, and ``scripts/load_env.sh``
-  sources it into hand-run shells; a flag placed there would be inherited by
-  every such process, re-opening the hole for exactly the hand-run servers
-  and migrations this guard targets.
+  releases, and ``scripts/deploy.sh`` is how it is migrated: it sets the flag
+  for its commands against live, never for dev. A hand-run migration against
+  production skips dev's rehearsal and the deploy's order, so it is refused.
+  Offline (``--sql``) runs connect to nothing and are not checked.
+* **The escape flag is set per process, never in an env file.** The live
+  units carry it, ``deploy.sh`` passes it to its live commands, and a
+  deliberate hand-run operation sets it on its own command line
+  (docs/RUNBOOK.md). The live units read ``/etc/status/.env``, and
+  ``scripts/load_env.sh`` sources it into hand-run shells; a flag placed
+  there would be inherited by every such process, re-opening the hole for
+  exactly the hand-run servers and migrations this guard targets.
 """
 
 import os

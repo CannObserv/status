@@ -53,7 +53,7 @@ A failure on dev stops the deploy before live is touched. A failure on live leav
 
 - **Migrations are expand-only.** The previous release must keep working against the new schema: it runs there between migrate and switch, and after any rollback. Add columns and tables, with defaults or nullable. A drop, a rename, or a new `NOT NULL` without a default ships as two deploys: first stop using it, then remove it.
 - **One Alembic head.** A release with two heads is refused before anything switches.
-- **Deploy is the only way in.** The shipping skill's "migrate, then `systemctl restart`" step does not apply here: `deploy.sh` does both, in order, and verifies. A hand-run `alembic upgrade head` against `status` is refused with `ProductionDatabaseError`: `alembic/env.py` crosses `db_safety`, and only `deploy.sh` passes `STATUS_ALLOW_PROD_DB=1`, for live ([#15](https://github.com/CannObserv/status/issues/15)). `--sql` runs connect to nothing and are not checked.
+- **Deploy is the only way in.** The shipping skill's "migrate, then `systemctl restart`" step does not apply here: `deploy.sh` does both, in order, and verifies. A hand-run `alembic upgrade head` against `status` is refused with `ProductionDatabaseError`: `alembic/env.py` crosses `db_safety`, and of what runs alembic, only `deploy.sh` passes `STATUS_ALLOW_PROD_DB=1`, for live ([#15](https://github.com/CannObserv/status/issues/15)). `--sql` runs connect to nothing and are not checked.
 
 ## Rollback
 

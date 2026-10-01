@@ -177,9 +177,9 @@ def test_migrations_job_builds_from_scratch_and_checks_for_drift(ci):
 
 
 def test_no_job_carries_the_production_opt_in(ci):
-    """The opt-in belongs to the systemd units and to deploy.sh's live
-    migration. CI opens only ``_test`` databases, alembic included, so no job
-    needs it — and none may grow one.
+    """The opt-in belongs to the live units, deploy.sh's commands against
+    live, and deliberate hand-run operations. CI opens only ``_test``
+    databases, alembic included, so no job needs it — and none may grow one.
 
     Checked against the parsed workflow, not the raw text: ci.yml explains in
     a comment why the flag is absent, and matching raw text would make that

@@ -633,6 +633,16 @@ class TestTheCIGate:
         assert "JSON" in result.stderr
         assert_nothing_happened(world)
 
+    @pytest.mark.parametrize("body", ["<html>unicorn</html>", '{"total_count":0}'])
+    def test_a_jobs_answer_that_is_not_what_was_expected_refuses_the_deploy(self, world, body):
+        """CR 10: jq alone exits 5 and says neither that nothing was built nor --skip-ci."""
+        world.ci_answers([ci_run(7, world.main[-1])])
+        (world.ci / "jobs-7.json").write_text(body)
+        result = world.run()
+        assert result.returncode == 1
+        assert "JSON" in result.stderr and "nothing was built" in result.stderr
+        assert_nothing_happened(world)
+
     def test_skip_ci_deploys_without_asking_and_logs_it_first(self, world):
         world.ci_answers([ci_run(7, world.main[-1])])
         world.ci_jobs(7, test="failure")

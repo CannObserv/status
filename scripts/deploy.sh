@@ -11,7 +11,7 @@
 #
 # Live only once the commit's CI passed: its push run on main and every job in
 # it green, lint, test and migrations among them, asked of GitHub before anything
-# is built (#11; docs/DEPLOYMENT.md § The CI gate). Dev is never gated.
+# is built (#11; docs/DEPLOYMENT.md § The CI gate). --dev alone is never gated.
 #
 # On 2026-09-29 the units ran the development checkout, and an unmigrated model
 # edit crashed the production sweep for 40 minutes. Now each unit runs
@@ -166,8 +166,9 @@ push_run() { # the run as JSON, or nothing
     die "GitHub's answer about $build's CI runs is not the JSON expected; nothing was built"
 }
 
-# Waits for the run, bounded. A commit behind origin/main's tip with no run
-# never gets one: GitHub runs CI on the newest commit of each push only.
+# Waits for the run, bounded. A commit behind origin/main's tip with no run is
+# refused at once: GitHub runs CI on the newest commit of each push only, so it
+# will not get one, unless it was pushed seconds ago with another push after it.
 finished_run() {
   local deadline=$((SECONDS + CI_WAIT_SECONDS)) tip run state url left
   tip="$(git -C "$SRC" rev-parse origin/main)"

@@ -179,8 +179,15 @@ class TestApiChecked:
         ("error", "body"),
         [
             # What httpx says here with nothing listening, and with no MagicDNS.
-            (httpx.ConnectError("All connection attempts failed"), b"ConnectError: All con"),
-            (httpx.ConnectError("[Errno -2] Name or service not known"), b"ConnectError: [Errno"),
+            (
+                httpx.ConnectError("All connection attempts failed"),
+                b"ConnectError: All connection attempts failed",
+            ),
+            (
+                httpx.ConnectError("[Errno -2] Name or service not known"),
+                b"ConnectError: [Errno -2] Name or service not known",
+            ),
+            # No message to add: the type alone.
             (httpx.ConnectTimeout(""), b"ConnectTimeout"),
         ],
         ids=["refused", "unresolved", "silent"],
@@ -191,8 +198,7 @@ class TestApiChecked:
         api.routes["ready"].mock(side_effect=error)
         await Heartbeat(KEY).api_checked()
         assert _paths(pings) == [f"/{KEY}/{API_CHECK}/fail"]
-        assert pings.calls[0].request.content.startswith(body)
-        assert pings.calls[0].request.content.endswith(str(error).encode() or body)
+        assert pings.calls[0].request.content == body
         assert api.routes["ready"].call_count > 1
 
     async def test_a_restart_inside_the_window_is_not_an_outage(self, pings, api):

@@ -244,7 +244,8 @@ migrate() {
   state="$(against "$target" python -m src.core.schema_state)" || rc=$?
   # Only a state the check actually printed. Anything else (db_safety refusing
   # the URL, a crash) exits 2 or 1 with no state, and must never become an
-  # upgrade: alembic/env.py has no guard of its own (CR 1).
+  # upgrade (CR 1). alembic/env.py now refuses what db_safety refuses (#15),
+  # but a crash says nothing about the schema.
   case "$rc:$state" in
     0:current | 3:behind | 3:unmigrated) ;;
     0:ahead)

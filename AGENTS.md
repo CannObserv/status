@@ -51,7 +51,7 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` �
 | Sweep (live / dev) | systemd timer, 60s | `status` / `status_dev` |
 | Public status pages | **8000 — reserved; nothing binds it in the MVP** | — |
 
-**Units run releases, never a checkout** (#9): `/srv/status/{live,dev}` → `releases/<build>`, a read-only `git archive` of one pushed commit with its own venv. Nothing done in a checkout reaches a unit until deployed. **Shipping is `scripts/deploy.sh`** (dev, then live: migrate, switch, restart, verify, switch back on failure). That replaces `shipping-work-python-fastapi`'s migrate-then-restart step. **Migrations are expand-only**: the previous release must run on the new schema. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). `/health` is on the tailnet address, not localhost.
+**Units run releases, never a checkout** (#9): `/srv/status/{live,dev}` → `releases/<build>`, a read-only `git archive` of one pushed commit with its own venv. Nothing done in a checkout reaches a unit until deployed. **Shipping is `scripts/deploy.sh`** (dev, then live: migrate, switch, restart, verify, switch back on failure). That replaces `shipping-work-python-fastapi`'s migrate-then-restart step. **Migrations are expand-only**: the previous release must run on the new schema. A hand-run `alembic upgrade head` against production is refused (#15). [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). `/health` is on the tailnet address, not localhost.
 
 **Which notifier is derived, never configured:** production → `http://notifier:9000`, development → `http://notifier:9001`, from co-status's own database name.
 

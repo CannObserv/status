@@ -8,21 +8,21 @@ incident CannObserv/archiver#98).
 This module is the single chokepoint: :func:`assert_safe_database_url` is
 called from :func:`src.core.database.get_database_url`, which every path that
 opens a connection crosses — the FastAPI app, ``scripts/seed_tenant.py``, and
-anything added later.
+anything added later — and directly from ``alembic/env.py``, which builds its
+own engine.
 
-Two deliberate carve-outs:
-
-* **Alembic is exempt.** ``alembic/env.py`` reads ``os.environ`` directly and
-  never calls this. That is intended: this host is both development and
-  production — ``main`` *is* the deployed code — so ``alembic upgrade head``
-  against production is the correct operation, not the bug. co-status keeps
-  notifier's arrangement: one VM serving both, which is what makes this
-  carve-out necessary.
+* **Alembic is guarded like everything else** (#15). It was once exempt,
+  because ``main`` was the deployed code and a hand-run ``alembic upgrade
+  head`` against production was the deploy. Since #9 production runs
+  releases, and ``scripts/deploy.sh`` is the opt-in: it sets the flag for
+  live's migration and for nothing else. A hand-run migration against
+  production now skips dev's rehearsal and the deploy's order, so it is
+  refused. Offline (``--sql``) runs connect to nothing and are not checked.
 * **The escape flag lives in the systemd unit, never an EnvironmentFile.**
-  ``deploy/status.service`` carries ``EnvironmentFile=`` lines for both
-  ``/etc/status/.env`` and the repo ``.env``; a flag placed in either would
-  be inherited by every process that sources them, re-opening the hole for
-  exactly the hand-run servers this guard targets.
+  The live units read ``/etc/status/.env``, and ``scripts/load_env.sh``
+  sources it into hand-run shells; a flag placed there would be inherited by
+  every such process, re-opening the hole for exactly the hand-run servers
+  and migrations this guard targets.
 """
 
 import os

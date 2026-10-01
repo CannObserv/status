@@ -17,7 +17,7 @@ A failed production API is invisible. `status.service` retries five times and th
 The issue's option 2. After each production pass, the sweep sends `GET http://status:9000/ready`, the API by the name consumers use, over the tailnet. It then pings a third healthchecks.io check, **`co-status-api`**:
 
 - **Success** when `/ready` answers 200 with `environment` `production`. Body: `/ready`'s JSON.
-- **`/fail`** otherwise. Body: the status code and response, or the exception's type. It is also a journal warning.
+- **`/fail`** otherwise. Body: the status code and response, or the error and its message (the URL carries no key, and the message tells nothing listening from a name that won't resolve). It is also a journal warning.
 - **Retried every 2 s for up to 20 s** before the API counts as down. The last deploy's forced pass ended at 2026-10-01 14:54:10.73, 0.2 s before uvicorn listened, so a single try would alert on every deploy.
 - **After the pass and its own pings, whatever the pass did** (`finally`). A slow API never delays an alert. With Postgres down, both checks fail and both tell the truth.
 - Same key, module (`src/core/heartbeat.py`) and rules as #1: production only, never raises, bounded.

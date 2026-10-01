@@ -177,7 +177,8 @@ finished_run() {
     left=$((deadline - SECONDS))
     if [[ -z "$run" && "$sha" != "$tip" ]]; then
       die "no CI run for $build as a push to main. GitHub runs CI on the newest commit of each push" \
-        "only: deploy that one, or pass --skip-ci. Nothing was built."
+        "only: deploy that one, or pass --skip-ci. Pushed in the last minute, with another push" \
+        "after it? Its run may not be listed yet: deploy again shortly. Nothing was built."
     elif [[ -z "$run" ]]; then
       state="not queued yet" url=""
       ((left > 0)) ||

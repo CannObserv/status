@@ -570,6 +570,8 @@ class TestTheCIGate:
         assert result.returncode == 1
         assert "no CI run" in result.stderr
         assert "newest commit of each push" in result.stderr
+        # CR 8: pushed seconds ago, with another push after it, its run may be coming.
+        assert "not be listed yet" in result.stderr
         assert len(world.github_calls()) == 1
         assert_nothing_happened(world)
 

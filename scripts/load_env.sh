@@ -8,10 +8,12 @@
 # Resolves the repo .env from this script's own location, so it works when
 # sourced from a subdirectory such as tests/.
 #
-# NOTE: this leaves DATABASE_URL pointing at PRODUCTION, which nothing run by
-# hand should open: src/core/db_safety.py refuses it, `alembic upgrade head`
-# included (#15). Production is migrated by scripts/deploy.sh; use
-# scripts/dev_server.sh for a server, and pytest pins its own.
+# NOTE: this leaves DATABASE_URL pointing at PRODUCTION. src/core/db_safety.py
+# refuses it to anything run without STATUS_ALLOW_PROD_DB=1, which a
+# deliberate operation sets on its own command line (docs/RUNBOOK.md). Never
+# for a migration: scripts/deploy.sh migrates production, and alembic is
+# refused here too (#15). Use scripts/dev_server.sh for a server; pytest pins
+# its own.
 # Executing this instead of sourcing it exports into a subshell that exits
 # immediately, leaving the caller with nothing and no error. Fail loudly.
 # ${BASH_SOURCE[0]} equals $0 only when the script is executed, never sourced.

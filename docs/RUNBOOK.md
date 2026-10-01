@@ -135,7 +135,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 **A failed API stays failed.** After 5 failed starts in 15 minutes, `status.service` stops retrying. Fix the cause, then `sudo systemctl reset-failed status && sudo systemctl start status`. A bad release is a rollback instead (above).
 
-**While the API is down, every consumer goes `missing`** once its own interval and grace run out, and notifier carries those alerts. They are about co-status, not the consumers: tell their owners. Each recovers, with a recovery notice, on its first check-in after the API is back.
+**While the API is down, every consumer goes `missing`** once its own interval and grace run out, and notifier carries those alerts. They are about co-status, not the consumers: tell their owners. Each recovers, with a recovery notice, on its first check-in after the API is back. **A consumer `missing` while `co-status-api` is green** is that consumer, or the tailnet ACL between it and `tag:status:9000`: the probe runs on this host and never crosses the ACL.
 
 ## Watching co-status: healthchecks.io
 

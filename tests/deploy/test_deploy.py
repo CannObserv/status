@@ -1038,6 +1038,8 @@ class TestOperation:
             result = world.run()
         assert result.returncode != 0
         assert "another deploy" in result.stderr
+        # CR 11: the lock is taken before the CI gate, which may wait 10 minutes.
+        assert not world.github_calls()
 
     def test_a_missing_root_says_how_to_create_it(self, world):
         world.root.rmdir()

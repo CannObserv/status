@@ -42,7 +42,9 @@ def alembic(*argv: str, name: str, opt_in: bool = False) -> subprocess.Completed
     )
 
 
-@pytest.mark.parametrize("argv", [("upgrade", "head"), ("check",), ("current",)], ids=" ".join)
+@pytest.mark.parametrize(
+    "argv", [("upgrade", "head"), ("downgrade", "-1"), ("check",), ("current",)], ids=" ".join
+)
 def test_a_production_name_is_refused_without_the_opt_in(argv):
     """Every command that connects, not only ``upgrade``: the guard sits on
     the connection."""

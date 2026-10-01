@@ -2,8 +2,9 @@
 
 Online runs cross ``src.core.db_safety`` like every other connection (#15).
 Production is migrated by ``scripts/deploy.sh``, which opts in for live only;
-a hand-run ``alembic upgrade head`` against it is refused. Offline (``--sql``)
-runs are exempt: they print SQL and connect to nothing.
+any hand-run command that connects to it — ``upgrade``, ``downgrade``,
+``check``, ``revision --autogenerate`` — is refused. Offline (``--sql``) runs
+are exempt: they print SQL and connect to nothing.
 """
 
 import asyncio

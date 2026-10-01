@@ -109,7 +109,8 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 | Situation | Action |
 |---|---|
-| Ship what is on `origin/main` | `scripts/deploy.sh`: migrates, switches, restarts and verifies dev and then live, and switches back on failure ([DEPLOYMENT.md](DEPLOYMENT.md)) |
+| Ship what is on `origin/main` | `scripts/deploy.sh`: once its CI passed (it waits for a run still going), migrates, switches, restarts and verifies dev and then live, and switches back on failure ([DEPLOYMENT.md](DEPLOYMENT.md)) |
+| Ship to live past CI (emergency, or GitHub down) | `scripts/deploy.sh --skip-ci [<sha>]`; logged to `journalctl -t status-deploy` ([§ The CI gate](DEPLOYMENT.md#the-ci-gate)) |
 | Try a pushed branch on :9001 | `scripts/deploy.sh --dev origin/<branch>` |
 | Roll back | `journalctl -t status-deploy -n 20`, then `scripts/deploy.sh <previous build>` |
 | What is running | `readlink /srv/status/live /srv/status/dev`; `build` in `/health` and in every sweep line |

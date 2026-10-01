@@ -37,7 +37,7 @@ Two further problems share this cause:
 
 **Deferred** (none blocks this):
 
-- A CI-green check before a live deploy. CI is the only correctness signal (AGENTS.md), but reading check runs needs a token in the deploy path.
+- A CI-green check before a live deploy. CI is the only correctness signal (AGENTS.md), but reading check runs needs a token in the deploy path. **2026-10-01:** #11 gates live deploys on the commit's push run, unauthenticated ([plan](../plans/2026-10-01-ci-gate.md), [DEPLOYMENT.md § The CI gate](../DEPLOYMENT.md#the-ci-gate)).
 - A drift signal when `live` lags `origin/main` (broker#22 goal 4).
 - `OnFailure=` (broker#22 Q10). **2026-10-01:** #13 watches the API from the production sweep instead ([plan](../plans/2026-10-01-watch-the-api.md)).
 - A root-owned deploy root (R2).

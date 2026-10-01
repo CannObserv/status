@@ -21,9 +21,10 @@ How code reaches the units, and how to tell what is running. Design and reasons:
 Run it as `exedev` from any checkout. It fetches `origin` itself.
 
 ```bash
-scripts/deploy.sh                       # origin/main to dev, then live
+scripts/deploy.sh                       # origin/main to dev, then live, once its CI passed
 scripts/deploy.sh <sha>                 # a specific main commit (a rollback, say)
-scripts/deploy.sh --dev origin/<branch> # any pushed branch, :9001 only
+scripts/deploy.sh --dev origin/<branch> # any pushed branch, :9001 only, never gated
+scripts/deploy.sh --skip-ci [<sha>]     # live without asking CI: an emergency, logged
 scripts/deploy.sh --help
 ```
 
@@ -36,10 +37,11 @@ The defaults are what production uses. The variables exist for the tests and for
 | `STATUS_DEPLOY_KEEP` | `5` | releases kept besides the linked ones |
 | `STATUS_DEPLOY_VERIFY_SECONDS` | `60` | how long `/ready` and `/health` have to answer |
 | `STATUS_DEPLOY_SWEEP_WAIT_SECONDS` | `150` | how long to wait out a pass already running |
+| `STATUS_DEPLOY_CI_WAIT_SECONDS` | `600` | how long a live deploy waits for the commit's CI |
 
-**What goes live** is a commit on `origin/main`. Dev takes any commit on an `origin/*` branch. Anything unpushed is refused.
+**What goes live** is a commit on `origin/main` whose CI passed ([§ The CI gate](#the-ci-gate)). Dev takes any commit on an `origin/*` branch. Anything unpushed is refused.
 
-**Order, per target, dev first:**
+**Order, per target, dev first**, once [the CI gate](#the-ci-gate) has passed for a live deploy:
 
 1. **Migrate** the target's database. This is skipped when the database is *ahead* of the release, which is what a rollback looks like.
 2. **Switch** the symlink (an atomic rename).
@@ -48,6 +50,21 @@ The defaults are what production uses. The variables exist for the tests and for
 5. **On failure,** switch back, clear the unit's start limit, restart, and prove the old build the same way: its sweep pass, then its API. Exit 1 when the old build answers. Exit 4 when the target is left on a build that does not answer: the old build failed too, or there was nothing to switch back to. Either way the message names the step. The journal records the outcome only after that check. The migration stays applied. A deploy of the build a target already ran, or a first deploy, has nothing to switch back to.
 
 A failure on dev stops the deploy before live is touched. A failure on live leaves dev on the new build, so redeploy dev from the old build if that matters. The deploy keeps the 5 most recently deployed releases, plus whatever `live` and `dev` point at. Every switch and rollback is logged: `journalctl -t status-deploy`.
+
+## The CI gate
+
+**A live deploy needs the commit's CI to have passed** ([#11](https://github.com/CannObserv/status/issues/11)). Before anything is built or migrated, `deploy.sh` asks GitHub's Actions API about the commit and refuses unless `lint`, `test` and `migrations` all succeeded. The refusal names each job that did not, with its conclusion, and links the run. A refused deploy changes nothing, so dev is not touched either. **Dev alone is never gated**: `--dev` exists to try what CI has not passed.
+
+- **Which run.** The newest `push` run of `ci.yml` on `main` for exactly that commit. A commit can have several runs: 291604b has a `workflow_dispatch` run on its branch and the push run on `main`, so its check runs list each job twice. Only the push run counts. A branch run tests the same tree, but with several, the verdict would depend on which one someone ran last. A pull request's run tests a merge commit, not this one. A re-run counts, since GitHub reports a run's latest attempt.
+- **Each job by name, `success` only.** A `skipped` job leaves the run's own conclusion `success`, so the gate reads the jobs. A job renamed in `ci.yml` is missing from the run until `CI_JOBS` in `deploy.sh` follows; `test_deploy.py` holds the two together.
+- **Pending: it waits**, up to 10 minutes, asking every 30 s. `git push origin main && scripts/deploy.sh` works as one step; CI takes about 2 minutes. A run still going after that is refused with its link: deploy again when it finishes. The wait holds the deploy lock.
+- **No run.** GitHub runs CI on the newest commit of each push only, and never on a `[skip ci]` commit, so many `main` commits have no run (e6c8d09, in the middle of #13's push). A commit behind `origin/main`'s tip with no run is refused at once: deploy the newest commit of its push, or pass `--skip-ci`. The tip may have been pushed seconds ago, so it waits, as for a pending run.
+- **No token.** The repo is public, so the API answers without one, at 60 requests an hour per IP address. A deploy costs 2, or up to 22 when it waits the full 10 minutes. With no credential in the deploy path, there is none to scope, store or rotate. If GitHub refuses or cannot be reached (rate limit, outage), the deploy says so with GitHub's message and builds nothing: wait, or pass `--skip-ci`. If the repo goes private, the API answers 404, and the gate needs a read-only token.
+- **`--skip-ci`** deploys to live without asking GitHub at all: for a fix that cannot wait for CI, or when GitHub cannot answer. Before anything is built it is logged, `live: CI not checked for <build> (--skip-ci)`. With `--dev` it is refused, since dev is never gated. A gate that passes is logged too, with the run's link:
+
+```bash
+journalctl -t status-deploy -n 20      # "live: CI passed for <build> (<run>)", or "... CI not checked ..."
+```
 
 ## Rules the design depends on
 
@@ -62,7 +79,7 @@ journalctl -t status-deploy -n 20      # "live -> <build> (was releases/<old>)"
 scripts/deploy.sh <old build>          # still on origin/main, so it may go live
 ```
 
-The old release still exists (within the 5 kept), so nothing is rebuilt, unless its venv no longer runs. A release that `live` or `dev` still runs is never rebuilt in place: the deploy stops, names the target, and asks for another build there first. Its Alembic does not know the newer revision, so the schema reads `ahead` and the migration is skipped. By the expand-only rule, the old code runs. A rollback never downgrades the schema.
+A rollback goes through [the CI gate](#the-ci-gate) like any live deploy. A build that went live through the gate has a green push run. One that went live before #11, from the middle of a push, may have no run at all: `--skip-ci` it, once. The old release still exists (within the 5 kept), so nothing is rebuilt, unless its venv no longer runs. A release that `live` or `dev` still runs is never rebuilt in place: the deploy stops, names the target, and asks for another build there first. Its Alembic does not know the newer revision, so the schema reads `ahead` and the migration is skipped. By the expand-only rule, the old code runs. A rollback never downgrades the schema.
 
 ## The schema check
 

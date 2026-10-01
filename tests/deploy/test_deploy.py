@@ -75,14 +75,15 @@ exit 0
 # GitHub's Actions API (#11) answers from <tmp>/ci: runs-<n>.json in turn, the
 # last repeating (a run that finishes between polls), and jobs-<id>.json. With
 # none written, one green push run on main for whatever commit was asked about.
-# FAKE_CI_ERROR is GitHub refusing, as curl --fail-with-body reports it.
+# FAKE_CI_ERROR is GitHub refusing; as real curl does, only --fail-with-body
+# passes its message on (CR 2).
 STUB_CURL = r"""#!/usr/bin/env bash
 url="${@: -1}"
 echo "curl $url" >> "$FAKE_LOG"
 if [[ "$url" == https://api.github.com/* ]]; then
   ci="$(dirname "$FAKE_LOG")/ci"
   if [[ -n "${FAKE_CI_ERROR:-}" ]]; then
-    echo "{\"message\":\"$FAKE_CI_ERROR\"}"
+    [[ " $* " == *" --fail-with-body "* ]] && echo "{\"message\":\"$FAKE_CI_ERROR\"}"
     exit 22
   fi
   case "$url" in

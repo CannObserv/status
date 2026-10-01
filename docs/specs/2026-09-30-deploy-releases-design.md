@@ -39,7 +39,7 @@ Two further problems share this cause:
 
 - A CI-green check before a live deploy. CI is the only correctness signal (AGENTS.md), but reading check runs needs a token in the deploy path.
 - A drift signal when `live` lags `origin/main` (broker#22 goal 4).
-- `OnFailure=` (broker#22 Q10).
+- `OnFailure=` (broker#22 Q10). **2026-10-01:** #13 watches the API from the production sweep instead ([plan](../plans/2026-10-01-watch-the-api.md)).
 - A root-owned deploy root (R2).
 
 ## Design
@@ -92,7 +92,7 @@ The check is used in three places:
 | 7 Restart | the deploy restarts the API and forces a sweep pass (R6). No restart window: check-ins retry |
 | 8 Guards | at deploy time: ancestry, a single head, verification. At run time: only the schema check, which never blocks a start (R8) |
 | 9 Build id, drift | `REVISION` in `/health` and in every sweep line (R10). Drift signal deferred |
-| 10 `OnFailure=` | deferred; healthchecks.io already watches the sweep (#1) |
+| 10 `OnFailure=` | none. healthchecks.io watches the sweep (#1), and the sweep watches the API's `/ready` (#13) |
 | 11 Dev services | deployed, no exception (R12) |
 | 12 Tests | units hold no `/home/exedev`; `deploy.sh` runs end to end against a temp root with stubs |
 | 13 Packaging | lift R1–R13 into `init-project-fastapi` and `shipping-work-python-fastapi` via broker#22 |

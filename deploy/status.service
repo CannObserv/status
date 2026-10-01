@@ -18,6 +18,11 @@ After=network.target postgresql.service tailscaled.service
 StartLimitIntervalSec=900
 StartLimitBurst=5
 
+# No OnFailure= (#13). A unit that gives up here is still seen from outside:
+# every production sweep pass asks http://status:9000/ready and pings
+# healthchecks.io's co-status-api, which also catches the crash loop before the
+# limit, and an API that is up but not ready. RUNBOOK § Watching co-status.
+
 [Service]
 Type=simple
 User=exedev

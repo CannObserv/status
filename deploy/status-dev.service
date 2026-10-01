@@ -19,6 +19,9 @@ After=network.target postgresql.service tailscaled.service
 StartLimitIntervalSec=600
 StartLimitBurst=5
 
+# Deliberately unwatched (#13): no OnFailure=, and the dev sweep pings nothing.
+# scripts/deploy.sh verifies :9001 on every deploy.
+
 [Service]
 Type=simple
 User=exedev

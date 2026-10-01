@@ -76,20 +76,23 @@ co-status delivers nothing itself (spec D5). Every alert is a `POST /api/v1/disp
 
 **A timer, not a task in the API process**, and **`TimeoutStartSec` is not decoration**: both for notifier's reasons (its monitors.md § The sweep).
 
-## Who watches the sweep
+## Who watches co-status
 
-**healthchecks.io, outside the cohort** ([#1](https://github.com/CannObserv/status/issues/1), `src/core/heartbeat.py`). The spec (D10) shipped two unannounced failures: co-status stopping, and notifier being down. Every production pass now pings two checks at `https://hc-ping.com/<ping-key>/<slug>`:
+**healthchecks.io, outside the cohort** ([#1](https://github.com/CannObserv/status/issues/1), [#13](https://github.com/CannObserv/status/issues/13), `src/core/heartbeat.py`). The spec (D10) shipped two unannounced failures: co-status stopping, and notifier being down. A third came with the API itself: a failed API was invisible until consumers went `missing`. Every production pass now pings three checks at `https://hc-ping.com/<ping-key>/<slug>`:
 
 | Check | Success ping | `/fail` | Silence past the 5-minute grace |
 |---|---|---|---|
 | `co-status-sweep` | The pass completed and committed. Body: the counts. | The pass raised, Postgres down included. Body: the exception's type, never its message. | Timer, VM or OOM killer |
 | `notifier-reachable` | notifier's `/health` answered in production, nothing was left `owed`, and nothing is `undelivered` | Unreachable at the start of the pass, *n* alerts owed, *n* undelivered: the body names each that applies, and counts `failed` and `partial` | The sweep itself is not running |
+| `co-status-api` | `GET http://status:9000/ready`, the name consumers use, answered 200 from `production`. Body: the answer. | Still not, after asking every 2 s for 20 s. Body: the answer (`503 {…}`), or the error and its message (`ConnectError: All connection attempts failed`) | The sweep itself is not running |
 
 healthchecks alerts over its own email and Slack, **never through notifier**.
 
 - **A ping never fails a pass.** A failed ping is a `healthchecks ping … failed` warning in the journal; if it persists, the checks' silence is the alert.
 - **The key is a credential on `status-sweep.service` alone** (D13): anyone holding it can report a dead sweep as alive. Without `/etc/status/hc-ping.key`, the sweep runs, warns every pass and pings nothing. The unit's `SetCredential=` fallback exists because a missing `LoadCredential=` file would otherwise fail the unit (243), and with it every timer.
-- **The dev sweep pings nothing.**
+- **Why the API is watched from the sweep.** The API records check-ins. While it is down, consumers' check-ins fail, and after each one's grace the sweep reports it `missing` through notifier: a false alarm about the consumer, when the fault is co-status. The API is asked last, after the pass and its own pings, whatever the pass did, so a slow API never delays an alert. The 20-second retry rides out a restart: the forced pass of a deploy runs while uvicorn is still starting.
+- **No `OnFailure=`.** Under `Restart=` it fires on every crash, even one the restart fixes, because systemd's default `RestartMode=normal` passes through `failed`. With `RestartMode=direct` it fires only once the unit gives up. It never fires for an API that is up but not ready, and a check fed only `/fail` never comes back up by itself. A failed unit cannot answer `/ready`, so the probe reports it one pass later ([plan](../plans/2026-10-01-watch-the-api.md)).
+- **Dev is deliberately unwatched.** The dev sweep pings nothing and asks nothing, and no dev unit has `OnFailure=`. `scripts/deploy.sh` verifies `:9001` on every deploy, and dev's callers see their own failures.
 - **`notifier-reachable` is broader than its name.** It also goes `/fail` when notifier *refuses* an alert: a revoked key (401), a monitor whose channels were all deleted, a 422. It stays down until that is fixed, and healthchecks alerts once per change of state, so a real outage starting meanwhile raises no new alert. A refused alert is still an alert that reaches no one, which is why it counts. The same goes for an alert notifier accepted and could not deliver.
 
 **What is still open:** notifier being down is now *announced*, not closed. Missing alerts still wait for notifier, and recovery and report notices sent during the outage are still lost. A recovery or report notice notifier accepts and then fails to deliver is logged and nothing more ([#8](https://github.com/CannObserv/status/issues/8)). A healthchecks.io outage produces false alarms, never silence.

@@ -36,8 +36,8 @@ sudo tee /etc/status/notifier-api.key >/dev/null <<< 'nk_...'       # production
 sudo install -m 400 -o root -g root /dev/null /etc/status/notifier-api-dev.key
 sudo tee /etc/status/notifier-api-dev.key >/dev/null <<< 'nk_...'   # development
 
-# The healthchecks.io ping key (#1), production sweep only; § Watching the
-# sweep. Absent, the sweep runs unwatched rather than not at all.
+# The healthchecks.io ping key (#1), production sweep only; § Watching
+# co-status. Absent, the sweep runs unwatched rather than not at all.
 sudo install -m 400 -o root -g root /dev/null /etc/status/hc-ping.key
 sudo tee /etc/status/hc-ping.key >/dev/null <<< '<ping-key>'
 
@@ -122,21 +122,27 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 **`undelivered` that does not clear** means notifier took a missing alert but a channel failed it (`failed`), or failed one of several (`partial`). `journalctl -u status-sweep | grep 'with status'` gives each dispatch id with its `monitor_id`; notifier's dispatch attempts say which channel and why. Fixing the channel does not clear it: it clears when the monitor recovers or a later renotify is delivered. Pausing the monitor only hides it until it is resumed. Without `renotify_seconds` nothing resends ([#7](https://github.com/CannObserv/status/issues/7)), so tell the monitor's owner directly.
 
-**healthchecks.io watches the sweep** ([monitors.md § Who watches the sweep](reference/monitors.md#who-watches-the-sweep)). An alert from it means:
+**healthchecks.io watches the sweep and the API** ([monitors.md § Who watches co-status](reference/monitors.md#who-watches-co-status)). An alert from it means:
 
 | Check down | Look at |
 |---|---|
 | `co-status-sweep`, silent | `systemctl list-timers 'status-sweep*'`, `systemctl status status-sweep`, then the VM |
 | `co-status-sweep`, `/fail` | `journalctl -u status-sweep -n 50`; the ping body names the exception type. A connection error is usually Postgres |
 | `notifier-reachable` | The ping body names each cause that applies: unreachable, *n* owed, *n* undelivered. notifier's `/health` from here; then `journalctl -u status-sweep \| grep 'not accepted'` — a refusal (revoked key, deleted channels) keeps it down just as an outage does. For undelivered, see above |
-| Both silent, host fine | `journalctl -u status-sweep \| grep -i healthchecks`: a missing key or a ping that cannot get out |
+| `co-status-api`, `/fail` | The API did not answer `/ready` for 20 s; the body is its answer or the error. `systemctl status status`, `journalctl -u status -n 50`. By body: **`ConnectError: All connection attempts failed`**, nothing listening; **`Name or service not known`**, MagicDNS on this host (`tailscale status`); **`503`** with `"db": false`, Postgres; with `schema_state`, a migration ([DEPLOYMENT.md § The schema check](DEPLOYMENT.md#the-schema-check)); **`environment` not `production`**, `DATABASE_URL` in `/etc/status/.env` |
+| `co-status-api`, silent | The sweep is not running; `co-status-sweep` says the same |
+| All silent, host fine | `journalctl -u status-sweep \| grep -i healthchecks`: a missing key or a ping that cannot get out |
 
-## Watching the sweep: healthchecks.io
+**A failed API stays failed.** After 5 failed starts in 15 minutes, `status.service` stops retrying. Fix the cause, then `sudo systemctl reset-failed status && sudo systemctl start status`. A bad release is a rollback instead (above).
 
-Org account, free plan (#1). Set up once:
+**While the API is down, every consumer goes `missing`** once its own interval and grace run out, and notifier carries those alerts. They are about co-status, not the consumers: tell their owners. Each recovers, with a recovery notice, on its first check-in after the API is back.
 
-1. Create two checks: slugs **`co-status-sweep`** and **`notifier-reachable`**, **period 1 minute, grace 5 minutes**. That absorbs `OnBootSec=2min` and `TimeoutStartSec=120` without flapping.
-2. Attach the project's email and Slack integrations to both. Never route them through notifier: it is one of the things being watched.
+## Watching co-status: healthchecks.io
+
+Org account, free plan (#1, #13). Set up once:
+
+1. Create three checks: slugs **`co-status-sweep`**, **`notifier-reachable`** and **`co-status-api`**, **period 1 minute, grace 5 minutes**. That absorbs `OnBootSec=2min` and `TimeoutStartSec=120` without flapping. Create a check before deploying the sweep that pings it: until it exists, every ping to it answers 404 and the sweep warns on every pass.
+2. Attach the project's email and Slack integrations to all three. Never route them through notifier: it is one of the things being watched.
 3. Copy the project's **ping key** (project Settings → Ping key) into `/etc/status/hc-ping.key`, as under First-time setup. It is a credential: never in `.env`, a tracked file or a chat.
 4. Install the unit and confirm:
 
@@ -146,13 +152,15 @@ sudo systemctl start status-sweep.service
 journalctl -u status-sweep -n 5 -o cat | grep -i healthchecks   # nothing: every ping answered OK
 ```
 
-Both checks turn green in the dashboard within a minute. **Test an alert once.** It must reach email and Slack, and the next pass turns the check green again. The key goes to curl as config on stdin, so it never appears in `ps`:
+All three turn green in the dashboard within a minute. **Test an alert once.** It must reach email and Slack, and the next pass turns the check green again. The key goes to curl as config on stdin, so it never appears in `ps`:
 
 ```bash
 sudo sh -c 'printf "url = https://hc-ping.com/%s/co-status-sweep/fail\n" "$(cat /etc/status/hc-ping.key)" | curl -fsS -X POST -K -'
 ```
 
 **Rotating the key:** healthchecks.io → project Settings → Ping key → regenerate. Then rewrite the file; the next pass reads it, and no restart is needed.
+
+**The dev units are not watched**, by design (#13): no check, no `OnFailure=`. `scripts/deploy.sh` verifies `:9001` on every deploy. Otherwise, run `systemctl status status-dev status-sweep-dev`.
 
 ## Cutover: moving one monitor from notifier
 

@@ -101,7 +101,7 @@ DATABASE_URL="$DEV_DATABASE_URL" uv run alembic downgrade <revision main knows>
 
 ```bash
 curl "http://$(tailscale ip -4):9000/health"     # this VM
-curl http://status:9000/health                   # any other tailnet node
+curl http://status:9000/health                   # any tailnet node, this VM too
 ```
 
 ```json
@@ -114,3 +114,5 @@ curl http://status:9000/health                   # any other tailnet node
 - **Why these are unauthenticated.** The case they serve is a consumer wiring up before it has a working key. Neither the database names nor the `_dev`/`_test` suffix rule is a secret (both are published in this repo), and the ports are tailnet-only regardless.
 
 The sweep logs `build` in every `monitor sweep complete` line.
+
+**The production sweep asks `http://status:9000/ready` after every pass** and pings healthchecks.io's `co-status-api` with the answer (#13, [monitors.md § Who watches co-status](reference/monitors.md#who-watches-co-status)). So `journalctl -u status` has a `/ready` line every minute.

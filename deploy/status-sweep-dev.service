@@ -4,6 +4,9 @@ After=network.target postgresql.service tailscaled.service
 
 # No [Install] section and no Restart=, for the same reasons as the production
 # sweep: the timer owns the schedule.
+#
+# Deliberately unwatched (#1, #13): no ping key, so no healthchecks.io pings
+# and no probe of the dev API.
 
 [Service]
 Type=oneshot

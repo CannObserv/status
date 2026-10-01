@@ -31,7 +31,7 @@ Python â‰¥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 | `src/core/monitors.py` | Pure: deadlines, `should_alert` (incl. the owed-alert rule), built-in wording as `Notice` |
 | `src/core/alerting.py` | **The only module that talks to notifier.** Endpoint check, idempotency keys, `send()`, request `Budget` |
 | `src/core/sweep.py` | The pass that marks missing monitors and sends/owes their alerts |
-| `src/core/heartbeat.py` | healthchecks.io pings after each production pass (#1); never fails the sweep |
+| `src/core/heartbeat.py` | healthchecks.io pings after each production pass (#1), and the API's `/ready` (#13); never fails the sweep |
 | `src/core/importer.py` | One monitor in from notifier's export, disabled |
 | `src/core/schema_state.py` | Database vs the code's Alembic head; `behind` fails a pass and `/ready`, never a start (#9) |
 | `src/core/build.py` | Build id = the release's `REVISION`, else `dev` |
@@ -58,6 +58,8 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` â
 **The notifier API key is a systemd credential**, never an env var (D13): `LoadCredential=notifier-key:/etc/status/notifier-api{,-dev}.key` on the API and sweep units. Without it the API records check-ins and sends nothing; the sweep refuses to start.
 
 **The sweeps are the only thing watching for consumer silence; healthchecks.io watches the production one** (#1): checks `co-status-sweep` and `notifier-reachable`, key `LoadCredential=hc-ping-key:/etc/status/hc-ping.key` on `status-sweep.service` only, with a `SetCredential=` fallback so a missing key never stops the sweep. Local check: `systemctl list-timers 'status-sweep*'`.
+
+**The production API is watched by that sweep, not `OnFailure=`** (#13): each pass asks `http://status:9000/ready` and pings `co-status-api`. Dev units are deliberately unwatched.
 
 Setup, routine ops and the cutover: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 

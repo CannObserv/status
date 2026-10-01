@@ -1,7 +1,7 @@
 ---
 title: Watch the API — the production sweep probes /ready (#13)
 date: 2026-10-01
-status: in progress
+status: done
 ---
 
 # Watch the API
@@ -37,7 +37,7 @@ The issue's option 2. After each production pass, the sweep sends `GET http://st
 1. **`Heartbeat.api_checked()`** in `src/core/heartbeat.py`: probe, retry window, ping `co-status-api`. Tests go through respx on `status:9000` and `hc-ping.com`: ready, 503, the wrong environment, a body that is not JSON, unreachable throughout, recovering within the window, a stall cut off at the window, and a ping that never raises. *Done when* green.
 2. **Wire `scripts/sweep_monitors.py::main`.** It calls the check in a `finally`, after the pass's own pings. Tests cover a completed pass, a raised pass, no notifier key, and the order. *Done when* green.
 3. **Docs.** monitors.md § Who watches the sweep becomes Who watches co-status. RUNBOOK gets the third check's setup, its alert row and what to do, and the dev policy. AGENTS.md and the unit comments: why `status.service` has no `OnFailure=`, and that the dev units are unwatched by design.
-4. **Deploy (operator + agent).** Create `co-status-api` in healthchecks.io (period 1 min, grace 5 min, email + Slack) **before** deploying. Until it exists, every ping answers 404 and the sweep warns on each pass. Then run `scripts/deploy.sh`. *Done when* the check goes green and one `/fail` test ping reaches the channels.
+4. **Deploy (operator + agent).** Create `co-status-api` in healthchecks.io (period 1 min, grace 5 min, email + Slack) **before** deploying. Until it exists, every ping answers 404 and the sweep warns on each pass. Then run `scripts/deploy.sh`. *Done when* the check goes green and one `/fail` test ping reaches the channels. **Done 2026-10-01 18:12Z**: `b4e6809f402e` live and dev. The first `co-status-api` ping was answered 200 at 18:12:50. A test `/fail` at 18:14:50 was cleared by the next pass at 18:14:55.
 
 ## Open questions / risks
 

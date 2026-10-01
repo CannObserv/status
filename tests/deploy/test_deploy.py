@@ -502,7 +502,10 @@ class TestTheCIGate:
         result = world.run(**PROMPT_POLLS)
         assert_ok(result)
         assert time.monotonic() - started < 15, "polled every 30 s, not as told"
+        # CR 3: the wait holds the lock for up to 10 minutes; say where to watch.
         assert "waiting for CI" in result.stderr
+        waiting = next(line for line in result.stderr.splitlines() if "waiting for CI" in line)
+        assert "https://github.test/runs/7" in waiting
         assert len([c for c in world.github_calls() if "/runs?" in c]) == 2
 
     def test_the_tip_just_pushed_waits_for_its_run_to_appear(self, world):

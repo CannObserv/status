@@ -168,7 +168,7 @@ push_run() { # the run as JSON, or nothing
 # Waits for the run, bounded. A commit behind origin/main's tip with no run
 # never gets one: GitHub runs CI on the newest commit of each push only.
 finished_run() {
-  local deadline=$((SECONDS + CI_WAIT_SECONDS)) tip run state left
+  local deadline=$((SECONDS + CI_WAIT_SECONDS)) tip run state url left
   tip="$(git -C "$SRC" rev-parse origin/main)"
   while :; do
     run="$(github "actions/workflows/ci.yml/runs?head_sha=$sha&event=push&branch=main&per_page=100" | push_run)" ||
@@ -178,18 +178,19 @@ finished_run() {
       die "no CI run for $build as a push to main. GitHub runs CI on the newest commit of each push" \
         "only: deploy that one, or pass --skip-ci. Nothing was built."
     elif [[ -z "$run" ]]; then
-      state="not queued yet"
+      state="not queued yet" url=""
       ((left > 0)) ||
         die "no CI run for $build after ${CI_WAIT_SECONDS}s ([skip ci]?). Pass --skip-ci to deploy it" \
           "anyway. Nothing was built."
     else
       state="$(jq -r .status <<<"$run")"
+      url="$(jq -r .html_url <<<"$run")"
       [[ "$state" == completed ]] && { printf '%s\n' "$run"; return; }
       ((left > 0)) ||
         die "CI for $build is still $state after ${CI_WAIT_SECONDS}s. Nothing was built; deploy again" \
-          "when it finishes. Run: $(jq -r .html_url <<<"$run")"
+          "when it finishes. Run: $url"
     fi
-    note "waiting for CI on $build ($state)"
+    note "waiting for CI on $build ($state)${url:+: $url}"
     sleep $((left < CI_POLL_SECONDS ? left : CI_POLL_SECONDS))
   done
 }

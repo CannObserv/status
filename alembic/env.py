@@ -52,9 +52,9 @@ def guarded_url() -> str:
         assert_safe_database_url(url)
     except ProductionDatabaseError as exc:
         raise ProductionDatabaseError(
-            "alembic will not migrate production by hand: scripts/deploy.sh does, "
-            "after dev (docs/DEPLOYMENT.md). For dev: "
-            'DATABASE_URL="$DEV_DATABASE_URL" uv run alembic upgrade head'
+            "alembic will not open production by hand: scripts/deploy.sh migrates "
+            "it, after dev (docs/DEPLOYMENT.md). For dev, run the same command "
+            'with DATABASE_URL="$DEV_DATABASE_URL".'
         ) from exc
     return url
 

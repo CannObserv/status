@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from src.core import db_safety
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,17 +42,26 @@ def alembic(*argv: str, name: str, opt_in: bool = False) -> subprocess.Completed
     )
 
 
-def test_a_production_name_is_refused_without_the_opt_in():
-    result = alembic("upgrade", "head", name="status")
+@pytest.mark.parametrize("argv", [("upgrade", "head"), ("check",), ("current",)], ids=" ".join)
+def test_a_production_name_is_refused_without_the_opt_in(argv):
+    """Every command that connects, not only ``upgrade``: the guard sits on
+    the connection."""
+    result = alembic(*argv, name="status")
     assert result.returncode != 0
     assert "ProductionDatabaseError" in result.stderr
 
 
 def test_the_refusal_points_at_the_deploy_not_the_opt_in():
     """The generic message says to set the opt-in, which is the wrong advice
-    for a hand-run migration: production is migrated by ``deploy.sh``."""
-    result = alembic("upgrade", "head", name="status")
-    assert "scripts/deploy.sh" in result.stderr
+    for a hand-run migration: production is migrated by ``deploy.sh``. The
+    last line, the one read, names no command: the refused one may be a
+    ``check`` after ``. scripts/load_env.sh``, and ``upgrade head`` would then
+    be advice to migrate dev."""
+    result = alembic("check", name="status")
+    last = result.stderr.strip().splitlines()[-1]
+    assert "scripts/deploy.sh" in last
+    assert "DEV_DATABASE_URL" in last
+    assert "upgrade" not in last
 
 
 def test_the_opt_in_lets_a_production_name_through():

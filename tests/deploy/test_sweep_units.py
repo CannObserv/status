@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core import db_safety
+from src.core import db_safety, heartbeat
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = REPO_ROOT / "deploy"
@@ -150,6 +150,12 @@ class TestScheduling:
         alive and nothing is being checked."""
         assert "TimeoutStartSec=" in directives(unit)
         assert _seconds(unit, "TimeoutStartSec") <= 300
+
+    def test_the_heartbeat_leaves_the_pass_most_of_its_bound(self):
+        """#13: the API's window and three pings run after the pass, inside the same
+        TimeoutStartSec. Past it systemd kills the pass before any /fail, every pass."""
+        heartbeat_seconds = heartbeat.API_WINDOW_SECONDS + 3 * heartbeat.PING_TIMEOUT_SECONDS
+        assert heartbeat_seconds <= _seconds(PROD_SERVICE, "TimeoutStartSec") / 2
 
 
 class TestScript:

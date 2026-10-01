@@ -21,7 +21,8 @@ WorkingDirectory=/srv/status/live
 # subsequent check: the timer
 # still looks alive and nothing is being swept. Bound it well inside the
 # 60-second cadence's tolerance. The pass ends by asking the API's /ready for
-# up to 20 s (#13, src/core/heartbeat.py), which fits inside it too.
+# up to 20 s (#13, src/core/heartbeat.py), which fits inside it too;
+# tests/deploy/test_sweep_units.py holds the heartbeat to half of it.
 TimeoutStartSec=120
 
 # The production database opt-in for src/core/db_safety.py. This MUST stay in

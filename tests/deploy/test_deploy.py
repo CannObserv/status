@@ -682,8 +682,12 @@ class TestTheCIGate:
         required = re.search(r"^CI_JOBS=\((.*)\)$", DEPLOY.read_text(), re.M)
         assert required, "deploy.sh names its jobs in CI_JOBS=(...)"
         workflow = yaml.safe_load(CI_WORKFLOW.read_text())
-        jobs = {job.get("name", key) for key, job in workflow["jobs"].items()}
-        assert set(required.group(1).split()) <= jobs
+        jobs = {job.get("name", key): job for key, job in workflow["jobs"].items()}
+        assert set(required.group(1).split()) <= set(jobs)
+        # CR 14: GitHub names a matrix job "test (3.12)" and a reusable workflow's
+        # "test / ...": the gate would find no "test" and refuse every live deploy.
+        for name in required.group(1).split():
+            assert "strategy" not in jobs[name] and "uses" not in jobs[name], name
         # PyYAML reads a bare `on:` as True; a quoted one stays "on" (CR 4).
         assert "main" in workflow.get(True, workflow.get("on"))["push"]["branches"]
 

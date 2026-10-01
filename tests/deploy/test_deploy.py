@@ -512,6 +512,10 @@ class TestTheCIGate:
         assert result.returncode == 1
         assert "run concluded cancelled" in result.stderr
         assert "migrations (not in the run)" in result.stderr
+        # CR 12: a dispatch on main cancels it too, with no newer commit and
+        # nothing to fix. Re-running it is the remedy.
+        assert "re-run it" in result.stderr
+        assert "fix it on main" not in result.stderr
         assert_nothing_happened(world)
 
     def test_a_run_that_did_not_conclude_success_is_refused_whatever_its_jobs(self, world):

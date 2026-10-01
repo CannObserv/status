@@ -214,9 +214,11 @@ ci_gate() {
     ] | join(", ")' <<<"$jobs")" ||
     die "GitHub's answer about $build's CI jobs is not the JSON expected; nothing was built"
   [[ "$conclusion" == success ]] || problems="run concluded $conclusion${problems:+; $problems}"
-  [[ -z "$problems" ]] ||
-    die "CI did not pass for $build: $problems. Nothing was built; fix it on main, or put it on" \
-      "dev alone with --dev. Run: $url"
+  # Cancelled is not a verdict: a newer push, or a dispatch on main sharing
+  # ci.yml's concurrency group, cancels a queued run with nothing to fix (CR 12).
+  local remedy="fix it on main, or put it on dev alone with --dev"
+  [[ "$conclusion" == cancelled ]] && remedy="re-run it from its page (a re-run counts), or deploy a newer commit"
+  [[ -z "$problems" ]] || die "CI did not pass for $build: $problems. Nothing was built; $remedy. Run: $url"
   note "CI passed for $build: $url"
   logger -t status-deploy "live: CI passed for $build ($url)" || true
 }

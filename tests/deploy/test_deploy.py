@@ -442,13 +442,20 @@ class TestTheCIGate:
     """
 
     @staticmethod
-    def dispatch_and_push(world: World) -> None:
-        """291604b's shape: a newer workflow_dispatch run on a branch (8), and
-        the push run on main (7)."""
+    def other_and_push(world: World, event: str = "workflow_dispatch", branch: str = "feature"):
+        """291604b's shape: a newer run of another kind (8), and the push run on main (7)."""
         sha = world.main[-1]
         later, earlier = "2026-10-01T02:00:00Z", "2026-10-01T01:00:00Z"
-        dispatch = ci_run(8, sha, event="workflow_dispatch", branch="feature", created=later)
-        world.ci_answers([dispatch, ci_run(7, sha, created=earlier)])
+        other = ci_run(8, sha, event=event, branch=branch, created=later)
+        world.ci_answers([other, ci_run(7, sha, created=earlier)])
+
+    # Each differs from the push run on main in one way only, so each half of
+    # the filter is tested on its own (CR 7).
+    OTHER_RUNS = pytest.mark.parametrize(
+        ("event", "branch"),
+        [("workflow_dispatch", "main"), ("pull_request", "main"), ("push", "feature")],
+        ids=["dispatch-on-main", "fork-pr-from-main", "push-elsewhere"],
+    )
 
     def test_a_live_deploy_asks_about_this_commit_as_pushed_to_main(self, world):
         assert_ok(world.run())
@@ -572,16 +579,20 @@ class TestTheCIGate:
         assert result.returncode == 1
         assert "no CI run" in result.stderr
 
-    def test_only_the_push_run_on_main_decides(self, world):
-        """A failed workflow_dispatch run on a branch, newer, changes nothing."""
-        self.dispatch_and_push(world)
+    @OTHER_RUNS
+    def test_only_the_push_run_on_main_decides(self, world, event, branch):
+        """A failed run of another kind, newer, changes nothing."""
+        self.other_and_push(world, event, branch)
         world.ci_jobs(8, test="failure")
         world.ci_jobs(7)
         assert_ok(world.run())
         assert world.github_calls()[-1].endswith("/actions/runs/7/jobs?per_page=100")
 
-    def test_a_green_branch_run_does_not_pass_a_failed_push_run(self, world):
-        self.dispatch_and_push(world)
+    @OTHER_RUNS
+    def test_a_green_run_of_another_kind_does_not_pass_a_failed_push_run(
+        self, world, event, branch
+    ):
+        self.other_and_push(world, event, branch)
         world.ci_jobs(8)
         world.ci_jobs(7, lint="failure")
         result = world.run()

@@ -620,8 +620,8 @@ class TestTheCIGate:
         workflow = yaml.safe_load(CI_WORKFLOW.read_text())
         jobs = {job.get("name", key) for key, job in workflow["jobs"].items()}
         assert set(required.group(1).split()) == jobs
-        # PyYAML reads a bare `on:` as True (tests/ci/test_workflows.py).
-        assert "main" in workflow[True]["push"]["branches"]
+        # PyYAML reads a bare `on:` as True; a quoted one stays "on" (CR 4).
+        assert "main" in workflow.get(True, workflow.get("on"))["push"]["branches"]
 
 
 class TestReleases:

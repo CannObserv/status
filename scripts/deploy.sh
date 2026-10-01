@@ -2,11 +2,16 @@
 # Deploy co-status: build a release from a pushed commit, migrate, switch,
 # verify (#9; docs/specs/2026-09-30-deploy-releases-design.md, R1–R13).
 #
-#   scripts/deploy.sh [<ref>]            dev, then live; <ref> on origin/main
+#   scripts/deploy.sh [<ref>]            dev, then live; <ref> on origin/main, CI green
 #   scripts/deploy.sh --dev [<ref>]      dev only; <ref> on any origin branch
+#   scripts/deploy.sh --skip-ci [<ref>]  live without asking CI: an emergency, logged
 #   scripts/deploy.sh --no-restart ...   first deploy only: build, migrate, link
 #
 # <ref> defaults to origin/main. A rollback is a deploy of the previous build.
+#
+# Live only once the commit's CI passed: its push run on main, lint, test and
+# migrations all green, asked of GitHub before anything is built (#11;
+# docs/DEPLOYMENT.md § The CI gate). Dev is never gated.
 #
 # On 2026-09-29 the units ran the development checkout, and an unmigrated model
 # edit crashed the production sweep for 40 minutes. Now each unit runs
@@ -35,6 +40,12 @@ KEEP="${STATUS_DEPLOY_KEEP:-5}"
 VERIFY_SECONDS="${STATUS_DEPLOY_VERIFY_SECONDS:-60}"
 # Past the sweep units' TimeoutStartSec=120: a pass still running after this is stuck.
 SWEEP_WAIT_SECONDS="${STATUS_DEPLOY_SWEEP_WAIT_SECONDS:-150}"
+# CI takes about 2 minutes; a run still going after this is wedged or queued behind one.
+CI_WAIT_SECONDS="${STATUS_DEPLOY_CI_WAIT_SECONDS:-600}"
+CI_POLL_SECONDS=30
+# Every job in .github/workflows/ci.yml; test_deploy.py holds the two together.
+CI_JOBS=(lint test migrations)
+GITHUB_API="https://api.github.com/repos/CannObserv/status"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 note() { echo "deploy: $*" >&2; }
@@ -48,15 +59,17 @@ dead() {
   exit 4
 }
 
-usage() { sed -n '4,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '4,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 targets=(dev live)
 restart=1
+skip_ci=0
 ref=""
 while (($#)); do
   case "$1" in
     --dev) targets=(dev) ;;
     --no-restart) restart=0 ;;
+    --skip-ci) skip_ci=1 ;;
     -h | --help)
       usage
       exit 0
@@ -70,6 +83,9 @@ while (($#)); do
   shift
 done
 ref="${ref:-origin/main}"
+live=0
+[[ " ${targets[*]} " == *" live "* ]] && live=1
+((live || !skip_ci)) || die "--skip-ci is for live; dev is never gated"
 
 # Releases belong to exedev, the user every unit runs as. Built by root they
 # would be root's, and the units could not read their own venvs.
@@ -112,7 +128,7 @@ fi
 
 git -C "$SRC" fetch --quiet --prune origin
 sha="$(git -C "$SRC" rev-parse --verify --quiet "${ref}^{commit}")" || die "cannot resolve $ref"
-if [[ " ${targets[*]} " == *" live "* ]]; then
+if ((live)); then
   git -C "$SRC" merge-base --is-ancestor "$sha" origin/main ||
     die "$ref ($sha) is not on origin/main; only a pushed main commit goes live"
 else
@@ -121,6 +137,90 @@ else
 fi
 build="$(git -C "$SRC" rev-parse --short=12 "$sha")"
 release="$ROOT/releases/$build"
+
+# --- CI (#11) --------------------------------------------------------------
+
+# Unauthenticated: the repo is public, and 60 requests an hour per address
+# covers a deploy's 2 (22 waiting the full 600 s). No token, so none to store.
+github() { # <path>: GitHub's JSON answer, or a refusal naming GitHub's message
+  local out
+  if out="$(curl -sS --fail-with-body --max-time 10 \
+    -H 'Accept: application/vnd.github+json' "$GITHUB_API/$1")"; then
+    printf '%s\n' "$out"
+    return
+  fi
+  out="$(jq -r '.message // empty' <<<"$out" 2>/dev/null)" || out=""
+  die "GitHub did not answer about $build's CI.${out:+ GitHub says: $out}" \
+    "Nothing was built; deploy again later, or pass --skip-ci."
+}
+
+# The run that decides: the newest push run of ci.yml on main for exactly this
+# commit. A commit can have several: 291604b also has a workflow_dispatch run on
+# its branch, and check runs cannot tell the two apart. A re-run counts, since
+# a run reports its latest attempt.
+push_run() { # the run as JSON, or nothing
+  jq -c --arg sha "$sha" '[.workflow_runs[]
+    | select(.head_sha == $sha and .event == "push" and .head_branch == "main")]
+    | max_by(.created_at) // empty' ||
+    die "GitHub's answer about $build's CI runs is not the JSON expected; nothing was built"
+}
+
+# Waits for the run, bounded. A commit behind origin/main's tip with no run
+# never gets one: GitHub runs CI on the newest commit of each push only.
+finished_run() {
+  local deadline=$((SECONDS + CI_WAIT_SECONDS)) tip run state left
+  tip="$(git -C "$SRC" rev-parse origin/main)"
+  while :; do
+    run="$(github "actions/workflows/ci.yml/runs?head_sha=$sha&event=push&branch=main&per_page=100" | push_run)" ||
+      exit 1
+    left=$((deadline - SECONDS))
+    if [[ -z "$run" && "$sha" != "$tip" ]]; then
+      die "no CI run for $build as a push to main. GitHub runs CI on the newest commit of each push" \
+        "only: deploy that one, or pass --skip-ci. Nothing was built."
+    elif [[ -z "$run" ]]; then
+      state="not queued yet"
+      ((left > 0)) ||
+        die "no CI run for $build after ${CI_WAIT_SECONDS}s ([skip ci]?). Pass --skip-ci to deploy it" \
+          "anyway. Nothing was built."
+    else
+      state="$(jq -r .status <<<"$run")"
+      [[ "$state" == completed ]] && { printf '%s\n' "$run"; return; }
+      ((left > 0)) ||
+        die "CI for $build is still $state after ${CI_WAIT_SECONDS}s. Nothing was built; deploy again" \
+          "when it finishes. Run: $(jq -r .html_url <<<"$run")"
+    fi
+    note "waiting for CI on $build ($state)"
+    sleep $((left < CI_POLL_SECONDS ? left : CI_POLL_SECONDS))
+  done
+}
+
+# Each job by name, success only: a skipped job leaves the run itself "success".
+ci_gate() {
+  local run url jobs job conclusion list failed=()
+  run="$(finished_run)" || exit 1
+  url="$(jq -r .html_url <<<"$run")"
+  jobs="$(github "actions/runs/$(jq -r .id <<<"$run")/jobs?per_page=100")" || exit 1
+  for job in "${CI_JOBS[@]}"; do
+    conclusion="$(jq -r --arg name "$job" \
+      'first(.jobs[] | select(.name == $name) | .conclusion // .status) // "not in the run"' <<<"$jobs")" ||
+      die "GitHub's answer about $build's CI jobs is not the JSON expected; nothing was built"
+    [[ "$conclusion" == success ]] || failed+=("$job ($conclusion)")
+  done
+  if ((${#failed[@]})); then
+    printf -v list '%s, ' "${failed[@]}"
+    die "CI did not pass for $build: ${list%, }. Nothing was built; fix it on main, or put it on" \
+      "dev alone with --dev. Run: $url"
+  fi
+  note "CI passed for $build: $url"
+  logger -t status-deploy "live: CI passed for $build ($url)" || true
+}
+
+if ((live && skip_ci)); then
+  note "live: not asking CI about $build (--skip-ci)"
+  logger -t status-deploy "live: CI not checked for $build (--skip-ci)" || true
+elif ((live)); then
+  ci_gate
+fi
 
 # --- the release -----------------------------------------------------------
 

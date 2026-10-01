@@ -9,7 +9,8 @@ thing it watches stops reporting exactly when it is needed (notifier#56).
 This process needs Postgres, notifier and no part of the API to be up.
 
 Each production pass then reports itself to healthchecks.io (#1,
-:mod:`src.core.heartbeat`): the watcher of the watcher, outside the cohort. A
+:mod:`src.core.heartbeat`): the watcher of the watcher, outside the cohort.
+Last, it asks the production API's ``/ready`` and reports that too (#13). A
 pass whose code is ahead of the database's migrations fails as ``SchemaBehind``
 (#9, :mod:`src.core.schema_state`).
 """
@@ -72,8 +73,19 @@ async def run_sweep(
 
 
 async def main() -> int:
-    """Open a session, run one pass, close it. Non-zero without a notifier key."""
+    """Run one pass, then report the API (#13). Non-zero without a notifier key."""
     heartbeat = heartbeat_from_environment()
+    try:
+        return await _one_pass(heartbeat)
+    finally:
+        # Last, whatever the pass did: a slow API must not delay an alert, and a
+        # pass that raised says nothing about whether check-ins are recorded.
+        if heartbeat is not None:
+            await heartbeat.api_checked()
+
+
+async def _one_pass(heartbeat: Heartbeat | None) -> int:
+    """Open a session, run one pass, close it. Non-zero without a notifier key."""
     alerter = alerter_from_environment()
     if alerter is None:
         if heartbeat is not None:

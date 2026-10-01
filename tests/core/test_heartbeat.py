@@ -1,8 +1,9 @@
-"""Tests for src/core/heartbeat.py — the pings that watch the sweep (#1).
+"""Tests for src/core/heartbeat.py — the pings that watch the sweep (#1) and the API (#13).
 
-healthchecks.io is reached through respx, never the network. What matters:
-the right check gets the right signal, the ping key never reaches a log line,
-and nothing a ping does can fail the sweep that sent it.
+healthchecks.io and the API's ``/ready`` are reached through respx, never the
+network. What matters: the right check gets the right signal, the ping key
+never reaches a log line, and nothing a ping does can fail the sweep that
+sent it.
 """
 
 import asyncio
@@ -16,6 +17,8 @@ import respx
 
 from src.core import heartbeat
 from src.core.heartbeat import (
+    API_CHECK,
+    API_READY_URL,
     CREDENTIAL_NAME,
     NOTIFIER_CHECK,
     PING_BASE_URL,
@@ -44,6 +47,26 @@ def pings():
     """healthchecks.io: every ping answered ``OK``, until a test says not."""
     with respx.mock(base_url=PING_BASE_URL, assert_all_called=False) as mock:
         mock.post(url__regex=r".*").respond(200, text="OK")
+        yield mock
+
+
+#: ``/ready`` from the production API, as it answers today.
+READY = {
+    "status": "ready",
+    "db": True,
+    "database": "status",
+    "environment": "production",
+    "schema_state": "current",
+}
+
+
+@pytest.fixture
+def api(monkeypatch):
+    """The production API's ``/ready``: ready, until a test says not. A short window."""
+    monkeypatch.setattr(heartbeat, "API_WINDOW_SECONDS", 0.2)
+    monkeypatch.setattr(heartbeat, "API_RETRY_SECONDS", 0.01)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(API_READY_URL, name="ready").respond(200, json=READY)
         yield mock
 
 
@@ -114,6 +137,98 @@ class TestSweepFailed:
         """An exception message can carry SQL, monitor names or a URL; the type cannot."""
         await Heartbeat(KEY).sweep_failed(RuntimeError("password=hunter2"))
         assert pings.calls[0].request.content == b"RuntimeError"
+
+
+class TestApiChecked:
+    """#13: the production API, by the name consumers use, answers ``/ready``."""
+
+    async def test_a_ready_api_pings_success_with_its_answer(self, pings, api):
+        await Heartbeat(KEY).api_checked()
+        assert _paths(pings) == [f"/{KEY}/{API_CHECK}"]
+        assert pings.calls[0].request.content == b"200 " + api.calls[0].response.content
+
+    async def test_not_ready_fails_the_api_check_with_its_answer(self, pings, api):
+        """503: the database, or a schema behind the code. The body says which."""
+        api.routes["ready"].respond(503, json={"status": "not_ready", "db": False})
+        await Heartbeat(KEY).api_checked()
+        assert _paths(pings) == [f"/{KEY}/{API_CHECK}/fail"]
+        assert pings.calls[0].request.content.startswith(b"503 ")
+        assert b"not_ready" in pings.calls[0].request.content
+
+    async def test_another_environment_is_not_ready(self, pings, api):
+        """:9000 recording check-ins where the production sweep never reads them."""
+        api.routes["ready"].respond(
+            200, json={**READY, "database": "status_dev", "environment": "development"}
+        )
+        await Heartbeat(KEY).api_checked()
+        assert _paths(pings) == [f"/{KEY}/{API_CHECK}/fail"]
+        assert b"development" in pings.calls[0].request.content
+
+    @pytest.mark.parametrize("body", ["<html>bad gateway</html>", "[]"])
+    async def test_an_answer_that_is_not_readys_is_not_ready(self, pings, api, body):
+        api.routes["ready"].respond(200, text=body)
+        await Heartbeat(KEY).api_checked()
+        assert _paths(pings) == [f"/{KEY}/{API_CHECK}/fail"]
+
+    async def test_a_long_answer_is_cut_short(self, pings, api):
+        api.routes["ready"].respond(500, text="x" * 10_000)
+        await Heartbeat(KEY).api_checked()
+        assert len(pings.calls[0].request.content) < 300
+
+    @pytest.mark.parametrize(
+        ("error", "body"),
+        [
+            # What httpx says here with nothing listening, and with no MagicDNS.
+            (httpx.ConnectError("All connection attempts failed"), b"ConnectError: All con"),
+            (httpx.ConnectError("[Errno -2] Name or service not known"), b"ConnectError: [Errno"),
+            (httpx.ConnectTimeout(""), b"ConnectTimeout"),
+        ],
+        ids=["refused", "unresolved", "silent"],
+    )
+    async def test_unreachable_throughout_sends_the_error(self, pings, api, error, body):
+        """Retried until the window closes, then down. The URL carries no key, so the
+        message goes too: it is what tells nothing listening from no name."""
+        api.routes["ready"].mock(side_effect=error)
+        await Heartbeat(KEY).api_checked()
+        assert _paths(pings) == [f"/{KEY}/{API_CHECK}/fail"]
+        assert pings.calls[0].request.content.startswith(body)
+        assert pings.calls[0].request.content.endswith(str(error).encode() or body)
+        assert api.routes["ready"].call_count > 1
+
+    async def test_a_restart_inside_the_window_is_not_an_outage(self, pings, api):
+        """2026-10-01 14:54:10: deploy.sh's forced pass ended 0.2 s before uvicorn listened."""
+        api.routes["ready"].side_effect = [
+            httpx.ConnectError("refused"),
+            httpx.ConnectError("refused"),
+            httpx.Response(200, json=READY),
+        ]
+        await Heartbeat(KEY).api_checked()
+        assert _paths(pings) == [f"/{KEY}/{API_CHECK}"]
+
+    async def test_a_stalled_api_is_cut_off_at_the_window(self, pings, api):
+        """The window bounds the whole probe, however many tries are still in flight."""
+
+        async def stall(request):
+            await asyncio.sleep(5)
+            return httpx.Response(200, json=READY)
+
+        api.routes["ready"].mock(side_effect=stall)
+        started = time.monotonic()
+        await Heartbeat(KEY).api_checked()
+        assert time.monotonic() - started < 1
+        assert _paths(pings) == [f"/{KEY}/{API_CHECK}/fail"]
+        assert pings.calls[0].request.content == b"TimeoutError"
+
+    async def test_not_ready_is_a_journal_warning_too(self, pings, api, caplog):
+        api.routes["ready"].respond(503, json={"status": "not_ready", "db": False})
+        with caplog.at_level("WARNING"):
+            await Heartbeat(KEY).api_checked()
+        assert any("not_ready" in r.getMessage() for r in caplog.records)
+
+    async def test_a_failed_ping_never_raises(self, pings, api):
+        pings.routes.clear()
+        pings.post(url__regex=r".*").mock(side_effect=httpx.ConnectError("refused"))
+        await Heartbeat(KEY).api_checked()
 
 
 class TestAPingNeverFailsTheSweep:

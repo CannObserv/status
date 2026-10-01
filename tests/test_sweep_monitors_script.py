@@ -8,6 +8,7 @@ way to tell "no monitors are overdue" from "the timer has not fired in a week".
 """
 
 import secrets
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -107,12 +108,19 @@ class FakeHeartbeat:
     def __init__(self) -> None:
         self.completed: list[SweepReport] = []
         self.failed: list[BaseException] = []
+        #: Every call, in order: ``completed``, ``failed``, ``api``.
+        self.calls: list[str] = []
 
     async def sweep_completed(self, report: SweepReport) -> None:
         self.completed.append(report)
+        self.calls.append("completed")
 
     async def sweep_failed(self, error: BaseException) -> None:
         self.failed.append(error)
+        self.calls.append("failed")
+
+    async def api_checked(self) -> None:
+        self.calls.append("api")
 
 
 class TestHeartbeat:
@@ -165,3 +173,47 @@ class TestHeartbeat:
         monkeypatch.setattr(sweep_monitors, "alerter_from_environment", lambda: None)
         assert await sweep_monitors.main() == 1
         assert len(heartbeat.failed) == 1
+
+
+@asynccontextmanager
+async def _no_session():
+    yield None
+
+
+class TestApiCheck:
+    """#13: every production pass ends by asking whether the API is ready.
+
+    After the pass and its own pings, whatever the pass did: a slow API must
+    not delay an alert, and a failed pass says nothing about the API.
+    """
+
+    @pytest.fixture
+    def heartbeat(self, monkeypatch) -> FakeHeartbeat:
+        heartbeat = FakeHeartbeat()
+        monkeypatch.setattr(sweep_monitors, "heartbeat_from_environment", lambda: heartbeat)
+        monkeypatch.setattr(sweep_monitors, "alerter_from_environment", lambda: object())
+        monkeypatch.setattr(sweep_monitors, "get_session_factory", lambda: _no_session)
+        return heartbeat
+
+    async def test_after_a_completed_pass(self, heartbeat, monkeypatch):
+        async def completes(session, alerter, heartbeat):
+            await heartbeat.sweep_completed(SweepReport())
+
+        monkeypatch.setattr(sweep_monitors, "run_sweep", completes)
+        assert await sweep_monitors.main() == 0
+        assert heartbeat.calls == ["completed", "api"]
+
+    async def test_after_a_pass_that_raised_which_still_raises(self, heartbeat, monkeypatch):
+        async def raises(session, alerter, heartbeat):
+            await heartbeat.sweep_failed(RuntimeError())
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(sweep_monitors, "run_sweep", raises)
+        with pytest.raises(RuntimeError, match="boom"):
+            await sweep_monitors.main()
+        assert heartbeat.calls == ["failed", "api"]
+
+    async def test_without_a_notifier_key(self, heartbeat, monkeypatch):
+        monkeypatch.setattr(sweep_monitors, "alerter_from_environment", lambda: None)
+        assert await sweep_monitors.main() == 1
+        assert heartbeat.calls == ["failed", "api"]

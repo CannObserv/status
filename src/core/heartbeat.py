@@ -1,15 +1,17 @@
-"""The pings that watch the sweep: healthchecks.io, outside the cohort (#1).
+"""The pings that watch co-status: healthchecks.io, outside the cohort (#1, #13).
 
 The sweep is the only thing watching for consumer silence, so it needs a
 watcher that does not share its failure modes: not this host, not Postgres,
-not notifier. Each completed production pass pings two healthchecks.io
-checks, which alert over their own email and Slack channels when pings stop
-or fail:
+not notifier. Each production pass pings three healthchecks.io checks, which
+alert over their own email and Slack channels when pings stop or fail:
 
 - ``co-status-sweep`` — the pass completed and committed (``/fail`` if it raised);
 - ``notifier-reachable`` — notifier answered ``/health`` in this environment,
   accepted every alert the pass sent (nothing owed), **and** delivered the
-  last alert of every missing monitor (nothing undelivered, #6).
+  last alert of every missing monitor (nothing undelivered, #6);
+- ``co-status-api`` — the production API answered ``/ready`` (#13). The API
+  is the half that records check-ins: down, it makes every consumer look
+  ``missing`` when the fault is co-status.
 
 Best effort by construction: a ping never raises and never delays a pass
 beyond its timeout. The ping key is a credential (D13): anyone holding it can
@@ -37,9 +39,22 @@ CREDENTIAL_NAME = "hc-ping-key"
 PING_BASE_URL = "https://hc-ping.com"
 SWEEP_CHECK = "co-status-sweep"
 NOTIFIER_CHECK = "notifier-reachable"
+API_CHECK = "co-status-api"
+#: The production API by the name consumers use, over the tailnet: its bind,
+#: MagicDNS and database, all at once. Production only, like every ping here.
+API_READY_URL = "http://status:9000/ready"
+#: How long a pass keeps asking before the API counts as down. A restart is
+#: about a second (deploy.sh's forced pass on 2026-10-01 ended 0.2 s before
+#: uvicorn listened); a broken API is still broken after 20.
+API_WINDOW_SECONDS = 20.0
+API_RETRY_SECONDS = 2.0
+#: Of ``/ready``'s answer, in the ping body. Its JSON is about 100 bytes;
+#: anything longer is not ``/ready`` talking.
+API_BODY_LIMIT = 200
 
-#: Two pings per pass, inside ``TimeoutStartSec=120``. No retry: the next pass
-#: is 60 seconds away and each check's grace period absorbs a missed one.
+#: Three pings per pass, and the API's window, inside ``TimeoutStartSec=120``.
+#: No retry: the next pass is 60 seconds away and each check's grace period
+#: absorbs a missed one.
 PING_TIMEOUT_SECONDS = 5.0
 
 
@@ -67,9 +82,12 @@ def _redact_in_httpx_log(key: str) -> None:
 class Heartbeat:
     """Pings healthchecks.io for one production sweep pass."""
 
-    def __init__(self, ping_key: str, *, base_url: str = PING_BASE_URL) -> None:
+    def __init__(
+        self, ping_key: str, *, base_url: str = PING_BASE_URL, api_url: str = API_READY_URL
+    ) -> None:
         self._key = ping_key
         self._base_url = base_url
+        self._api_url = api_url
         # httpx logs every request URL at INFO, and this URL carries the key.
         _redact_in_httpx_log(ping_key)
 
@@ -92,6 +110,17 @@ class Heartbeat:
     async def sweep_failed(self, error: BaseException) -> None:
         """Signal a pass that raised. Sends the exception's type, never its message."""
         await self._ping(SWEEP_CHECK, ok=False, body=type(error).__name__)
+
+    async def api_checked(self) -> None:
+        """Signal whether the production API is ready to record check-ins (#13).
+
+        Called after the pass and its own pings, so a slow API never delays an
+        alert. Retried within :data:`API_WINDOW_SECONDS` before it counts as down.
+        """
+        ok, body = await _probe_api(self._api_url)
+        if not ok:
+            logger.warning(f"co-status API not ready at {self._api_url}: {body}")
+        await self._ping(API_CHECK, ok=ok, body=body)
 
     async def _ping(self, check: str, *, ok: bool, body: str) -> None:
         url = f"{self._base_url}/{self._key}/{check}" + ("" if ok else "/fail")
@@ -125,6 +154,45 @@ def _notifier_problems(report: SweepReport) -> list[str]:
         detail = ", ".join(f"{n} {status}" for status, n in sorted(by_status.items()))
         problems.append(f"{len(report.undelivered)} alert(s) undelivered ({detail})")
     return problems
+
+
+async def _probe_api(url: str) -> tuple[bool, str]:
+    """Ask *url* until it is ready or the window closes: ``(ready, what it said)``."""
+    answer = "TimeoutError"
+    try:
+        # One bound on every try together: httpx's timeout is per phase, and
+        # DNS has none at all.
+        async with asyncio.timeout(API_WINDOW_SECONDS):
+            async with httpx.AsyncClient(timeout=PING_TIMEOUT_SECONDS) as client:
+                while True:
+                    ready, answer = await _ask_ready(client, url)
+                    if ready:
+                        return True, answer
+                    await asyncio.sleep(API_RETRY_SECONDS)
+    except TimeoutError:
+        return False, answer
+
+
+async def _ask_ready(client: httpx.AsyncClient, url: str) -> tuple[bool, str]:
+    """One ``GET /ready``. Ready is a 200 from the production database, nothing less."""
+    try:
+        response = await client.get(url)
+    except Exception as exc:
+        # The message too, unlike a ping's: this URL carries no key, and the
+        # message is what tells nothing listening from a name that won't resolve.
+        message = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        return False, message[:API_BODY_LIMIT]
+    answer = f"{response.status_code} {response.text[:API_BODY_LIMIT]}"
+    try:
+        payload = response.json()
+    except ValueError:
+        return False, answer
+    ready = (
+        response.status_code == 200
+        and isinstance(payload, dict)
+        and payload.get("environment") == "production"
+    )
+    return ready, answer
 
 
 def heartbeat_from_environment(environ: Mapping[str, str] = os.environ) -> Heartbeat | None:

@@ -219,6 +219,17 @@ class TestApiChecked:
         assert _paths(pings) == [f"/{KEY}/{API_CHECK}/fail"]
         assert pings.calls[0].request.content == b"TimeoutError"
 
+    async def test_a_try_cut_off_by_the_window_reports_the_hang(self, pings, api):
+        """Not the try before it: the body describes how the window ended."""
+
+        async def stall(request):
+            await asyncio.sleep(5)
+            return httpx.Response(200, json=READY)
+
+        api.routes["ready"].side_effect = [httpx.Response(503, json={"db": False}), stall]
+        await Heartbeat(KEY).api_checked()
+        assert pings.calls[0].request.content == b"TimeoutError"
+
     async def test_not_ready_is_a_journal_warning_too(self, pings, api, caplog):
         api.routes["ready"].respond(503, json={"status": "not_ready", "db": False})
         with caplog.at_level("WARNING"):

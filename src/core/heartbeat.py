@@ -165,6 +165,9 @@ async def _probe_api(url: str) -> tuple[bool, str]:
         async with asyncio.timeout(API_WINDOW_SECONDS):
             async with httpx.AsyncClient(timeout=PING_TIMEOUT_SECONDS) as client:
                 while True:
+                    # What a try the window cuts off reports: it never returns
+                    # to overwrite this, so the body says how the window ended.
+                    answer = "TimeoutError"
                     ready, answer = await _ask_ready(client, url)
                     if ready:
                         return True, answer

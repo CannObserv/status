@@ -19,10 +19,14 @@ Unauthenticated, like the deploy gate: the repo is public, and the usual hour
 costs two of the 60 requests GitHub allows an address.
 """
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import httpx
+
+from src.core.build import UNSTAMPED
 from src.core.heartbeat import Signal
 from src.core.utils import format_utc_iso
 
@@ -30,6 +34,15 @@ DRIFT_CHECK = "co-status-drift"
 #: How long code may sit on ``main`` undeployed. Deploys are by hand; CI takes
 #: about two minutes.
 GRACE = timedelta(hours=8)
+GITHUB_API = "https://api.github.com/repos/CannObserv/status"
+#: CI's push runs on main, newest first: when each push landed (#11's gate asks the same).
+RUNS_PATH = "actions/workflows/ci.yml/runs?event=push&branch=main&per_page=100"
+#: At most this many extra compares to find the push that brought code. Past
+#: it, the oldest push starts the clock: an alert sooner, never later.
+WALK_LIMIT = 8
+#: Every call together, inside the unit's ``TimeoutStartSec``.
+CHECK_TIMEOUT_SECONDS = 60.0
+REQUEST_TIMEOUT_SECONDS = 10.0
 #: GitHub lists at most this many files in a compare; a list this long may be
 #: cut short, and what was cut could be anything.
 COMPARE_FILES_LIMIT = 300
@@ -75,7 +88,7 @@ def diff_counts(compare: Mapping) -> bool:
 
 def first_look(live: str, compare: Mapping) -> Verdict | None:
     """The verdict from ``compare/<live>...main`` alone, or ``None`` if it needs the clock."""
-    if live == "dev":
+    if live == UNSTAMPED:
         return Verdict(Signal.FAIL, "live is unstamped (dev): its release has no REVISION")
     status = compare["status"]
     if status == "identical":
@@ -134,6 +147,68 @@ def lagging(live: str, compare: Mapping, since: Push, *, ci: str, now: datetime)
         return Verdict(Signal.UP, body)
     remedy = "scripts/deploy.sh" if ci == "success" else "deploy.sh refuses it until CI passes"
     return Verdict(Signal.FAIL, f"{body}. main's CI: {ci} — {remedy}")
+
+
+class GitHubSilent(Exception):
+    """GitHub gave no answer this check can use."""
+
+
+async def assess(live: str, *, now: datetime, api: str = GITHUB_API) -> Verdict:
+    """Ask GitHub about *live*, the live release's build id. Never raises."""
+    try:
+        async with asyncio.timeout(CHECK_TIMEOUT_SECONDS):
+            async with httpx.AsyncClient(
+                base_url=api,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+                headers={"Accept": "application/vnd.github+json"},
+            ) as client:
+                return await _assess(client, live, now)
+    except GitHubSilent as exc:
+        return Verdict(Signal.LOG, f"GitHub did not answer: {exc}")
+    except TimeoutError:
+        return Verdict(Signal.LOG, "GitHub did not answer: TimeoutError")
+    except (KeyError, TypeError, IndexError, ValueError, AttributeError):
+        return Verdict(Signal.LOG, "GitHub's answer is not the JSON expected")
+
+
+async def _assess(client: httpx.AsyncClient, live: str, now: datetime) -> Verdict:
+    if live == UNSTAMPED:
+        return first_look(live, {})
+    compare = await _get(client, f"compare/{live}...main")
+    verdict = first_look(live, compare)
+    if verdict is not None:
+        return verdict
+    runs = await _get(client, RUNS_PATH)
+    found = pushes(compare, runs)
+    since = found[0]
+    if now - since.at > GRACE:
+        since = await _first_counting(client, live, found)
+    return lagging(live, compare, since, ci=tip_ci(runs, compare["commits"][-1]["sha"]), now=now)
+
+
+async def _first_counting(client: httpx.AsyncClient, live: str, found: list[Push]) -> Push:
+    """The oldest push whose diff from *live* counts; ``main``'s (the last) is known to."""
+    for push in found[:-1][:WALK_LIMIT]:
+        if diff_counts(await _get(client, f"compare/{live}...{push.sha}")):
+            return push
+    return found[-1] if len(found) - 1 <= WALK_LIMIT else found[0]
+
+
+async def _get(client: httpx.AsyncClient, path: str) -> Mapping:
+    try:
+        response = await client.get(path)
+    except httpx.HTTPError as exc:
+        raise GitHubSilent(f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__)
+    if not response.is_success:
+        try:
+            message = response.json().get("message", "")
+        except (ValueError, AttributeError):
+            message = ""
+        raise GitHubSilent(f"{response.status_code} {message}".strip())
+    answer = response.json()
+    if not isinstance(answer, Mapping):
+        raise TypeError("not an object")
+    return answer
 
 
 def _ahead(live: str, compare: Mapping) -> str:

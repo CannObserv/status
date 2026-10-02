@@ -6,15 +6,22 @@ workflow's runs. The pure half is tested on those; the half that asks GitHub
 goes through respx, never the network.
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
+import respx
 
+from src.core import drift
 from src.core.drift import (
     COMPARE_FILES_LIMIT,
+    GITHUB_API,
     GRACE,
+    RUNS_PATH,
     Push,
     Verdict,
+    assess,
     counts,
     diff_counts,
     first_look,
@@ -240,3 +247,119 @@ class TestLagging:
     def test_one_commit_is_singular(self):
         since = Push(sha(1), NOW)
         assert "1 commit ahead," in lagging(LIVE, compare(1), since, ci="success", now=NOW).body
+
+
+@pytest.fixture
+def github():
+    """GitHub's REST API for this repo; each test routes what it asks."""
+    with respx.mock(base_url=GITHUB_API, assert_all_called=False) as mock:
+        yield mock
+
+
+def _route_compare(github, head: str, answer: dict):
+    return github.get(f"/compare/{LIVE}...{head}").respond(200, json=answer)
+
+
+def _route_runs(github, answer: dict):
+    path, _, query = RUNS_PATH.partition("?")
+    return github.get(f"/{path}", params=dict(p.split("=") for p in query.split("&"))).respond(
+        200, json=answer
+    )
+
+
+class TestAssess:
+    async def test_unstamped_asks_github_nothing(self, github):
+        verdict = await assess("dev", now=NOW)
+        assert verdict.signal is Signal.FAIL
+        assert not github.calls
+
+    async def test_in_sync_is_one_call(self, github):
+        _route_compare(github, "main", compare(status="identical", files=[]))
+        assert (await assess(LIVE, now=NOW)).signal is Signal.UP
+        assert len(github.calls) == 1
+
+    async def test_docs_alone_never_ask_for_runs(self, github):
+        _route_compare(github, "main", compare(1, files=["docs/a.md"]))
+        assert (await assess(LIVE, now=NOW)).signal is Signal.UP
+        assert len(github.calls) == 1
+
+    async def test_code_within_grace_is_two_calls(self, github):
+        _route_compare(github, "main", compare(1))
+        _route_runs(github, runs(run(1, NOW - timedelta(hours=1))))
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict.signal is Signal.UP
+        assert "1.0 h ago" in verdict.body
+        assert len(github.calls) == 2
+
+    async def test_code_past_grace_fails(self, github):
+        _route_compare(github, "main", compare(1))
+        _route_runs(github, runs(run(1, NOW - timedelta(hours=9))))
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict.signal is Signal.FAIL
+        assert "main's CI: success" in verdict.body
+        assert len(github.calls) == 2
+
+    async def test_old_docs_then_new_code_starts_the_clock_at_the_code(self, github):
+        """Live sat behind a docs push for two days; code pushed an hour ago is not late."""
+        _route_compare(github, "main", compare(1, 2))
+        _route_runs(github, runs(run(1, NOW - timedelta(days=2)), run(2, NOW - timedelta(hours=1))))
+        _route_compare(github, sha(1), compare(1, files=["docs/a.md"]))
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict.signal is Signal.UP
+        assert "1.0 h ago" in verdict.body
+
+    async def test_old_code_then_new_docs_is_late(self, github):
+        _route_compare(github, "main", compare(1, 2))
+        _route_runs(github, runs(run(1, NOW - timedelta(days=2)), run(2, NOW - timedelta(hours=1))))
+        _route_compare(github, sha(1), compare(1))
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict.signal is Signal.FAIL
+        assert "48.0 h ago" in verdict.body
+
+    async def test_the_walk_stops_at_its_limit_and_alerts_sooner(self, github, monkeypatch):
+        monkeypatch.setattr(drift, "WALK_LIMIT", 2)
+        _route_compare(github, "main", compare(1, 2, 3, 4))
+        _route_runs(
+            github,
+            runs(*(run(n, NOW - timedelta(days=5 - n)) for n in (1, 2, 3)), run(4, NOW)),
+        )
+        for n in (1, 2, 3):
+            _route_compare(github, sha(n), compare(n, files=["docs/a.md"]))
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict.signal is Signal.FAIL, "the code may be as old as the oldest push"
+        assert "96.0 h ago" in verdict.body
+        assert len(github.calls) == 2 + 2
+
+
+class TestAssessWhenGitHubCannotSay:
+    async def test_a_refusal_is_logged_with_githubs_message(self, github):
+        github.get(url__regex=r".*").respond(
+            403, json={"message": "API rate limit exceeded for 1.2.3.4."}
+        )
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict == Verdict(
+            Signal.LOG, "GitHub did not answer: 403 API rate limit exceeded for 1.2.3.4."
+        )
+
+    async def test_unreachable_is_logged(self, github):
+        github.get(url__regex=r".*").mock(side_effect=httpx.ConnectError("refused"))
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict == Verdict(Signal.LOG, "GitHub did not answer: ConnectError: refused")
+
+    @pytest.mark.parametrize("body", [b"<html>", b"[]", b'{"status": "ahead"}'], ids=repr)
+    async def test_unexpected_json_is_logged(self, github, body):
+        github.get(url__regex=r".*").respond(200, content=body)
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict.signal is Signal.LOG
+        assert "not the JSON expected" in verdict.body
+
+    async def test_a_stall_is_cut_off(self, github, monkeypatch):
+        monkeypatch.setattr(drift, "CHECK_TIMEOUT_SECONDS", 0.05)
+
+        async def stall(request):
+            await asyncio.sleep(5)
+            return httpx.Response(200)
+
+        github.get(url__regex=r".*").mock(side_effect=stall)
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict == Verdict(Signal.LOG, "GitHub did not answer: TimeoutError")

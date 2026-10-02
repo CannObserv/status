@@ -1,4 +1,4 @@
-"""Drift tests for the three launch scripts the units run (#9, spec R5).
+"""Drift tests for the launch scripts the units run (#9, spec R5; #12).
 
 **No sync at start or pass.** A bare ``uv run`` syncs the environment first, so
 an edit to ``pyproject.toml`` or ``uv.lock`` changed production on the sweep's
@@ -16,7 +16,9 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LAUNCHERS = [REPO_ROOT / "scripts" / name for name in ("serve.sh", "sweep.sh", "dev_server.sh")]
+LAUNCHERS = [
+    REPO_ROOT / "scripts" / name for name in ("serve.sh", "sweep.sh", "dev_server.sh", "drift.sh")
+]
 
 
 def commands(script: Path) -> str:

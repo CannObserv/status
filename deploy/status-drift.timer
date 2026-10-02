@@ -1,0 +1,17 @@
+[Unit]
+Description=Check hourly whether live lags origin/main (production)
+
+# healthchecks.io's co-status-drift expects a ping every hour (period 1 h,
+# grace 2 h): if this timer stops, the check's silence alerts (#12).
+
+[Timer]
+Unit=status-drift.service
+# After the API and the first sweep, and after tailscaled: this host's only
+# DNS is Tailscale's.
+OnBootSec=5min
+OnUnitActiveSec=1h
+# Coalescing with other wakeups is fine at this cadence; GRACE is 8 h.
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

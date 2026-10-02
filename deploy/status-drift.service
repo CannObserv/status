@@ -1,0 +1,31 @@
+[Unit]
+Description=co-status — does live lag origin/main? (production)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+# The drift check (#12, src/core/drift.py). Hourly from status-drift.timer:
+# compares the live release's REVISION with origin/main on GitHub and pings
+# healthchecks.io's co-status-drift. Up while live is main, behind only in docs
+# or tests, or behind in code for under 8 h; /fail past that, and at once when
+# live is not on main. No Restart=, for the reason status-sweep.service gives.
+#
+# Production only, with no dev twin: dev is unwatched by design (#13), and is
+# often ahead of main on purpose (deploy.sh --dev <branch>).
+
+[Service]
+Type=oneshot
+User=exedev
+# A release, never a checkout (#9). Its REVISION is what this checks.
+WorkingDirectory=/srv/status/live
+
+# GitHub (every call together, CHECK_TIMEOUT_SECONDS=60) and one ping (5 s).
+TimeoutStartSec=90
+
+# No EnvironmentFile=, no STATUS_ALLOW_PROD_DB, no notifier key: this opens no
+# database and sends no alert. Only the healthchecks.io ping key, with the
+# sweep's fallback (status-sweep.service explains it): a missing key file must
+# not fail the unit. The check's silence then alerts instead.
+SetCredential=hc-ping-key:\n
+LoadCredential=hc-ping-key:/etc/status/hc-ping.key
+
+ExecStart=/srv/status/live/scripts/drift.sh

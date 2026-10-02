@@ -25,7 +25,9 @@ from src.core.heartbeat import (
     PING_BASE_URL,
     SWEEP_CHECK,
     Heartbeat,
+    Signal,
     heartbeat_from_environment,
+    ping,
 )
 from src.core.sweep import SweepReport
 
@@ -300,6 +302,33 @@ class TestAPingNeverFailsTheSweep:
             await Heartbeat(KEY).sweep_completed(_report())
         assert caplog.records
         assert all(KEY not in r.getMessage() for r in caplog.records)
+
+
+class TestPing:
+    """One ping to any check, for callers other than the sweep (#12)."""
+
+    @pytest.mark.parametrize(
+        ("signal", "suffix"),
+        [(Signal.UP, ""), (Signal.FAIL, "/fail"), (Signal.LOG, "/log")],
+        ids=lambda v: getattr(v, "name", v),
+    )
+    async def test_each_signal_has_its_endpoint(self, pings, signal, suffix):
+        await ping(KEY, "some-check", signal, "body")
+        assert _paths(pings) == [f"/{KEY}/some-check{suffix}"]
+        assert pings.calls[0].request.content == b"body"
+
+    async def test_the_key_never_reaches_httpxs_request_log(self, pings, caplog):
+        with caplog.at_level("DEBUG"):
+            await ping(KEY, "some-check", Signal.UP, "body")
+        assert any(r.name == "httpx" for r in caplog.records)
+        assert all(KEY not in r.getMessage() for r in caplog.records)
+
+    async def test_never_raises(self, pings, caplog):
+        pings.routes.clear()
+        pings.post(url__regex=r".*").mock(side_effect=httpx.ConnectError("refused"))
+        with caplog.at_level("WARNING"):
+            await ping(KEY, "some-check", Signal.FAIL, "body")
+        assert any("some-check" in r.message for r in caplog.records)
 
 
 class TestHeartbeatFromEnvironment:

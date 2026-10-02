@@ -24,6 +24,7 @@ import logging
 import os
 from collections import Counter
 from collections.abc import Mapping
+from enum import StrEnum
 
 import httpx
 
@@ -56,6 +57,15 @@ API_BODY_LIMIT = 200
 #: No retry: the next pass is 60 seconds away and each check's grace period
 #: absorbs a missed one.
 PING_TIMEOUT_SECONDS = 5.0
+
+
+class Signal(StrEnum):
+    """What a ping tells its check, as healthchecks.io's URL suffix."""
+
+    UP = ""
+    FAIL = "/fail"
+    #: Recorded in the check's log; its state does not change (#12).
+    LOG = "/log"
 
 
 class _RedactKey(logging.Filter):
@@ -123,23 +133,34 @@ class Heartbeat:
         await self._ping(API_CHECK, ok=ok, body=body)
 
     async def _ping(self, check: str, *, ok: bool, body: str) -> None:
-        url = f"{self._base_url}/{self._key}/{check}" + ("" if ok else "/fail")
-        try:
-            # The bound is on the whole ping: httpx's timeout is per phase
-            # (connect, write, read, pool), and DNS has none at all.
-            async with asyncio.timeout(PING_TIMEOUT_SECONDS):
-                async with httpx.AsyncClient(timeout=PING_TIMEOUT_SECONDS) as client:
-                    response = await client.post(url, content=body)
-        except Exception as exc:
-            # Anything at all: a ping must never fail the sweep that sent it.
-            # The type only: an httpx message can carry the URL, and the URL the key.
-            logger.warning(f"healthchecks ping for {check} failed: {type(exc).__name__}")
-            return
-        if not response.is_success:
-            logger.warning(
-                f"healthchecks ping for {check} answered {response.status_code}",
-                extra={"check": check, "status_code": response.status_code},
-            )
+        await ping(
+            self._key, check, Signal.UP if ok else Signal.FAIL, body, base_url=self._base_url
+        )
+
+
+async def ping(
+    key: str, check: str, signal: Signal, body: str, *, base_url: str = PING_BASE_URL
+) -> None:
+    """Send *body* to *check* as *signal*. Never raises; a failure is a journal warning."""
+    # httpx logs every request URL at INFO, and this URL carries the key.
+    _redact_in_httpx_log(key)
+    url = f"{base_url}/{key}/{check}{signal}"
+    try:
+        # The bound is on the whole ping: httpx's timeout is per phase
+        # (connect, write, read, pool), and DNS has none at all.
+        async with asyncio.timeout(PING_TIMEOUT_SECONDS):
+            async with httpx.AsyncClient(timeout=PING_TIMEOUT_SECONDS) as client:
+                response = await client.post(url, content=body)
+    except Exception as exc:
+        # Anything at all: a ping must never fail the process that sent it.
+        # The type only: an httpx message can carry the URL, and the URL the key.
+        logger.warning(f"healthchecks ping for {check} failed: {type(exc).__name__}")
+        return
+    if not response.is_success:
+        logger.warning(
+            f"healthchecks ping for {check} answered {response.status_code}",
+            extra={"check": check, "status_code": response.status_code},
+        )
 
 
 def _notifier_problems(report: SweepReport) -> list[str]:

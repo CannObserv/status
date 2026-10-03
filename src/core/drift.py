@@ -141,10 +141,14 @@ def tip_ci(runs: Mapping, tip: str) -> str:
 
 
 def lagging(live: str, compare: Mapping, since: Push, *, ci: str, now: datetime) -> Verdict:
-    """The verdict for live behind in code since the push *since*."""
+    """The verdict for live behind in code, the clock started at the push *since*.
+
+    Within the grace nothing is walked, so *since* is the oldest push since live,
+    which may be docs only: the body names the clock, never "the code since" (CR 4).
+    """
     age = now - since.at
     body = (
-        f"{_ahead(live, compare)}, in code since the push of {format_utc_iso(since.at)} "
+        f"{_ahead(live, compare)}, the clock started at the push of {format_utc_iso(since.at)} "
         f"({age / timedelta(hours=1):.1f} h ago; grace {GRACE / timedelta(hours=1):.0f} h)"
     )
     if age <= GRACE:

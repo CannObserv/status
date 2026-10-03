@@ -223,11 +223,12 @@ class TestTipCi:
 
 class TestLagging:
     def test_within_grace_is_up(self):
+        """The clock's push, never "in code since": unwalked, it may be docs only (CR 4)."""
         since = Push(sha(1), NOW - GRACE + timedelta(minutes=1))
         verdict = lagging(LIVE, compare(1, 2), since, ci="success", now=NOW)
         assert verdict.signal is Signal.UP
         assert verdict.body == (
-            f"live {LIVE}, main {sha(2)[:12]}: 2 commits ahead, in code since the push "
+            f"live {LIVE}, main {sha(2)[:12]}: 2 commits ahead, the clock started at the push "
             f"of 2026-10-02T14:01:00Z (8.0 h ago; grace 8 h)"
         )
 

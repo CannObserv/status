@@ -67,10 +67,13 @@ cd /home/exedev/status && scripts/deploy.sh --no-restart
 sudo cp deploy/status.service deploy/status-dev.service \
         deploy/status-sweep.service deploy/status-sweep.timer \
         deploy/status-sweep-dev.service deploy/status-sweep-dev.timer \
+        deploy/status-drift.service deploy/status-drift.timer \
         /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now status status-dev
 sudo systemctl enable --now status-sweep.timer status-sweep-dev.timer
+# The drift check (#12), production only; § Watching co-status first.
+sudo systemctl enable --now status-drift.timer
 
 # Memory reservation. Values are notifier's (notifier#74, #85) as a starting
 # point; re-measure here and adjust (spec Phase 3).
@@ -117,13 +120,14 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 | Is the sweep firing? | `systemctl list-timers 'status-sweep*'` |
 | What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable`, `undelivered` every pass |
 | Force a pass | `sudo systemctl start status-sweep.service` |
+| Is live behind `main`? | `sudo systemctl start status-drift && journalctl -u status-drift -n 3 -o cat` (#12) |
 | Which key was minted, revoked, or destroyed with its tenant | `journalctl -t status-keys` |
 
 **`owed` that does not drain** means notifier is not accepting alerts: check notifier's `/health` from here, and `journalctl -u status-sweep` for the reason. The alerts go out, under their original keys, on the first pass notifier accepts them.
 
 **`undelivered` that does not clear** means notifier took a missing alert but a channel failed it (`failed`), or failed one of several (`partial`). `journalctl -u status-sweep | grep 'with status'` gives each dispatch id with its `monitor_id`; notifier's dispatch attempts say which channel and why. Fixing the channel does not clear it: it clears when the monitor recovers or a later renotify is delivered. Pausing the monitor only hides it until it is resumed. Without `renotify_seconds` nothing resends ([#7](https://github.com/CannObserv/status/issues/7)), so tell the monitor's owner directly.
 
-**healthchecks.io watches the sweep and the API** ([monitors.md § Who watches co-status](reference/monitors.md#who-watches-co-status)). An alert from it means:
+**healthchecks.io watches the sweep, the API and what is deployed** ([monitors.md § Who watches co-status](reference/monitors.md#who-watches-co-status)). An alert from it means:
 
 | Check down | Look at |
 |---|---|
@@ -132,6 +136,8 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 | `notifier-reachable` | The ping body names each cause that applies: unreachable, *n* owed, *n* undelivered. notifier's `/health` from here; then `journalctl -u status-sweep \| grep 'not accepted'` — a refusal (revoked key, deleted channels) keeps it down just as an outage does. For undelivered, see above |
 | `co-status-api`, `/fail` | The API was not ready for 20 s; the body is its answer or the error. `systemctl status status`, `journalctl -u status -n 50`. By body: **`ConnectError: All connection attempts failed`**, nothing listening; **`Name or service not known`**, the tailnet no longer resolves `status` (renamed node? `tailscale status`); **`ConnectTimeout`**, packets go nowhere (`tailscale status`); **`TimeoutError`** or **`ReadTimeout`**, connected but no answer: a wedged API or a Postgres that hangs; **`503`** with `"db":false`, Postgres; with `schema_state`, a migration ([DEPLOYMENT.md § The schema check](DEPLOYMENT.md#the-schema-check)); **`environment` not `production`**, `DATABASE_URL` in `/etc/status/.env` |
 | `co-status-api`, silent | The sweep is not running; `co-status-sweep` says the same |
+| `co-status-drift`, `/fail` | Live has lagged `main` in code for over 8 h, or is not on `main`. The body names both builds, the push the clock started at, and `main`'s CI. **CI `success`**: `scripts/deploy.sh`. **Anything else**: fix CI on `main` first; the gate refuses it ([DEPLOYMENT.md § The CI gate](DEPLOYMENT.md#the-ci-gate)). **Not on `main`**: `readlink /srv/status/live` against `git log origin/main`: `main` was rewritten after the deploy (live deploys only take commits on `main`). Clears on the next hourly run after a deploy, or now: `sudo systemctl start status-drift` |
+| `co-status-drift`, silent | `systemctl list-timers status-drift.timer`, `journalctl -u status-drift -n 20`. `GitHub did not answer` lines (and `/log` entries in the check's dashboard) mean GitHub refused or was unreachable for over 2 h: rate limit or outage, nothing to fix here |
 | All silent, host fine | `journalctl -u status-sweep \| grep -i healthchecks`: a missing key or a ping that cannot get out. This host's only DNS is Tailscale's (100.100.100.100), so tailscaled down silences every ping: `tailscale status` |
 
 **A failed API stays failed.** After 5 failed starts in 15 minutes, `status.service` stops retrying. Fix the cause, then `sudo systemctl reset-failed status && sudo systemctl start status`. A bad release is a rollback instead (above).
@@ -142,8 +148,8 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 Org account, free plan (#1, #13). Set up once:
 
-1. Create three checks: slugs **`co-status-sweep`**, **`notifier-reachable`** and **`co-status-api`**, **period 1 minute, grace 5 minutes**. That absorbs `OnBootSec=2min` and `TimeoutStartSec=120` without flapping. Create a check before deploying the sweep that pings it: until it exists, every ping to it answers 404 and the sweep warns on every pass.
-2. Attach the project's email and Slack integrations to all three. Never route them through notifier: it is one of the things being watched.
+1. Create four checks: slugs **`co-status-sweep`**, **`notifier-reachable`** and **`co-status-api`**, **period 1 minute, grace 5 minutes**; and **`co-status-drift`** (#12), **period 1 hour, grace 2 hours**. That absorbs `OnBootSec=2min` and `TimeoutStartSec=120` without flapping. Create a check before deploying the sweep that pings it: until it exists, every ping to it answers 404 and the sweep warns on every pass.
+2. Attach the project's email and Slack integrations to all four. Never route them through notifier: it is one of the things being watched.
 3. Copy the project's **ping key** (project Settings → Ping key) into `/etc/status/hc-ping.key`, as under First-time setup. It is a credential: never in `.env`, a tracked file or a chat.
 4. Install the unit and confirm:
 
@@ -153,7 +159,12 @@ sudo systemctl start status-sweep.service
 journalctl -u status-sweep -n 5 -o cat | grep -i healthchecks   # nothing: every ping answered OK
 ```
 
-All three turn green in the dashboard within a minute. **Test an alert once.** It must reach email and Slack, and the next pass turns the check green again. The key goes to curl as config on stdin, so it never appears in `ps`:
+The sweep's three turn green in the dashboard within a minute. The drift check runs hourly from `status-drift.timer` (First-time setup); its first run, now:
+
+```bash
+sudo systemctl start status-drift.service
+journalctl -u status-drift -n 3 -o cat     # "drift check: live <build> is main", or how far behind
+``` **Test an alert once.** It must reach email and Slack, and the next pass turns the check green again. The key goes to curl as config on stdin, so it never appears in `ps`:
 
 ```bash
 sudo sh -c 'printf "url = https://hc-ping.com/%s/co-status-sweep/fail\n" "$(cat /etc/status/hc-ping.key)" | curl -fsS -X POST -K -'

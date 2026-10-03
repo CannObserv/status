@@ -341,6 +341,11 @@ class TestAssessWhenGitHubCannotSay:
             Signal.LOG, "GitHub did not answer: 403 API rate limit exceeded for 1.2.3.4."
         )
 
+    async def test_an_error_page_that_is_not_json_is_logged_by_status(self, github):
+        github.get(url__regex=r".*").respond(502, text="<html>Bad gateway</html>")
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict == Verdict(Signal.LOG, "GitHub did not answer: 502")
+
     async def test_unreachable_is_logged(self, github):
         github.get(url__regex=r".*").mock(side_effect=httpx.ConnectError("refused"))
         verdict = await assess(LIVE, now=NOW)

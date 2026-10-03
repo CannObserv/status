@@ -1,7 +1,8 @@
 """The healthchecks.io ping key reaches the production sweep as a credential (#1).
 
-Only ``status-sweep.service`` pings: the dev sweep is not watched, and the API
-has nothing to report. The key is a credential for D13's reason — anyone
+Only ``status-sweep.service`` and ``status-drift.service`` (#12,
+``test_drift_units.py``) ping: the dev sweep is not watched, and the API has
+nothing to report. The key is a credential for D13's reason — anyone
 holding it can report a dead sweep as alive — so it is never in an env file.
 
 **A missing key must not stop the sweep.** ``LoadCredential=`` on a missing

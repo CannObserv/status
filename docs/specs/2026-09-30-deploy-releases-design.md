@@ -38,7 +38,7 @@ Two further problems share this cause:
 **Deferred** (none blocks this):
 
 - A CI-green check before a live deploy. CI is the only correctness signal (AGENTS.md), but reading check runs needs a token in the deploy path. **2026-10-01:** #11 gates live deploys on the commit's push run, unauthenticated ([plan](../plans/2026-10-01-ci-gate.md), [DEPLOYMENT.md § The CI gate](../DEPLOYMENT.md#the-ci-gate)).
-- A drift signal when `live` lags `origin/main` (broker#22 goal 4).
+- A drift signal when `live` lags `origin/main` (broker#22 goal 4). **2026-10-02:** #12, an hourly timer and healthchecks.io's `co-status-drift` ([plan](../plans/2026-10-02-drift-check.md)).
 - `OnFailure=` (broker#22 Q10). **2026-10-01:** #13 watches the API from the production sweep instead ([plan](../plans/2026-10-01-watch-the-api.md)).
 - A root-owned deploy root (R2).
 
@@ -91,7 +91,7 @@ The check is used in three places:
 | 6 Env and state | `/etc/status/` only (R11). The units write nothing under their working directory |
 | 7 Restart | the deploy restarts the API and forces a sweep pass (R6). No restart window: check-ins retry |
 | 8 Guards | at deploy time: ancestry, a single head, verification. At run time: only the schema check, which never blocks a start (R8) |
-| 9 Build id, drift | `REVISION` in `/health` and in every sweep line (R10). Drift signal deferred |
+| 9 Build id, drift | `REVISION` in `/health` and in every sweep line (R10). Drift: `co-status-drift`, hourly (#12) |
 | 10 `OnFailure=` | none. healthchecks.io watches the sweep (#1), and the sweep watches the API's `/ready` (#13) |
 | 11 Dev services | deployed, no exception (R12) |
 | 12 Tests | units hold no `/home/exedev`; `deploy.sh` runs end to end against a temp root with stubs |

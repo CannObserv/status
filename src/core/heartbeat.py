@@ -13,6 +13,9 @@ alert over their own email and Slack channels when pings stop or fail:
   is the half that records check-ins: down, it makes every consumer look
   ``missing`` when the fault is co-status.
 
+:func:`ping` sends one signal to any check; the hourly drift check (#12,
+:mod:`src.core.drift`) pings ``co-status-drift`` through it.
+
 Best effort by construction: a ping never raises and never delays a pass
 beyond its timeout. The ping key is a credential (D13): anyone holding it can
 report a dead sweep as alive, so it is never logged and never an env var.

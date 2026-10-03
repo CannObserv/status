@@ -7,7 +7,7 @@ How code reaches the units, and how to tell what is running. Design and reasons:
 ```
 /srv/status/
   releases/<build>/   git archive of one pushed commit + its own .venv; read-only; REVISION
-  live -> releases/<build>   status.service, status-sweep.service   (:9000, database status)
+  live -> releases/<build>   status.service, status-sweep.service, status-drift.service (:9000, database status)
   dev  -> releases/<build>   status-dev.service, status-sweep-dev.service (:9001, status_dev)
 ```
 
@@ -81,6 +81,12 @@ scripts/deploy.sh <old build>          # still on origin/main, so it may go live
 ```
 
 A rollback goes through [the CI gate](#the-ci-gate) like any live deploy. A build that went live through the gate has a green push run, and passes again unless a job in `CI_JOBS` has been renamed since (see [the CI gate](#the-ci-gate)). One that went live before #11, from the middle of a push, may have no run at all. Either way, `--skip-ci` it, once. The old release still exists (within the 5 kept), so nothing is rebuilt, unless its venv no longer runs. A release that `live` or `dev` still runs is never rebuilt in place: the deploy stops, names the target, and asks for another build there first. Its Alembic does not know the newer revision, so the schema reads `ahead` and the migration is skipped. By the expand-only rule, the old code runs. A rollback never downgrades the schema.
+
+## Drift
+
+**Pushed is not deployed, and an hourly check says so** ([#12](https://github.com/CannObserv/status/issues/12), [monitors.md § Who watches co-status](reference/monitors.md#who-watches-co-status)). `status-drift.timer` compares live's `REVISION` with `origin/main` on GitHub and fails healthchecks.io's `co-status-drift` once code (not docs or tests) has waited 8 h since its push. After a deploy the check clears on its next run, within the hour; `sudo systemctl start status-drift` clears it now.
+
+**Units are not deployed.** `deploy.sh` switches code; unit files reach `/etc/systemd/system/` only by hand ([#18](https://github.com/CannObserv/status/issues/18)). A unit edit, `status-drift.*` included, is a `sudo cp` and `daemon-reload` ([RUNBOOK](RUNBOOK.md)).
 
 ## The schema check
 

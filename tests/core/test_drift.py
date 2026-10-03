@@ -316,19 +316,37 @@ class TestAssess:
         assert verdict.signal is Signal.FAIL
         assert "48.0 h ago" in verdict.body
 
-    async def test_the_walk_stops_at_its_limit_and_alerts_sooner(self, github, monkeypatch):
-        monkeypatch.setattr(drift, "WALK_LIMIT", 2)
+    @staticmethod
+    def _docs_pushes_then_code(github, third: timedelta):
+        """Pushes 4 and 3 days ago, docs only; a third *third* ago; main now."""
         _route_compare(github, "main", compare(1, 2, 3, 4))
         _route_runs(
             github,
-            runs(*(run(n, NOW - timedelta(days=5 - n)) for n in (1, 2, 3)), run(4, NOW)),
+            runs(
+                run(1, NOW - timedelta(days=4)),
+                run(2, NOW - timedelta(days=3)),
+                run(3, NOW - third),
+                run(4, NOW),
+            ),
         )
         for n in (1, 2, 3):
             _route_compare(github, sha(n), compare(n, files=["docs/a.md"]))
+
+    async def test_the_walk_stops_at_its_limit_at_the_first_push_unchecked(
+        self, github, monkeypatch
+    ):
+        """Pushes 1 and 2 are known not to count: the code came with 3 at the earliest (CR 1)."""
+        monkeypatch.setattr(drift, "WALK_LIMIT", 2)
+        self._docs_pushes_then_code(github, timedelta(days=2))
         verdict = await assess(LIVE, now=NOW)
-        assert verdict.signal is Signal.FAIL, "the code may be as old as the oldest push"
-        assert "96.0 h ago" in verdict.body
+        assert verdict.signal is Signal.FAIL, "the code may be as old as push 3"
+        assert "48.0 h ago" in verdict.body
         assert len(github.calls) == 2 + 2
+
+    async def test_past_the_limit_recent_code_is_not_late(self, github, monkeypatch):
+        monkeypatch.setattr(drift, "WALK_LIMIT", 2)
+        self._docs_pushes_then_code(github, timedelta(hours=1))
+        assert (await assess(LIVE, now=NOW)).signal is Signal.UP
 
 
 class TestAssessWhenGitHubCannotSay:

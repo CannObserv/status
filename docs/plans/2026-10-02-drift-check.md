@@ -27,7 +27,7 @@ An hourly oneshot, **`status-drift.timer`** → `status-drift.service` → `scri
    - `diverged` or `behind` (live not on `main`) → `/fail` at once.
    - `ahead` with nothing that counts → up.
 2. `GET actions/workflows/ci.yml/runs?event=push&branch=main` (one call per hour; read only when the diff counts). The pushes since live are the runs whose `head_sha` is undeployed, in order of `created_at`. That time is when the push landed. Committer dates can be days older. If `main`'s newest commit has no run (`[skip ci]`), its committer date stands in.
-3. Only when the oldest of those pushes is past the grace: `GET compare/<REVISION>...<push>` for each push, oldest first, until one counts. That push's time starts the clock. At most `WALK_LIMIT` calls; if none of them counts, the oldest push starts the clock (alerts sooner, never later).
+3. Only when the oldest of those pushes is past the grace: `GET compare/<REVISION>...<push>` for each push, oldest first, until one counts. That push's time starts the clock. At most `WALK_LIMIT` calls; if none of them counts, the first push not asked about starts the clock: the earliest the code can have come (alerts sooner, never later; CR 1).
 
 That leaves deploy.sh most of the 60 requests an hour per address. The usual hour costs two calls.
 

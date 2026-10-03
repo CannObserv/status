@@ -38,7 +38,8 @@ GITHUB_API = "https://api.github.com/repos/CannObserv/status"
 #: CI's push runs on main, newest first: when each push landed (#11's gate asks the same).
 RUNS_PATH = "actions/workflows/ci.yml/runs?event=push&branch=main&per_page=100"
 #: At most this many extra compares to find the push that brought code. Past
-#: it, the oldest push starts the clock: an alert sooner, never later.
+#: it, the first push left unchecked starts the clock: the earliest the code
+#: can have come, so an alert sooner, never later (CR 1).
 WALK_LIMIT = 8
 #: Every call together, inside the unit's ``TimeoutStartSec``.
 CHECK_TIMEOUT_SECONDS = 60.0
@@ -187,11 +188,15 @@ async def _assess(client: httpx.AsyncClient, live: str, now: datetime) -> Verdic
 
 
 async def _first_counting(client: httpx.AsyncClient, live: str, found: list[Push]) -> Push:
-    """The oldest push whose diff from *live* counts; ``main``'s (the last) is known to."""
+    """The oldest push whose diff from *live* counts; ``main``'s (the last) is known to.
+
+    Past :data:`WALK_LIMIT`, the first push not asked about: every one before it
+    is known not to count, so the code came with it at the earliest.
+    """
     for push in found[:-1][:WALK_LIMIT]:
         if diff_counts(await _get(client, f"compare/{live}...{push.sha}")):
             return push
-    return found[-1] if len(found) - 1 <= WALK_LIMIT else found[0]
+    return found[min(WALK_LIMIT, len(found) - 1)]
 
 
 async def _get(client: httpx.AsyncClient, path: str) -> Mapping:

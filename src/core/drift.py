@@ -15,8 +15,9 @@ behind ``main`` and pings healthchecks.io's ``co-status-drift``:
 
 The clock starts at the push, never the commit: a CI run's ``created_at``
 is when its push landed, and a commit can be days older than that.
-Unauthenticated, like the deploy gate: the repo is public, and the usual hour
-costs two of the 60 requests GitHub allows an address.
+Unauthenticated, like the deploy gate: the repo is public, and GitHub allows
+an address 60 requests an hour. A run costs 1 in sync or behind in docs, 2
+behind in code, and at most 2 + :data:`WALK_LIMIT` past the grace (CR 15).
 """
 
 import asyncio

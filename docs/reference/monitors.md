@@ -99,7 +99,7 @@ healthchecks alerts over its own email and Slack, **never through notifier**.
 **A fourth check watches what is deployed, not what runs: `co-status-drift`** ([#12](https://github.com/CannObserv/status/issues/12), `src/core/drift.py`). Since #9, pushed is not deployed. Every hour `status-drift.timer` asks GitHub how far the live release's `REVISION` is behind `origin/main`:
 
 - **Up** while live is `main`, behind only in paths that never run (`docs/`, `tests/`, `.github/`, the skills, `*.md`), or behind in code for under 8 h. The clock starts at the push that brought the code, from the `created_at` of its CI run, never from a commit date.
-- **`/fail`** past 8 h. The body names both builds, the push and `main`'s CI result: a red one is refused by the deploy gate ([#11](https://github.com/CannObserv/status/issues/11)), so the fix is CI, not a deploy. Also `/fail` at once when live is not on `main` or has no `REVISION`.
+- **`/fail`** past 8 h. The body names both builds, the push and `main`'s CI result: a red one is refused by the deploy gate ([#11](https://github.com/CannObserv/status/issues/11)), so the fix is CI, not a deploy. Also `/fail` at once when live is not on `main`, GitHub does not know it (404: `main` rewritten, or the repo no longer public), or it has no `REVISION`.
 - **`/log`** when GitHub cannot answer (unauthenticated, 60 requests an hour per address; a usual run costs 2). The check's state does not change; an outage longer than its 2-hour grace goes silent, and that alerts.
 - Production only, own unit, no database and no notifier key: GitHub never joins the sweep's failure modes. Dev is not checked; it is often ahead of `main` on purpose.
 

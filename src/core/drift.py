@@ -154,6 +154,10 @@ class GitHubSilent(Exception):
     """GitHub gave no answer this check can use."""
 
 
+class GitHubNotFound(GitHubSilent):
+    """GitHub answered 404."""
+
+
 async def assess(live: str, *, now: datetime, api: str = GITHUB_API) -> Verdict:
     """Ask GitHub about *live*, the live release's build id. Never raises."""
     try:
@@ -175,7 +179,15 @@ async def assess(live: str, *, now: datetime, api: str = GITHUB_API) -> Verdict:
 async def _assess(client: httpx.AsyncClient, live: str, now: datetime) -> Verdict:
     if live == UNSTAMPED:
         return first_look(live, {})
-    compare = await _get(client, f"compare/{live}...main")
+    try:
+        compare = await _get(client, f"compare/{live}...main")
+    except GitHubNotFound as exc:
+        # A base GitHub does not know is live off main, not GitHub silent (CR 2).
+        return Verdict(
+            Signal.FAIL,
+            f"GitHub does not know live {live} ({exc}): main rewritten since the deploy, "
+            "or the repo is no longer public",
+        )
     verdict = first_look(live, compare)
     if verdict is not None:
         return verdict
@@ -209,7 +221,8 @@ async def _get(client: httpx.AsyncClient, path: str) -> Mapping:
             message = response.json().get("message", "")
         except (ValueError, AttributeError):
             message = ""
-        raise GitHubSilent(f"{response.status_code} {message}".strip())
+        error = GitHubNotFound if response.status_code == 404 else GitHubSilent
+        raise error(f"{response.status_code} {message}".strip())
     answer = response.json()
     if not isinstance(answer, Mapping):
         raise TypeError("not an object")

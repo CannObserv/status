@@ -359,6 +359,19 @@ class TestAssessWhenGitHubCannotSay:
             Signal.LOG, "GitHub did not answer: 403 API rate limit exceeded for 1.2.3.4."
         )
 
+    async def test_live_unknown_to_github_fails(self, github):
+        """GitHub answers 404 for a base it does not know: not on main, said so (CR 2)."""
+        github.get(f"/compare/{LIVE}...main").respond(404, json={"message": "Not Found"})
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict.signal is Signal.FAIL
+        assert verdict.body.startswith(f"GitHub does not know live {LIVE} (404 Not Found)")
+
+    async def test_a_404_on_anything_else_is_logged(self, github):
+        _route_compare(github, "main", compare(1))
+        github.get(url__regex=r".*/runs").respond(404, json={"message": "Not Found"})
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict == Verdict(Signal.LOG, "GitHub did not answer: 404 Not Found")
+
     async def test_an_error_page_that_is_not_json_is_logged_by_status(self, github):
         github.get(url__regex=r".*").respond(502, text="<html>Bad gateway</html>")
         verdict = await assess(LIVE, now=NOW)

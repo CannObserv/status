@@ -389,6 +389,14 @@ class TestAssessWhenGitHubCannotSay:
         assert verdict.signal is Signal.LOG
         assert "not the JSON expected" in verdict.body
 
+    async def test_unexpected_json_leaves_its_traceback_in_the_journal(self, github, caplog):
+        """A bug here would read as GitHub's fault without it (CR 3)."""
+        github.get(url__regex=r".*").respond(200, json={"status": "ahead"})
+        with caplog.at_level("WARNING"):
+            await assess(LIVE, now=NOW)
+        (record,) = [r for r in caplog.records if r.name == drift.logger.name]
+        assert record.exc_info and record.exc_info[0] is KeyError
+
     async def test_a_stall_is_cut_off(self, github, monkeypatch):
         monkeypatch.setattr(drift, "CHECK_TIMEOUT_SECONDS", 0.05)
 

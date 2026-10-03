@@ -28,7 +28,10 @@ import httpx
 
 from src.core.build import UNSTAMPED
 from src.core.heartbeat import Signal
+from src.core.logging import get_logger
 from src.core.utils import format_utc_iso
+
+logger = get_logger(__name__)
 
 DRIFT_CHECK = "co-status-drift"
 #: How long code may sit on ``main`` undeployed. Deploys are by hand; CI takes
@@ -173,6 +176,8 @@ async def assess(live: str, *, now: datetime, api: str = GITHUB_API) -> Verdict:
     except TimeoutError:
         return Verdict(Signal.LOG, "GitHub did not answer: TimeoutError")
     except (KeyError, TypeError, IndexError, ValueError, AttributeError):
+        # GitHub's shape changed, or this module has a bug: the traceback says which (CR 3).
+        logger.warning("drift check: GitHub's answer is not the JSON expected", exc_info=True)
         return Verdict(Signal.LOG, "GitHub's answer is not the JSON expected")
 
 

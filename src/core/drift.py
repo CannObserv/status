@@ -109,6 +109,11 @@ def pushes(compare: Mapping, runs: Mapping) -> list[Push]:
 
     GitHub runs CI once per push, on its newest commit. A ``main`` with no run
     (``[skip ci]``) falls back to its commit date: the only clock left.
+
+    ``main`` is the compare's last commit. That holds for this repo's linear
+    history (it commits straight to ``main``) and up to the 250 commits a
+    compare lists; past that the diff already counts (:func:`diff_counts`), but
+    the tip named, its date and its CI may be an older commit's (CR 6).
     """
     undeployed = {c["sha"] for c in compare["commits"]}
     landed: dict[str, datetime] = {}

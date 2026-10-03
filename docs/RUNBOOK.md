@@ -164,7 +164,9 @@ The sweep's three turn green in the dashboard within a minute. The drift check r
 ```bash
 sudo systemctl start status-drift.service
 journalctl -u status-drift -n 3 -o cat     # "drift check: live <build> is main", or how far behind
-``` **Test an alert once.** It must reach email and Slack, and the next pass turns the check green again. The key goes to curl as config on stdin, so it never appears in `ps`:
+```
+
+**Test an alert once.** It must reach email and Slack, and the next pass turns the check green again. The key goes to curl as config on stdin, so it never appears in `ps`:
 
 ```bash
 sudo sh -c 'printf "url = https://hc-ping.com/%s/co-status-sweep/fail\n" "$(cat /etc/status/hc-ping.key)" | curl -fsS -X POST -K -'

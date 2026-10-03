@@ -212,17 +212,23 @@ async def _assess(client: httpx.AsyncClient, live: str, now: datetime) -> Verdic
     found = pushes(compare, runs)
     since = found[0]
     if now - since.at > GRACE:
-        since = await _first_counting(client, live, found)
+        since = await _first_counting(client, live, found, now)
     return lagging(live, compare, since, ci=tip_ci(runs, compare["commits"][-1]["sha"]), now=now)
 
 
-async def _first_counting(client: httpx.AsyncClient, live: str, found: list[Push]) -> Push:
+async def _first_counting(
+    client: httpx.AsyncClient, live: str, found: list[Push], now: datetime
+) -> Push:
     """The oldest push whose diff from *live* counts; ``main``'s (the last) is known to.
 
     Past :data:`WALK_LIMIT`, the first push not asked about: every one before it
-    is known not to count, so the code came with it at the earliest.
+    is known not to count, so the code came with it at the earliest. A push
+    inside the grace ends the walk too: it, or a newer one, brought the code,
+    and the verdict is up either way (CR 14).
     """
     for push in found[:-1][:WALK_LIMIT]:
+        if now - push.at <= GRACE:
+            return push
         if diff_counts(await _get(client, f"compare/{live}...{push.sha}")):
             return push
     return found[min(WALK_LIMIT, len(found) - 1)]

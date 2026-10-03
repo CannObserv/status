@@ -355,6 +355,24 @@ class TestAssess:
         assert verdict.signal is Signal.UP
         assert "2.0 h ago" in verdict.body
 
+    async def test_the_walk_stops_at_the_first_push_inside_the_grace(self, github):
+        """It, or a newer push, brought the code: up either way, so ask no further (CR 14)."""
+        _route_compare(github, "main", compare(1, 2, 3))
+        _route_runs(
+            github,
+            runs(
+                run(1, NOW - timedelta(days=2)),
+                run(2, NOW - timedelta(hours=1)),
+                run(3, NOW),
+            ),
+        )
+        _route_compare(github, sha(1), compare(1, files=["docs/a.md"]))
+        asked_about_2 = _route_compare(github, sha(2), compare(1, 2, files=["docs/a.md"]))
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict.signal is Signal.UP
+        assert "1.0 h ago" in verdict.body
+        assert not asked_about_2.called
+
     async def test_the_walk_stops_at_its_limit_at_the_first_push_unchecked(
         self, github, monkeypatch
     ):

@@ -204,6 +204,13 @@ class TestPushes:
             Push(sha(2), NOW - timedelta(hours=3)),
         ]
 
+    def test_a_tip_with_no_run_landed_no_earlier_than_the_pushes_under_it(self):
+        """An old ``[skip ci]`` commit pushed on top: never sorted before main's pushes (CR 10)."""
+        answer = compare(1, 2)
+        answer["commits"][1] = commit(2, NOW - timedelta(days=3))
+        found = pushes(answer, runs(run(1, NOW - timedelta(hours=2))))
+        assert found[-1] == Push(sha(2), NOW - timedelta(hours=2)), "the walk relies on it"
+
 
 class TestTipCi:
     def test_the_newest_push_runs_conclusion(self):
@@ -332,6 +339,16 @@ class TestAssess:
         )
         for n in (1, 2, 3):
             _route_compare(github, sha(n), compare(n, files=["docs/a.md"]))
+
+    async def test_an_old_skip_ci_tip_on_new_code_is_not_late(self, github):
+        """Code pushed 2 h ago under a [skip ci] commit written 3 days ago (CR 10)."""
+        answer = compare(1, 2)
+        answer["commits"][1] = commit(2, NOW - timedelta(days=3))
+        _route_compare(github, "main", answer)
+        _route_runs(github, runs(run(1, NOW - timedelta(hours=2))))
+        verdict = await assess(LIVE, now=NOW)
+        assert verdict.signal is Signal.UP
+        assert "2.0 h ago" in verdict.body
 
     async def test_the_walk_stops_at_its_limit_at_the_first_push_unchecked(
         self, github, monkeypatch

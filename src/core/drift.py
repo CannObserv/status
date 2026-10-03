@@ -108,7 +108,9 @@ def pushes(compare: Mapping, runs: Mapping) -> list[Push]:
     """The pushes to ``main`` since live, oldest first, from CI's push runs.
 
     GitHub runs CI once per push, on its newest commit. A ``main`` with no run
-    (``[skip ci]``) falls back to its commit date: the only clock left.
+    (``[skip ci]``) falls back to its commit date, the only clock left, but no
+    earlier than any push under it: it landed after them, and the walk needs
+    ``main``'s push last (CR 10).
 
     ``main`` is the compare's last commit. That holds for this repo's linear
     history (it commits straight to ``main``) and up to the 250 commits a
@@ -126,7 +128,8 @@ def pushes(compare: Mapping, runs: Mapping) -> list[Push]:
         landed[run["head_sha"]] = min(at, landed.get(run["head_sha"], at))
     tip = compare["commits"][-1]
     if tip["sha"] not in landed:
-        landed[tip["sha"]] = _parse(tip["commit"]["committer"]["date"])
+        committed = _parse(tip["commit"]["committer"]["date"])
+        landed[tip["sha"]] = max(committed, *landed.values())
     return sorted((Push(s, at) for s, at in landed.items()), key=lambda p: p.at)
 
 

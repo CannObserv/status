@@ -28,7 +28,8 @@ async def main(environ: Mapping[str, str] = os.environ) -> int:
     """Check once, log the verdict, ping it. Always 0: the ping is the signal."""
     live = build.build_id()
     verdict = await assess(live, now=datetime.now(UTC))
-    level = logger.warning if verdict.signal is Signal.FAIL else logger.info
+    # /log too: GitHub silent for hours is what the RUNBOOK's silent row looks for (CR 5).
+    level = logger.info if verdict.signal is Signal.UP else logger.warning
     level(f"drift check: {verdict.body}", extra={"build": live, "signal": verdict.signal.name})
     key = read_credential(CREDENTIAL_NAME, environ)
     if not key:

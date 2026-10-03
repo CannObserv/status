@@ -62,6 +62,20 @@ async def test_every_run_leaves_a_journal_line(seen, credentials, caplog):
     assert "1 commit ahead" in record.getMessage()
 
 
+@pytest.mark.parametrize(("signal", "level"), [(Signal.LOG, "WARNING"), (Signal.UP, "INFO")])
+async def test_anything_but_up_is_a_warning(seen, credentials, caplog, monkeypatch, signal, level):
+    """GitHub silent too: the RUNBOOK's silent row sends people to these lines (CR 5)."""
+
+    async def assess(live, *, now):
+        return Verdict(signal, "body")
+
+    monkeypatch.setattr(check_drift, "assess", assess)
+    with caplog.at_level("INFO"):
+        await check_drift.main(credentials)
+    (record,) = [r for r in caplog.records if r.name == check_drift.logger.name]
+    assert record.levelname == level
+
+
 async def test_without_a_key_it_still_runs_and_says_so(seen, tmp_path, caplog):
     (tmp_path / CREDENTIAL_NAME).write_text("\n")
     with caplog.at_level("WARNING"):

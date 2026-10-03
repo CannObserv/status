@@ -204,6 +204,11 @@ class TestPushes:
             Push(sha(2), NOW - timedelta(hours=3)),
         ]
 
+    def test_no_runs_at_all_is_the_tips_commit_date(self):
+        answer = compare(1)
+        answer["commits"][0] = commit(1, NOW - timedelta(hours=3))
+        assert pushes(answer, runs()) == [Push(sha(1), NOW - timedelta(hours=3))]
+
     def test_a_tip_with_no_run_landed_no_earlier_than_the_pushes_under_it(self):
         """An old ``[skip ci]`` commit pushed on top: never sorted before main's pushes (CR 10)."""
         answer = compare(1, 2)

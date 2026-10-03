@@ -129,7 +129,7 @@ def pushes(compare: Mapping, runs: Mapping) -> list[Push]:
     tip = compare["commits"][-1]
     if tip["sha"] not in landed:
         committed = _parse(tip["commit"]["committer"]["date"])
-        landed[tip["sha"]] = max(committed, *landed.values())
+        landed[tip["sha"]] = max([committed, *landed.values()])
     return sorted((Push(s, at) for s, at in landed.items()), key=lambda p: p.at)
 
 

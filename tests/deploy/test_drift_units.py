@@ -7,12 +7,15 @@ twin would watch nothing anyone alerts on (#13: dev is unwatched by design).
 """
 
 import re
+import stat
 from pathlib import Path
 
 from src.core.drift import CHECK_TIMEOUT_SECONDS
 from src.core.heartbeat import CREDENTIAL_NAME, PING_TIMEOUT_SECONDS
 
-DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEPLOY = REPO_ROOT / "deploy"
+LAUNCHER = REPO_ROOT / "scripts" / "drift.sh"
 SERVICE = DEPLOY / "status-drift.service"
 TIMER = DEPLOY / "status-drift.timer"
 
@@ -67,6 +70,12 @@ class TestTimer:
 
     def test_is_installable(self):
         assert values(TIMER, "WantedBy") == ["timers.target"]
+
+
+def test_the_launcher_exists_and_is_executable():
+    """Without the bit every run is 203/EXEC, and the check's silence names the timer (CR 13)."""
+    assert LAUNCHER.is_file()
+    assert LAUNCHER.stat().st_mode & stat.S_IXUSR
 
 
 def test_no_dev_twin():

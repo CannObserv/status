@@ -148,7 +148,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 Org account, free plan (#1, #13). Set up once:
 
-1. Create four checks: slugs **`co-status-sweep`**, **`notifier-reachable`** and **`co-status-api`**, **period 1 minute, grace 5 minutes**; and **`co-status-drift`** (#12), **period 1 hour, grace 2 hours**. That absorbs `OnBootSec=2min` and `TimeoutStartSec=120` without flapping. Create a check before deploying the sweep that pings it: until it exists, every ping to it answers 404 and the sweep warns on every pass.
+1. Create four checks: slugs **`co-status-sweep`**, **`notifier-reachable`** and **`co-status-api`**, **period 1 minute, grace 5 minutes**: that absorbs `OnBootSec=2min` and `TimeoutStartSec=120` without flapping. And **`co-status-drift`** (#12), **period 1 hour, grace 2 hours**: hourly runs, and GitHub refusing for a run or two. Create a check before deploying the sweep that pings it: until it exists, every ping to it answers 404 and the sweep warns on every pass.
 2. Attach the project's email and Slack integrations to all four. Never route them through notifier: it is one of the things being watched.
 3. Copy the project's **ping key** (project Settings → Ping key) into `/etc/status/hc-ping.key`, as under First-time setup. It is a credential: never in `.env`, a tracked file or a chat.
 4. Install the unit and confirm:

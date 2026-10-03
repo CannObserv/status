@@ -58,7 +58,7 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` â
 
 **The notifier API key is a systemd credential**, never an env var (D13): `LoadCredential=notifier-key:/etc/status/notifier-api{,-dev}.key` on the API and sweep units. Without it the API records check-ins and sends nothing; the sweep refuses to start.
 
-**The sweeps are the only thing watching for consumer silence; healthchecks.io watches the production one** (#1): checks `co-status-sweep` and `notifier-reachable`, key `LoadCredential=hc-ping-key:/etc/status/hc-ping.key` on `status-sweep.service` and `status-drift.service` only, with a `SetCredential=` fallback so a missing key never stops the sweep. Local check: `systemctl list-timers 'status-sweep*'`.
+**The sweeps are the only thing watching for consumer silence; healthchecks.io watches the production one** (#1): checks `co-status-sweep` and `notifier-reachable`, key `LoadCredential=hc-ping-key:/etc/status/hc-ping.key` on `status-sweep.service` and `status-drift.service` only, with a `SetCredential=` fallback so a missing key never stops the sweep. Local check: `systemctl list-timers 'status-sweep*' status-drift.timer`.
 
 **The production API is watched by that sweep, not `OnFailure=`** (#13): each pass asks `http://status:9000/ready` and pings `co-status-api`. Dev units are deliberately unwatched.
 

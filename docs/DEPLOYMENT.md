@@ -7,7 +7,8 @@ How code reaches the units, and how to tell what is running. Design and reasons:
 ```
 /srv/status/
   releases/<build>/   git archive of one pushed commit + its own .venv; read-only; REVISION
-  live -> releases/<build>   status.service, status-sweep.service, status-drift.service (:9000, database status)
+  live -> releases/<build>   status.service, status-sweep.service   (:9000, database status)
+                             status-drift.service (#12; GitHub and healthchecks.io only)
   dev  -> releases/<build>   status-dev.service, status-sweep-dev.service (:9001, status_dev)
 ```
 

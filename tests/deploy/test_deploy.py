@@ -1312,6 +1312,16 @@ class TestUnits:
         assert [c for c in world.calls() if "daemon-reload" in c]
         assert not [c for c in world.calls() if re.search(r"systemctl (re)?start ", c)]
 
+    def test_no_restart_puts_back_what_it_replaced_when_an_install_fails(self, world):
+        """CR 3: the copies kept aside go with the deploy; restore before dying.
+        Glob order under the C locale: status-sweep.service before status.service."""
+        world.push_deploy(V1)
+        (world.units / "status-sweep.service").write_text("installed\n")
+        result = world.run("--no-restart", FAKE_INSTALL_FAIL="status.service")
+        assert result.returncode == 1, result.stderr
+        assert "did not install" in result.stderr
+        assert world.installed("status-sweep.service") == "installed\n"
+
     def test_a_failed_verify_puts_back_exactly_the_units_it_replaced(self, world):
         """Switch back means the units too: what was installed, hand edits
         included, and nothing the failed build added."""

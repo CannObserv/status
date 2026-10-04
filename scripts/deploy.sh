@@ -571,8 +571,9 @@ deploy_target() {
   install_units "$target" || units_ok=0
 
   if ((!restart)); then
-    ((units_ok)) || die "$target linked to $build, but its units did not install (above)." \
-      "Fix that, rm $link, and retry (CR 17)."
+    # The copies kept aside go when the deploy does: put them back first (CR 3).
+    ((units_ok)) || { restore_units "$target"; die "$target linked to $build, but its units" \
+      "did not install (above); those it replaced are back. Fix that, rm $link, and retry (CR 17)."; }
     note "$target linked to $build; units not restarted (--no-restart)"
     return
   fi

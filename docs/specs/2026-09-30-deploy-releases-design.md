@@ -41,6 +41,7 @@ Two further problems share this cause:
 - A drift signal when `live` lags `origin/main` (broker#22 goal 4). **2026-10-02:** #12, an hourly timer and healthchecks.io's `co-status-drift` ([plan](../plans/2026-10-02-drift-check.md)).
 - `OnFailure=` (broker#22 Q10). **2026-10-01:** #13 watches the API from the production sweep instead ([plan](../plans/2026-10-01-watch-the-api.md)).
 - A root-owned deploy root (R2).
+- Installing the units. **2026-10-04:** #18, each target's units from its release, on every deploy ([plan](../plans/2026-10-04-deploy-installs-units.md), [DEPLOYMENT.md § Units](../DEPLOYMENT.md#units)).
 
 ## Design
 

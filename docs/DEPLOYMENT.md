@@ -35,6 +35,7 @@ The defaults are what production uses. The variables exist for the tests and for
 |---|---|---|
 | `STATUS_DEPLOY_ROOT` | `/srv/status` | releases and the `live`/`dev` links |
 | `STATUS_DEPLOY_ENV_DIR` | `/etc/status` | `.env` (live) and `dev.env` (dev) |
+| `STATUS_DEPLOY_ETC` | `/etc` | units in `systemd/system/`; host configs compared where the RUNBOOK installs them |
 | `STATUS_DEPLOY_KEEP` | `5` | releases kept besides the linked ones |
 | `STATUS_DEPLOY_VERIFY_SECONDS` | `60` | how long `/ready` and `/health` have to answer |
 | `STATUS_DEPLOY_SWEEP_WAIT_SECONDS` | `150` | how long to wait out a pass already running |
@@ -46,12 +47,12 @@ The defaults are what production uses. The variables exist for the tests and for
 **Order, per target, dev first**, once [the CI gate](#the-ci-gate) has passed for a live deploy:
 
 1. **Migrate** the target's database. This is skipped when the database is *ahead* of the release, which is what a rollback looks like.
-2. **Switch** the symlink (an atomic rename).
+2. **Switch** the symlink (an atomic rename), then **install the target's units** from the release, those that differ from their installed copies ([§ Units](#units)).
 3. **Restart** the API, then force one sweep pass. Any pass already running started on the old release, so the deploy first waits for it to end (up to 150 s): `systemctl start` on a oneshot mid-pass joins that pass rather than starting another. `systemctl start` then waits for the new pass to finish.
 4. **Verify.** The pass must exit 0, bounded by the unit's `TimeoutStartSec=120`. Then, within 60 s, `/ready` must be 200 and `/health` must report `build` equal to `<build>`.
-5. **On failure,** switch back, clear the unit's start limit, restart, and prove the old build the same way: its sweep pass, then its API. Exit 1 when the old build answers. Exit 4 when the target is left on a build that does not answer: the old build failed too, or there was nothing to switch back to. Either way the message names the step. The journal records the outcome only after that check. The migration stays applied. A deploy of the build a target already ran, or a first deploy, has nothing to switch back to.
+5. **On failure,** switch back, units included, clear the unit's start limit, restart, and prove the old build the same way: its sweep pass, then its API. Exit 1 when the old build answers. Exit 4 when the target is left on a build that does not answer: the old build failed too, or there was nothing to switch back to. Either way the message names the step. The journal records the outcome only after that check. The migration stays applied. A deploy of the build a target already ran, or a first deploy, has nothing to switch back to.
 
-A failure on dev stops the deploy before live is touched. A failure on live leaves dev on the new build, so redeploy dev from the old build if that matters. The deploy keeps the 5 most recently deployed releases, plus whatever `live` and `dev` point at. Every switch and rollback is logged: `journalctl -t status-deploy`.
+A failure on dev stops the deploy before live is touched. A failure on live leaves dev on the new build and its units, so redeploy dev from the old build if that matters. The deploy keeps the 5 most recently deployed releases, plus whatever `live` and `dev` point at. Every switch and rollback is logged: `journalctl -t status-deploy`.
 
 ## The CI gate
 
@@ -87,7 +88,21 @@ A rollback goes through [the CI gate](#the-ci-gate) like any live deploy. A buil
 
 **Pushed is not deployed, and an hourly check says so** ([#12](https://github.com/CannObserv/status/issues/12), [monitors.md § Who watches co-status](reference/monitors.md#who-watches-co-status)). `status-drift.timer` compares live's `REVISION` with `origin/main` on GitHub and fails healthchecks.io's `co-status-drift` once code (not docs or tests) has waited 8 h since its push. After a deploy the check clears on its next run, within the hour; `sudo systemctl start status-drift` clears it now.
 
-**Units are not deployed.** `deploy.sh` switches code; unit files reach `/etc/systemd/system/` only by hand ([#18](https://github.com/CannObserv/status/issues/18)). A unit edit, `status-drift.*` included, is a `sudo cp` and `daemon-reload` ([RUNBOOK](RUNBOOK.md)).
+Units cannot drift this way: each deploy installs them ([§ Units](#units)).
+
+## Units
+
+**A unit edit ships like code** ([#18](https://github.com/CannObserv/status/issues/18)): merge it, `scripts/deploy.sh`. Until #18 units went in by a hand-run `sudo cp`, and on 2026-10-02 four installed copies differed from the repo with nothing saying so.
+
+- **Each target installs its own units from the release it switches to**, right after the switch and before the restart. The restart and the forced sweep pass then run what was installed, so verification covers the units too. **Whose is by name:** `<name>-dev.service` and `<name>-dev.timer` are dev's (`status-dev`, `status-sweep-dev`); every other `deploy/*.service` and `*.timer` is live's (`status`, `status-sweep`, `status-drift`). `test_deploy.py` holds the repo to it: a unit runs `/srv/status/dev` exactly when its name ends `-dev`.
+- **Only what differs.** On most deploys nothing does: no `sudo`, no `daemon-reload`. Otherwise `sudo install -m 644`, one `daemon-reload`, and `systemctl try-restart` for a changed timer so it re-arms. The deploy names each unit it installed, and the journal has it: `live units from <build>: …`.
+- **A new unit is installed, never enabled.** Enabling is a decision: #12's timer needed its healthchecks.io check first. The deploy prints the `sudo systemctl enable --now <unit>` it needs.
+- **`--dev origin/<branch>` rehearses a unit edit** as it rehearses a migration: dev's units come from the branch. Live's stay on live's release.
+- **On a failed verify, the units switch back with the link**: the installed copies the deploy replaced go back, hand edits included, and units it added are removed, then `daemon-reload` (`<target> units restored` in the journal). A unit that fails to install fails the target the same way.
+- **A rollback installs the old release's units.** Units always match the build their target runs. Units the old release lacks stay installed: a build from before #12 leaves `status-drift.*` in place, failing `203/EXEC` until live is past it ([RUNBOOK](RUNBOOK.md)).
+- **A hand edit in `/etc/systemd/system/` lasts until the next deploy that changes that unit**, which replaces it and names it. An emergency edit belongs in `deploy/` too.
+- **By hand still:** enabling a new unit; `sudo systemctl reenable <unit>` after its `[Install]` section changes; and retiring one (`disable --now`, then remove the file and `daemon-reload`), since a unit gone from `deploy/` stays installed.
+- **Host configs are compared, never installed.** Sysctl, earlyoom, the slice and Postgres drop-ins and needrestart change rarely, and installing one means `sysctl -p`, an earlyoom restart or a slice reload. After a live deploy, each one under `deploy/` that differs from its installed copy, or is missing, is a warning naming both paths; install it as the [RUNBOOK](RUNBOOK.md) First-time setup does. `HOST_CONFIGS` in `deploy.sh` maps each to its path, and `test_deploy.py` holds every file under `deploy/` to being a unit or one of them.
 
 ## The schema check
 

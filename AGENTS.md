@@ -62,7 +62,7 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` â
 
 **The production API is watched by that sweep, not `OnFailure=`** (#13): each pass asks `http://status:9000/ready` and pings `co-status-api`. Dev units are deliberately unwatched.
 
-**What is deployed is checked hourly** (#12): `status-drift.timer` pings `co-status-drift`, `/fail` once live has lagged `origin/main` in code (not docs or tests) for 8 h since the push. Units are not installed by `deploy.sh` (#18): a unit edit is a `sudo cp` (RUNBOOK).
+**What is deployed is checked hourly** (#12): `status-drift.timer` pings `co-status-drift`, `/fail` once live has lagged `origin/main` in code (not docs or tests) for 8 h since the push. **Units ship with their release** (#18): each target's step installs that target's units that differ (`*-dev` are dev's), and a switch back restores them; new units are never enabled. Host configs under `deploy/` are compared after a live deploy, never installed.
 
 Setup, routine ops and the cutover: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 

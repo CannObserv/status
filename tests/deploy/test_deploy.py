@@ -17,6 +17,10 @@ What the script must hold (spec R2–R4, R6, R9, R13):
 - **A database ahead of the release is not migrated.** That is a rollback.
 - **Live needs green CI** (#11): the commit's push run on main, every job
   ``success``, asked of GitHub before anything is built. Dev is never gated.
+- **Units follow their target's release** (#18): each target installs its own
+  units from the release it switches to, only those that differ, and a switch
+  back puts the installed copies back. Host configs are compared, never
+  installed.
 """
 
 import fcntl
@@ -59,6 +63,14 @@ exit 0
 
 STUB_SUDO = r"""#!/usr/bin/env bash
 echo "sudo $*" >> "$FAKE_LOG"
+# Files are real, under STATUS_DEPLOY_ETC; FAKE_INSTALL_FAIL fails installing
+# that unit name (#18).
+case "$1" in
+  install)
+    [[ -n "${FAKE_INSTALL_FAIL:-}" && "${@: -1}" == */"$FAKE_INSTALL_FAIL" ]] && exit 1
+    exec "$@" ;;
+  rm) exec "$@" ;;
+esac
 # FAKE_SWEEP_FAIL fails that unit's pass, but only while its target runs
 # FAKE_SWEEP_FAIL_BUILD when that is set: a broken build, not a broken unit (CR 24).
 if [[ "$1" == systemctl && "$2" == start && "$3" == "${FAKE_SWEEP_FAIL:-none}" ]]; then
@@ -198,8 +210,11 @@ class World:
         self.log = tmp / "calls.log"
         self.stubs = tmp / "stubs"
         self.ci = tmp / "ci"
+        self.sysetc = tmp / "sysetc"  # /etc, for units and host configs (#18)
+        self.units = self.sysetc / "systemd" / "system"
         for d in (self.root, self.etc, self.stubs, self.ci):
             d.mkdir()
+        self.units.mkdir(parents=True)
         self.log.touch()
 
         git(tmp, "init", "-q", "--bare", "-b", "main", str(self.origin))
@@ -240,6 +255,7 @@ class World:
             "HOME": str(self.tmp),
             "STATUS_DEPLOY_ROOT": str(self.root),
             "STATUS_DEPLOY_ENV_DIR": str(self.etc),
+            "STATUS_DEPLOY_ETC": str(self.sysetc),
             "STATUS_DEPLOY_VERIFY_SECONDS": "2",
             "STATUS_BIND_HOST": "127.0.0.1",
             "FAKE_LOG": str(self.log),
@@ -261,6 +277,38 @@ class World:
 
     def build(self, sha: str) -> str:
         return git(self.checkout, "rev-parse", "--short=12", sha)
+
+    def push_deploy(self, files: dict[str, str | None], branch: str = "main") -> str:
+        """Commit ``deploy/`` files (None deletes one) on top of origin's
+        ``branch`` and push it. The checkout's main holds an unpushed commit,
+        so this happens in a clone of its own. A main commit joins ``self.main``."""
+        pusher = self.tmp / "pusher"
+        if not pusher.exists():
+            git(self.tmp, "clone", "-q", str(self.origin), str(pusher))
+            git(pusher, "config", "user.email", "t@example.com")
+            git(pusher, "config", "user.name", "t")
+        git(pusher, "fetch", "-q", "origin")
+        git(pusher, "switch", "-q", "-C", branch, f"origin/{branch}")
+        for name, body in files.items():
+            path = pusher / "deploy" / name
+            if body is None:
+                path.unlink()
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body)
+        git(pusher, "add", "-A", "deploy")
+        git(pusher, "commit", "-q", "--allow-empty", "-m", f"deploy/ on {branch}")
+        git(pusher, "push", "-q", "origin", branch)
+        git(self.checkout, "fetch", "-q", "origin")
+        sha = git(pusher, "rev-parse", "HEAD")
+        if branch == "main":
+            self.main.append(sha)
+        return sha
+
+    def installed(self, name: str) -> str | None:
+        """An installed unit's text, or None."""
+        path = self.units / name
+        return path.read_text() if path.exists() else None
 
     def target(self, name: str) -> str | None:
         link = self.root / name
@@ -1116,3 +1164,286 @@ class TestOperation:
     def test_root_is_refused(self):
         """Releases belong to exedev, the units' user (R13); root would own them."""
         assert '"$(id -u)" -eq 0' in DEPLOY.read_text()
+
+
+V1 = {
+    "status.service": "[Service]\n# live API v1\n",
+    "status-sweep.service": "[Service]\n# live sweep v1\n",
+    "status-sweep.timer": "[Timer]\n# live timer v1\n",
+    "status-dev.service": "[Service]\n# dev API v1\n",
+    "status-sweep-dev.timer": "[Timer]\n# dev timer v1\n",
+}
+
+
+def installs(calls: list[str]) -> list[str]:
+    """The unit names `sudo install` wrote, in order."""
+    return [Path(c.split()[-1]).name for c in calls if c.startswith("sudo install ")]
+
+
+class TestUnits:
+    """#18: units reach /etc/systemd/system on deploy, with the release they run."""
+
+    def test_each_target_installs_its_units_from_its_release(self, world):
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        for name, body in V1.items():
+            assert world.installed(name) == body, name
+            assert (world.units / name).stat().st_mode & 0o777 == 0o644
+
+    def test_units_switch_with_the_link_before_the_restart(self, world):
+        """Verification then covers the units too: the restart and the forced
+        pass run what was just installed."""
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        calls = world.calls()
+        for target, unit, api in (
+            ("dev", "status-dev.service", "status-dev"),
+            ("live", "status.service", "status"),
+        ):
+            switched = index_of(calls, f"logger -t status-deploy {target} -> ")
+            installed = index_of(calls, f"/{unit}")
+            reload = next(i for i, c in enumerate(calls) if i > installed and "daemon-reload" in c)
+            assert switched < installed < reload < calls.index(f"sudo systemctl restart {api}")
+
+    def test_dev_alone_installs_dev_units_alone(self, world):
+        world.push_deploy(V1)
+        assert_ok(world.run("--dev"))
+        assert sorted(installs(world.calls())) == ["status-dev.service", "status-sweep-dev.timer"]
+        assert world.installed("status.service") is None
+
+    def test_a_branch_on_dev_rehearses_its_unit_edit_and_live_keeps_its_own(self, world):
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        world.push_deploy(
+            {"status-dev.service": "dev v2\n", "status.service": "live v2\n"}, "feature"
+        )
+        assert_ok(world.run("--dev", "origin/feature"))
+        assert world.installed("status-dev.service") == "dev v2\n"
+        assert world.installed("status.service") == V1["status.service"]
+
+    def test_unchanged_units_need_neither_sudo_nor_a_reload(self, world):
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        world.push_deploy({"status.service": V1["status.service"]})  # a commit, units as they were
+        world.push_deploy({})
+        world.reset_log()
+        assert_ok(world.run())
+        assert not installs(world.calls())
+        assert not [c for c in world.calls() if "daemon-reload" in c]
+
+    def test_only_the_units_that_differ_are_installed_with_one_reload_per_target(self, world):
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        world.push_deploy({"status.service": "live API v2\n"})
+        world.reset_log()
+        assert_ok(world.run())
+        assert installs(world.calls()) == ["status.service"]
+        assert len([c for c in world.calls() if "daemon-reload" in c]) == 1
+        assert world.installed("status.service") == "live API v2\n"
+
+    def test_a_changed_timer_is_restarted_so_it_rearms(self, world):
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        world.push_deploy({"status-sweep.timer": "[Timer]\n# v2\n"})
+        world.reset_log()
+        assert_ok(world.run())
+        try_restarts = [c for c in world.calls() if "try-restart" in c]
+        assert try_restarts == ["sudo systemctl try-restart status-sweep.timer"]
+
+    def test_a_new_unit_is_installed_and_named_with_how_to_enable_it(self, world):
+        """Enabling is a decision (#12: its healthchecks.io check comes first)."""
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        world.push_deploy({"status-drift.timer": "[Timer]\n"})
+        world.reset_log()
+        result = world.run()
+        assert_ok(result)
+        assert world.installed("status-drift.timer") == "[Timer]\n"
+        assert "sudo systemctl enable --now status-drift.timer" in result.stderr
+        assert not [c for c in world.calls() if " enable " in c]
+        logged = [c for c in world.calls() if c.startswith("logger ") and "units" in c]
+        assert any("status-drift.timer" in c for c in logged)
+
+    def test_a_hand_edited_unit_is_replaced_and_named(self, world):
+        world.push_deploy(V1)
+        (world.units / "status.service").write_text("edited by hand\n")
+        result = world.run()
+        assert_ok(result)
+        assert world.installed("status.service") == V1["status.service"]
+        assert "status.service" in result.stderr
+
+    def test_a_unit_the_release_lacks_is_left_alone(self, world):
+        """A rollback to a build from before a unit existed (#12's 203/EXEC)."""
+        (world.units / "status-drift.service").write_text("installed\n")
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        assert world.installed("status-drift.service") == "installed\n"
+
+    def test_a_rollback_installs_the_older_units(self, world):
+        old = world.push_deploy(V1)
+        world.push_deploy({"status.service": "v2\n", "status-drift.timer": "[Timer]\n"})
+        assert_ok(world.run())
+        assert world.installed("status.service") == "v2\n"
+        assert_ok(world.run(old))
+        assert world.installed("status.service") == V1["status.service"]
+        assert world.installed("status-drift.timer") == "[Timer]\n", "the release lacks it"
+
+    def test_no_restart_installs_and_reloads_but_starts_nothing(self, world):
+        """First-time setup: no `sudo cp` list, only the `enable --now` lines."""
+        world.push_deploy(V1)
+        assert_ok(world.run("--no-restart"))
+        assert all(world.installed(name) == body for name, body in V1.items())
+        assert [c for c in world.calls() if "daemon-reload" in c]
+        assert not [c for c in world.calls() if re.search(r"systemctl (re)?start ", c)]
+
+    def test_a_failed_verify_puts_back_exactly_the_units_it_replaced(self, world):
+        """Switch back means the units too: what was installed, hand edits
+        included, and nothing the failed build added."""
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        (world.units / "status.service").write_text("edited by hand\n")
+        world.push_deploy({"status.service": "v2\n", "status-drift.timer": "[Timer]\n"})
+        world.reset_log()
+
+        result = world.run(FAKE_STALE_PORT="9000")
+
+        assert result.returncode == 1, result.stderr
+        assert world.installed("status.service") == "edited by hand\n"
+        assert world.installed("status-drift.timer") is None
+        assert world.installed("status-dev.service") == V1["status-dev.service"]
+        calls = world.calls()
+        restored = index_of(calls, "logger -t status-deploy live units restored")
+        reloads = [i for i, c in enumerate(calls) if "daemon-reload" in c]
+        assert reloads[-1] < restored
+        assert reloads[-1] < len(calls) - 1 - calls[::-1].index("sudo systemctl restart status")
+
+    def test_a_failed_live_leaves_dev_on_its_new_units(self, world):
+        """As the link: a failure on live leaves dev on the new build."""
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        world.push_deploy({"status-dev.service": "dev v2\n"})
+        assert world.run(FAKE_STALE_PORT="9000").returncode == 1
+        assert world.installed("status-dev.service") == "dev v2\n"
+
+    def test_the_copies_kept_for_a_switch_back_are_removed(self, world):
+        tmp = world.tmp / "tmpdir"
+        tmp.mkdir()
+        world.push_deploy(V1)
+        (world.units / "status.service").write_text("edited by hand\n")
+        assert_ok(world.run(TMPDIR=str(tmp)))
+        assert not list(tmp.iterdir())
+
+    def test_a_failed_install_switches_back(self, world):
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        previous = world.target("live")
+        world.push_deploy({"status.service": "v2\n", "status-sweep.service": "v2\n"})
+
+        result = world.run(FAKE_INSTALL_FAIL="status-sweep.service")
+
+        assert result.returncode == 1, result.stderr
+        assert "status-sweep.service" in result.stderr
+        assert world.target("live") == previous
+        assert world.installed("status.service") == V1["status.service"]
+        assert world.installed("status-sweep.service") == V1["status-sweep.service"]
+
+
+HOST_V1 = {
+    "earlyoom.default": "earlyoom v1\n",
+    "system.slice.d/10-memory-protection.conf": "slice v1\n",
+}
+
+
+class TestHostConfigs:
+    """#18: compared after a live deploy, never installed, never a failure."""
+
+    def install_host(self, world, rel: str, body: str) -> Path:
+        path = world.sysetc / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+        return path
+
+    def test_a_differing_host_config_is_a_warning_naming_both_paths(self, world):
+        earlyoom = self.install_host(world, "default/earlyoom", "older\n")
+        self.install_host(
+            world, "systemd/system/system.slice.d/10-memory-protection.conf", "slice v1\n"
+        )
+        world.push_deploy(HOST_V1)
+        result = world.run()
+        assert_ok(result)
+        assert "deploy/earlyoom.default" in result.stderr
+        assert str(earlyoom) in result.stderr
+        assert "10-memory-protection.conf" not in result.stderr, "that one is the same"
+        assert earlyoom.read_text() == "older\n", "never installed"
+
+    def test_a_missing_host_config_is_a_warning(self, world):
+        world.push_deploy(HOST_V1)
+        result = world.run()
+        assert_ok(result)
+        assert "deploy/earlyoom.default" in result.stderr
+        assert "not installed" in result.stderr
+
+    def test_dev_alone_compares_nothing(self, world):
+        world.push_deploy(HOST_V1)
+        result = world.run("--dev")
+        assert_ok(result)
+        assert "earlyoom" not in result.stderr
+
+    def test_a_host_config_is_never_installed_as_a_unit(self, world):
+        world.push_deploy(HOST_V1)
+        assert_ok(world.run())
+        assert not installs(world.calls())
+
+
+def host_configs() -> dict[str, str]:
+    """deploy.sh's HOST_CONFIGS: each deploy/ file and where it is installed."""
+    body = re.search(r"^HOST_CONFIGS=\((.*?)^\)", DEPLOY.read_text(), re.M | re.S)
+    assert body, "HOST_CONFIGS=( ... ) in deploy.sh"
+    pairs = re.findall(r'"([^"=]+)=([^"]+)"', body.group(1))
+    return dict(pairs)
+
+
+class TestWhichUnitsAreWhose:
+    """#18: deploy.sh tells a target's units by name; the repo keeps to it."""
+
+    REPO_DEPLOY = REPO_ROOT / "deploy"
+
+    def root_of(self, unit: Path) -> str:
+        (line,) = [ln for ln in unit.read_text().splitlines() if ln.startswith("WorkingDirectory=")]
+        return line.split("=", 1)[1]
+
+    def test_a_service_runs_dev_exactly_when_its_name_ends_dev(self):
+        services = sorted(self.REPO_DEPLOY.glob("*.service"))
+        assert services
+        for unit in services:
+            want = "/srv/status/dev" if unit.stem.endswith("-dev") else "/srv/status/live"
+            assert self.root_of(unit) == want, unit.name
+
+    def test_a_timer_belongs_to_its_services_target(self):
+        for timer in sorted(self.REPO_DEPLOY.glob("*.timer")):
+            (line,) = [ln for ln in timer.read_text().splitlines() if ln.startswith("Unit=")]
+            service = self.REPO_DEPLOY / line.split("=", 1)[1]
+            assert service.is_file(), timer.name
+            assert service.stem.endswith("-dev") == timer.stem.endswith("-dev"), timer.name
+
+    def test_every_file_under_deploy_is_a_unit_or_a_host_config(self):
+        """A new file there is installed or compared, never forgotten."""
+        configs = host_configs()
+        for path in sorted(p for p in self.REPO_DEPLOY.rglob("*") if p.is_file()):
+            rel = path.relative_to(self.REPO_DEPLOY).as_posix()
+            is_unit = "/" not in rel and path.suffix in (".service", ".timer")
+            assert is_unit != (rel in configs), rel
+        for rel in configs:
+            assert (self.REPO_DEPLOY / rel).is_file(), f"HOST_CONFIGS names {rel}, not in deploy/"
+
+    def test_the_runbook_installs_each_host_config_where_deploy_compares_it(self):
+        """The warning points at the RUNBOOK, so the two must agree."""
+        runbook = (REPO_ROOT / "docs" / "RUNBOOK.md").read_text()
+        # The drop-ins go in by one loop, each at its own path under the unit dir.
+        drop_in_loop = '"/etc/systemd/system/$f"' in runbook
+        for rel, dest in host_configs().items():
+            assert rel in runbook, rel
+            if dest == f"systemd/system/{rel}":
+                assert drop_in_loop, dest
+            else:
+                assert f"/etc/{dest}" in runbook or f"/etc/{Path(dest).parent}/" in runbook, dest

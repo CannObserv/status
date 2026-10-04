@@ -23,13 +23,20 @@
 #
 #   1. migrate — skipped when the database is ahead of the release (a rollback;
 #      migrations are expand-only, R7)
-#   2. switch the symlink (rename(2), atomic)
+#   2. switch the symlink (rename(2), atomic), then install the target's units
+#      from the release, those that differ from their installed copies (#18)
 #   3. restart the API; force one sweep pass (`systemctl start` on the oneshot
 #      waits for it)
 #   4. verify: the pass exited 0, /ready is 200, /health names this build
-#   5. on failure, switch back, restart, and stop. The migration stays (R7).
+#   5. on failure, switch back, units too, restart, and stop. The migration
+#      stays (R7).
 #
-# Runs as exedev, the units' user; sudo for systemctl only. Exits 0 when every
+# After a live deploy, the host configs under deploy/ (sysctl, earlyoom, the
+# slice drop-ins, needrestart) are compared with their installed copies; a
+# difference is a warning, never installed (#18).
+#
+# Runs as exedev, the units' user; sudo for systemctl and for installing units
+# only. Exits 0 when every
 # target verified, 4 when a target is left on a build that did not answer (no
 # rollback possible, or the old build failed too), 1 otherwise.
 set -euo pipefail
@@ -47,6 +54,20 @@ CI_POLL_SECONDS="${STATUS_DEPLOY_CI_POLL_SECONDS:-30}"
 # must pass too, named here or not (CR 6).
 CI_JOBS=(lint test migrations)
 GITHUB_API="https://api.github.com/repos/CannObserv/status"
+# /etc: the units go in systemd/system/, and the host configs are compared
+# where the RUNBOOK installs them (#18).
+ETC="${STATUS_DEPLOY_ETC:-/etc}"
+UNIT_DIR="$ETC/systemd/system"
+# deploy/<file>=<path under /etc>. tests/deploy holds every file under deploy/
+# to being a unit or one of these, and the RUNBOOK to installing it there.
+HOST_CONFIGS=(
+  "99-status-memory.conf=sysctl.d/99-status-memory.conf"
+  "earlyoom.default=default/earlyoom"
+  "needrestart.conf.d/status.conf=needrestart/conf.d/status.conf"
+  "system.slice.d/10-memory-protection.conf=systemd/system/system.slice.d/10-memory-protection.conf"
+  "system-postgresql.slice.d/10-memory-protection.conf=systemd/system/system-postgresql.slice.d/10-memory-protection.conf"
+  "postgresql@16-main.service.d/10-memory.conf=systemd/system/postgresql@16-main.service.d/10-memory.conf"
+)
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 note() { echo "deploy: $*" >&2; }
@@ -100,6 +121,12 @@ git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 ||
 
 exec 9>"$ROOT/.deploy.lock"
 flock -n 9 || die "another deploy is running (it holds $ROOT/.deploy.lock)"
+
+# The installed units each target replaces, kept for a switch back (#18).
+backup="$(mktemp -d "${TMPDIR:-/tmp}/status-deploy.XXXXXX")"
+# `|| :`: under set -e a failing command in the trap would replace the exit
+# status, turning a verified deploy into 1 or a dead target's 4 into 1.
+trap 'rm -rf "$backup" || :' EXIT
 
 # The sweeps resolve their link on every pass, so relinking a running target
 # puts the build live within 60 s, unverified, whatever this flag says (CR 4).
@@ -408,6 +435,103 @@ wait_for_idle_sweep() {
   done
 }
 
+# --- units (#18) -------------------------------------------------------------
+
+# A target's units in the release, by name: <name>-dev.{service,timer} are
+# dev's, every other deploy/*.{service,timer} is live's. tests/deploy holds the
+# repo to the rule: a unit's release root is /srv/status/dev exactly when its
+# name ends -dev.
+units_of() { # <target>
+  local path name
+  for path in "$release"/deploy/*.service "$release"/deploy/*.timer; do
+    [[ -f "$path" ]] || continue
+    name="$(basename "$path")"
+    if [[ "${name%.*}" == *-dev ]]; then
+      [[ "$1" == dev ]] || continue
+    else
+      [[ "$1" == live ]] || continue
+    fi
+    echo "$name"
+  done
+  return 0
+}
+
+# Installs the target's units that differ from their installed copies, after
+# copying each copy aside for restore_units. One daemon-reload, and a changed
+# timer is restarted so it re-arms on its new schedule. Units the release
+# lacks stay as they are; new ones are installed, never enabled: enabling is a
+# decision (#12 needed its healthchecks.io check first).
+install_units() { # <target>
+  local target="$1" name unit changed=() added=() timers=()
+  mkdir -p "$backup/$target"
+  : >"$backup/$target.added"
+  while read -r name; do
+    unit="$UNIT_DIR/$name"
+    cmp -s "$release/deploy/$name" "$unit" && continue
+    if [[ -e "$unit" ]]; then
+      cp "$unit" "$backup/$target/$name"
+      changed+=("$name")
+    else
+      echo "$name" >>"$backup/$target.added"
+      added+=("$name")
+    fi
+    [[ "$name" != *.timer ]] || timers+=("$name")
+    sudo install -m 644 "$release/deploy/$name" "$unit" ||
+      { note "$target: installing $name in $UNIT_DIR failed"; return 1; }
+  done < <(units_of "$target")
+  ((${#changed[@]} + ${#added[@]})) || return 0
+  sudo systemctl daemon-reload || { note "$target: systemctl daemon-reload failed"; return 1; }
+  for name in "${timers[@]}"; do
+    sudo systemctl try-restart "$name" || note "$target: systemctl try-restart $name failed"
+  done
+  local list="${changed[*]}${added[*]:+ ${added[*]} (new)}"
+  note "$target units installed from $build: ${list# }"
+  logger -t status-deploy "$target units from $build: ${list# }" || true
+  for name in "${added[@]}"; do
+    note "$name is new here and not enabled. If it should run: sudo systemctl enable --now $name"
+  done
+}
+
+# Switch back, for units: the copies install_units replaced go back, and what
+# it added is removed. A failure is a note: the rollback still proves the old
+# build, and says whether it answers.
+restore_units() { # <target>
+  local target="$1" path name timers=() any=0
+  for path in "$backup/$target"/*; do
+    [[ -f "$path" ]] || continue
+    name="$(basename "$path")"
+    sudo install -m 644 "$path" "$UNIT_DIR/$name" || note "$target: restoring $name failed: $path"
+    [[ "$name" != *.timer ]] || timers+=("$name")
+    any=1
+  done
+  while read -r name; do
+    sudo rm -f "$UNIT_DIR/$name" || note "$target: removing $UNIT_DIR/$name failed"
+    any=1
+  done <"$backup/$target.added"
+  ((any)) || return 0
+  sudo systemctl daemon-reload || note "$target: systemctl daemon-reload failed"
+  for name in "${timers[@]}"; do
+    sudo systemctl try-restart "$name" || note "$target: systemctl try-restart $name failed"
+  done
+  logger -t status-deploy "$target units restored" || true
+}
+
+# Host configs change rarely, and installing one means sysctl -p, an earlyoom
+# restart or a slice reload: by hand. A difference is a warning (#18).
+compare_host_configs() {
+  local entry rel dest
+  for entry in "${HOST_CONFIGS[@]}"; do
+    rel="${entry%%=*}" dest="$ETC/${entry#*=}"
+    [[ -f "$release/deploy/$rel" ]] || continue
+    if [[ ! -e "$dest" ]]; then
+      note "host config deploy/$rel is not installed at $dest; install it by hand (docs/RUNBOOK.md § First-time setup)"
+    elif ! cmp -s "$release/deploy/$rel" "$dest"; then
+      note "host config deploy/$rel differs from $dest; install it by hand (docs/RUNBOOK.md § First-time setup)"
+    fi
+  done
+  return 0
+}
+
 restart_and_verify() {
   local api="$1" sweep="$2" port="$3"
   # The deploy that fixes a crash loop is the one that finds the unit past its
@@ -436,12 +560,16 @@ deploy_target() {
   migrate "$target"
   swap "$link" "releases/$build"
   logger -t status-deploy "$target -> $build (was ${previous_link:-nothing})" || true
+  local units_ok=1
+  install_units "$target" || units_ok=0
 
   if ((!restart)); then
+    ((units_ok)) || die "$target linked to $build, but its units did not install (above)." \
+      "Fix that, rm $link, and retry (CR 17)."
     note "$target linked to $build; units not restarted (--no-restart)"
     return
   fi
-  if restart_and_verify "$api" "$sweep" "$port"; then
+  if ((units_ok)) && restart_and_verify "$api" "$sweep" "$port"; then
     note "$target is on $build"
     return
   fi
@@ -451,6 +579,7 @@ deploy_target() {
   local old
   old="$(served_build "$previous_link")"
   swap "$link" "$previous_link"
+  restore_units "$target"
   # A crash-looping release can exhaust the unit's StartLimitBurst, and systemd
   # then refuses this restart too. Clear it, then prove the old build as the new
   # one was proved: its API and a sweep pass, since a migration that was not
@@ -469,6 +598,9 @@ deploy_target() {
 for target in "${targets[@]}"; do
   deploy_target "$target"
 done
+if ((live)); then
+  compare_host_configs
+fi
 
 # --- prune -----------------------------------------------------------------
 

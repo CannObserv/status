@@ -1,7 +1,7 @@
 ---
 title: Drift check — alert when live lags origin/main (#12)
 date: 2026-10-02
-status: in progress
+status: done
 ---
 
 # Drift check
@@ -82,6 +82,12 @@ The ping helper moves out of `Heartbeat` into `src/core/heartbeat.py::ping` with
    - the first run pings up with the correct body;
    - a test `/fail` reaches the channels;
    - a test `/log` neither changes the check's state nor resets its period. The design rests on that: if `/log` reset the period, a GitHub outage would never go silent.
+
+   **Done 2026-10-04.**
+   - `8dca9e568966` live and dev at 01:37Z, through the CI gate.
+   - Units installed and timer enabled. The first run, at 01:37:14Z, said `live 8dca9e568966 is main` and its ping was answered 200.
+   - Test pings, all answered `OK`: `/fail` at 01:37:37Z, `/log` at 01:39:38Z, then a real run at 01:41:39Z.
+   - healthchecks.io's docs: `/log` leaves the status as it is. Its source (`hc/api/models.py`, `Check.ping`): only `success` and `fail` set `last_ping`, so `/log` does not reset the period either.
 
 ## Open questions / risks
 

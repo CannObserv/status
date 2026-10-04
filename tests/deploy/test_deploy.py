@@ -1070,8 +1070,9 @@ class TestVerification:
 
 
 class TestOperation:
-    def test_no_restart_links_and_migrates_but_touches_no_unit(self, world):
-        """The cutover's first step: the units still point at the checkout."""
+    def test_no_restart_links_and_migrates_but_restarts_no_unit(self, world):
+        """First-time setup: nothing is enabled yet. A release with units
+        installs them (#18): TestUnits, test_no_restart_installs_and_reloads_*."""
         assert_ok(world.run("--no-restart"))
         assert world.target("live") == f"releases/{world.build(world.main[-1])}"
         assert not [c for c in world.calls() if c.startswith(("sudo ", "curl http://"))]

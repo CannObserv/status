@@ -484,8 +484,12 @@ install_units() { # <target>
   done < <(units_of "$target")
   ((${#changed[@]} + ${#added[@]})) || return 0
   sudo systemctl daemon-reload || { note "$target: systemctl daemon-reload failed"; return 1; }
+  # A timer that will not restart is a schedule that no longer runs, and
+  # status-sweep.timer is the only thing watching for silence: fail the target,
+  # never verify past it (CR 1).
   for name in "${timers[@]}"; do
-    sudo systemctl try-restart "$name" || note "$target: systemctl try-restart $name failed"
+    sudo systemctl try-restart "$name" ||
+      { note "$target: systemctl try-restart $name failed: systemctl status $name"; return 1; }
   done
   local list="${changed[*]}${added[*]:+ ${added[*]} (new)}"
   note "$target units installed from $build: ${list# }"

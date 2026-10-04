@@ -64,7 +64,8 @@ exit 0
 STUB_SUDO = r"""#!/usr/bin/env bash
 echo "sudo $*" >> "$FAKE_LOG"
 # Files are real, under STATUS_DEPLOY_ETC; FAKE_INSTALL_FAIL fails installing
-# that unit name (#18).
+# that unit name, FAKE_TRY_RESTART_FAIL restarting it (#18).
+[[ "$*" == "systemctl try-restart ${FAKE_TRY_RESTART_FAIL:-none}" ]] && exit 1
 case "$1" in
   install)
     [[ -n "${FAKE_INSTALL_FAIL:-}" && "${@: -1}" == */"$FAKE_INSTALL_FAIL" ]] && exit 1
@@ -1249,6 +1250,21 @@ class TestUnits:
         assert_ok(world.run())
         try_restarts = [c for c in world.calls() if "try-restart" in c]
         assert try_restarts == ["sudo systemctl try-restart status-sweep.timer"]
+
+    def test_a_timer_that_will_not_restart_fails_the_target_and_switches_back(self, world):
+        """CR 1: a broken status-sweep.timer is nothing watching for silence;
+        the deploy must not call that verified."""
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        previous = world.target("live")
+        world.push_deploy({"status-sweep.timer": "[Timer]\n# broken\n"})
+
+        result = world.run(FAKE_TRY_RESTART_FAIL="status-sweep.timer")
+
+        assert result.returncode == 1, result.stderr
+        assert "try-restart status-sweep.timer" in result.stderr
+        assert world.target("live") == previous
+        assert world.installed("status-sweep.timer") == V1["status-sweep.timer"]
 
     def test_a_new_unit_is_installed_and_named_with_how_to_enable_it(self, world):
         """Enabling is a decision (#12: its healthchecks.io check comes first)."""

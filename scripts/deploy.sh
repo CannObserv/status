@@ -491,7 +491,8 @@ install_units() { # <target>
     sudo systemctl try-restart "$name" ||
       { note "$target: systemctl try-restart $name failed: systemctl status $name"; return 1; }
   done
-  local list="${changed[*]}${added[*]:+ ${added[*]} (new)}"
+  local list="${changed[*]}"
+  for name in "${added[@]}"; do list+=" $name (new)"; done
   note "$target units installed from $build: ${list# }"
   logger -t status-deploy "$target units from $build: ${list# }" || true
   for name in "${added[@]}"; do

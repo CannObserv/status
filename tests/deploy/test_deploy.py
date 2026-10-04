@@ -1278,7 +1278,21 @@ class TestUnits:
         assert "sudo systemctl enable --now status-drift.timer" in result.stderr
         assert not [c for c in world.calls() if " enable " in c]
         logged = [c for c in world.calls() if c.startswith("logger ") and "units" in c]
-        assert any("status-drift.timer" in c for c in logged)
+        assert any("status-drift.timer (new)" in c for c in logged)
+
+    def test_each_new_unit_is_marked_new_and_only_those(self, world):
+        """CR 5: the journal line is the record of what a deploy installed."""
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        world.push_deploy(
+            {"status.service": "v2\n", "status-drift.service": "x\n", "status-drift.timer": "y\n"}
+        )
+        world.reset_log()
+        assert_ok(world.run())
+        (line,) = [c for c in world.calls() if c.startswith("logger ") and " units from " in c]
+        assert line.endswith(
+            ": status.service status-drift.service (new) status-drift.timer (new)"
+        ), line
 
     def test_a_hand_edited_unit_is_replaced_and_named(self, world):
         world.push_deploy(V1)

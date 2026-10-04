@@ -511,10 +511,14 @@ restore_units() { # <target>
     [[ "$name" != *.timer ]] || timers+=("$name")
     any=1
   done
-  while read -r name; do
-    sudo rm -f "$UNIT_DIR/$name" || note "$target: removing $UNIT_DIR/$name failed"
-    any=1
-  done <"$backup/$target.added"
+  # Missing when install_units could not even start; set -e is on here, and a
+  # failed redirect would end the rollback before it proves the old build (CR 4).
+  if [[ -f "$backup/$target.added" ]]; then
+    while read -r name; do
+      sudo rm -f "$UNIT_DIR/$name" || note "$target: removing $UNIT_DIR/$name failed"
+      any=1
+    done <"$backup/$target.added"
+  fi
   ((any)) || return 0
   sudo systemctl daemon-reload || note "$target: systemctl daemon-reload failed"
   for name in "${timers[@]}"; do

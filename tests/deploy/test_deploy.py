@@ -1375,6 +1375,23 @@ class TestUnits:
         assert world.target("live") == previous
         assert world.installed("status.service") == V1["status.service"]
 
+    def test_nowhere_to_keep_the_units_still_proves_the_old_build(self, world):
+        """CR 4: a switch back with nothing kept aside restores nothing, and
+        still restarts and proves the old build."""
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        world.push_deploy({"status.service": "v2\n"})
+        stub = world.stubs / "mkdir"
+        stub.write_text(
+            '#!/usr/bin/env bash\n[[ "${@: -1}" == */status-deploy.*/live ]] && exit 1\n'
+            'exec /bin/mkdir "$@"\n'
+        )
+        stub.chmod(0o755)
+        result = world.run()
+        assert result.returncode == 1, result.stderr
+        assert "which is answering" in result.stderr
+        assert world.installed("status.service") == V1["status.service"]
+
     def test_a_failed_install_switches_back(self, world):
         world.push_deploy(V1)
         assert_ok(world.run())

@@ -35,10 +35,10 @@
 # slice drop-ins, needrestart) are compared with their installed copies; a
 # difference is a warning, never installed (#18).
 #
-# Runs as exedev, the units' user; sudo for systemctl and for installing units
-# only. Exits 0 when every
-# target verified, 4 when a target is left on a build that did not answer (no
-# rollback possible, or the old build failed too), 1 otherwise.
+# Runs as exedev, the units' user; sudo for systemctl and for unit files in
+# /etc/systemd/system (install, and rm on a switch back) only. Exits 0 when
+# every target verified, 4 when a target is left on a build that did not
+# answer (no rollback possible, or the old build failed too), 1 otherwise.
 set -euo pipefail
 
 ROOT="${STATUS_DEPLOY_ROOT:-/srv/status}"

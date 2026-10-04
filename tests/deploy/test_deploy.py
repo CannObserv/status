@@ -132,6 +132,12 @@ build="$(cat "$served/REVISION" 2>/dev/null || echo dev)"
 if [[ "$url" == *":${FAKE_STALE_PORT:-none}/"* ]]; then
   [[ -n "${FAKE_STALE_ALWAYS:-}" || "$build" == "${FAKE_NEW_BUILD:-$build}" ]] && build=stale
 fi
+# FAKE_STALE_UNLESS_UNIT_HAS: a live API that answers only while status.service
+# holds that text, a hand fix the repo lacks (CR 10).
+if [[ -n "${FAKE_STALE_UNLESS_UNIT_HAS:-}" && "$link" == live ]]; then
+  grep -qF -- "$FAKE_STALE_UNLESS_UNIT_HAS" "$STATUS_DEPLOY_ETC/systemd/system/status.service" ||
+    build=stale
+fi
 case "$url" in
   */ready) echo '{"status":"ready","schema_state":"current"}' ;;
   */health) echo "{\"status\":\"ok\",\"build\":\"$build\"}" ;;
@@ -971,6 +977,31 @@ class TestVerification:
         assert result.returncode == 4, "live is left on a build that did not answer (CR 25)"
         assert "already" in result.stderr
         assert "switched back" not in result.stderr
+
+    def test_redeploying_the_running_build_puts_back_a_hand_fixed_unit(self, world):
+        """CR 10: only the units changed, so they are what switches back; the
+        hand fix is the known-good state, and the copy kept aside its only copy."""
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        (world.units / "status.service").write_text("hand fix\n")
+        world.reset_log()
+
+        result = world.run(FAKE_STALE_UNLESS_UNIT_HAS="hand fix")
+
+        assert result.returncode == 1, result.stderr
+        assert world.installed("status.service") == "hand fix\n"
+        assert "put back" in result.stderr and "which is answering" in result.stderr
+        assert "switched back" not in result.stderr, "the link never moved"
+        assert world.target("live") == f"releases/{world.build(world.main[-1])}"
+
+    def test_redeploying_the_running_build_on_units_that_fail_too_is_dead(self, world):
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        (world.units / "status.service").write_text("hand edit\n")
+        result = world.run(FAKE_STALE_UNLESS_UNIT_HAS="never there")
+        assert result.returncode == 4, result.stderr
+        assert world.installed("status.service") == "hand edit\n"
+        assert "NOT answering" in result.stderr
 
     def test_a_rollback_restores_a_hand_made_link_exactly(self, world):
         """CR 31: live pointed by hand at somewhere outside releases/ during a

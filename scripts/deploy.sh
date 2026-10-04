@@ -500,6 +500,11 @@ install_units() { # <target>
   done
 }
 
+# Whether install_units replaced or added any of the target's units.
+units_replaced() { # <target>
+  compgen -G "$backup/$1/*" >/dev/null || [[ -s "$backup/$1.added" ]]
+}
+
 # Switch back, for units: the copies install_units replaced go back, and what
 # it added is removed. A failure is a note: the rollback still proves the old
 # build, and says whether it answers.
@@ -587,11 +592,18 @@ deploy_target() {
     return
   fi
   [[ -n "$previous" ]] || dead "$target failed on $build, and there is no previous release to return to"
-  [[ "$previous" != "$build" ]] ||
-    dead "$target failed on $build, which it was already running; there is nothing to switch back to"
-  local old
-  old="$(served_build "$previous_link")"
-  swap "$link" "$previous_link"
+  local old back
+  if [[ "$previous" == "$build" ]]; then
+    # The link never moved, so the units are all that changed. Replacing a
+    # hand-fixed unit is the likeliest way here, and its copy kept aside is
+    # the only one left: put it back and prove the build on it (CR 10).
+    units_replaced "$target" ||
+      dead "$target failed on $build, which it was already running; there is nothing to switch back to"
+    old="$build" back="put back the units it replaced, on $build"
+  else
+    old="$(served_build "$previous_link")" back="switched back to $old"
+    swap "$link" "$previous_link"
+  fi
   restore_units "$target"
   # A crash-looping release can exhaust the unit's StartLimitBurst, and systemd
   # then refuses this restart too. Clear it, then prove the old build as the new
@@ -600,11 +612,11 @@ deploy_target() {
   sudo systemctl reset-failed "$api" || true
   sudo systemctl restart "$api" || true
   if wait_for_idle_sweep "$sweep" && sudo systemctl start "$sweep" && verify_http "$port" "$old"; then
-    logger -t status-deploy "$target rolled back to $old after $build failed" || true
-    die "$target failed on $build; switched back to $old, which is answering"
+    logger -t status-deploy "$target rolled back to $old after $build failed ($back)" || true
+    die "$target failed on $build; $back, which is answering"
   fi
-  logger -t status-deploy "$target failed on $build; switched back to $old, which is NOT answering" || true
-  dead "$target failed on $build; switched back to $old, which is NOT answering:" \
+  logger -t status-deploy "$target failed on $build; $back, which is NOT answering" || true
+  dead "$target failed on $build; $back, which is NOT answering:" \
     "journalctl -u $api -u ${sweep%.service} -n 50"
 }
 

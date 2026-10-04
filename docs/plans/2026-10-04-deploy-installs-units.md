@@ -1,7 +1,7 @@
 ---
 title: deploy.sh installs the units (#18)
 date: 2026-10-04
-status: in progress
+status: done
 ---
 
 # deploy.sh installs the units
@@ -43,6 +43,11 @@ The issue's option 1, **per target**: each target's step installs that target's 
 4. **Host configs** (tests first): warning per differing or missing file after a live deploy, none for `--dev`, exit 0; every `deploy/` file is a unit or a host config; repo units follow the naming rule. *Done when* green.
 5. **Docs:** DEPLOYMENT (order, § Units replacing "Units are not deployed", variables), RUNBOOK (setup, § Watching co-status step 4, a routine-ops row), AGENTS, deploy spec, `deploy.sh` header.
 6. **Ship (operator + agent).** Merge, `scripts/deploy.sh`: it installs the four differing units. Copy the two differing host configs by hand (comments only, so no `sysctl -p` or restart). Confirm with `cmp` that nothing differs.
+
+   **Done 2026-10-04.**
+   - `ec4008c56b2e` live and dev at 19:44Z, through the CI gate. The deploy installed `status-dev.service status-sweep-dev.service` (dev) and `status-sweep.service status.service` (live), and warned about `99-status-memory.conf` and `earlyoom.default`, exactly as the read-only rehearsal had said.
+   - Both host configs installed by hand; their differences were comments only, so no `sysctl -p` or earlyoom restart.
+   - `cmp`: every unit, drop-in and host config under `deploy/` matches its installed copy. No unit needs a daemon-reload; `/health` names `ec4008c56b2e` on both ports; the next production pass answered `/ready` 200 and pinged `co-status-api`.
 
 ## Open questions
 

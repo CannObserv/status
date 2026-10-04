@@ -1333,6 +1333,22 @@ class TestUnits:
         assert_ok(world.run(TMPDIR=str(tmp)))
         assert not list(tmp.iterdir())
 
+    def test_a_unit_that_cannot_be_kept_aside_is_not_replaced(self, world):
+        """No copy, no switch back: the target fails before overwriting it."""
+        world.push_deploy(V1)
+        assert_ok(world.run())
+        previous = world.target("live")
+        world.push_deploy({"status.service": "v2\n"})
+        (world.units / "status.service").chmod(0o000)
+        try:
+            result = world.run()
+        finally:
+            (world.units / "status.service").chmod(0o644)
+        assert result.returncode == 1, result.stderr
+        assert "aside" in result.stderr
+        assert world.target("live") == previous
+        assert world.installed("status.service") == V1["status.service"]
+
     def test_a_failed_install_switches_back(self, world):
         world.push_deploy(V1)
         assert_ok(world.run())

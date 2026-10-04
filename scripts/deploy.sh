@@ -461,15 +461,18 @@ units_of() { # <target>
 # timer is restarted so it re-arms on its new schedule. Units the release
 # lacks stay as they are; new ones are installed, never enabled: enabling is a
 # decision (#12 needed its healthchecks.io check first).
+# Called as `install_units || ...`, so set -e is off in here: every step that
+# can fail says so itself.
 install_units() { # <target>
   local target="$1" name unit changed=() added=() timers=()
-  mkdir -p "$backup/$target"
-  : >"$backup/$target.added"
+  { mkdir -p "$backup/$target" && : >"$backup/$target.added"; } ||
+    { note "$target: cannot keep the installed units aside in $backup"; return 1; }
   while read -r name; do
     unit="$UNIT_DIR/$name"
     cmp -s "$release/deploy/$name" "$unit" && continue
     if [[ -e "$unit" ]]; then
-      cp "$unit" "$backup/$target/$name"
+      cp "$unit" "$backup/$target/$name" ||
+        { note "$target: cannot keep $unit aside; not installing it"; return 1; }
       changed+=("$name")
     else
       echo "$name" >>"$backup/$target.added"

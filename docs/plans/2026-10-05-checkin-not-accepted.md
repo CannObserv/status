@@ -1,7 +1,7 @@
 ---
 title: Surface check-in notices notifier never accepted (#19)
 date: 2026-10-05
-status: in review
+status: in progress
 ---
 
 # Surface check-in notices notifier never accepted

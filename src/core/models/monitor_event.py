@@ -56,7 +56,13 @@ class MonitorEvent(Base):
     #: notifier's delivery ``status`` for that dispatch (``succeeded``,
     #: ``partial`` or ``failed``), or co-status's own ``not_accepted``: the
     #: check-in owed a notice and notifier never took it, so there is no
-    #: dispatch id (#19). ``None`` when nothing was sent or owed, or the row
-    #: predates #8 (not known undelivered).
+    #: dispatch id (#19). ``None`` means, by kind:
+    #:
+    #: - ``recovered``, ``alert``: nothing was owed (no channels), or the row
+    #:   predates #19 (a lost notice was null then) or #8 (no status at all);
+    #: - ``missing``: notifier did not take the first alert. It is still
+    #:   owed, and the monitor row, not this event, says so (#7);
+    #: - every other kind: nothing is ever sent.
+    #:
     #: The sweep surfaces a check-in notice whose status is not ``succeeded``.
     dispatch_status: Mapped[str | None] = mapped_column(String, nullable=True)

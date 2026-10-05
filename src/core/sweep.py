@@ -135,7 +135,7 @@ async def _undelivered_notices(
     read only the window from ``(monitor_id, at)``, not every event ever
     written (CR 1). Latest *with a status*: one notifier never took is
     ``not_accepted`` and reported in an earlier failure's place (#19); a null
-    owed nothing, or predates #8, so it does not hide one.
+    owed nothing, or predates #19, so it does not hide one.
     """
     if not monitor_ids:
         return {}

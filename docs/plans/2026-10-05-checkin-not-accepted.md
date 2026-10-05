@@ -1,7 +1,7 @@
 ---
 title: Surface check-in notices notifier never accepted (#19)
 date: 2026-10-05
-status: in progress
+status: done
 ---
 
 # Surface check-in notices notifier never accepted
@@ -41,7 +41,11 @@ The check-in route sends a recovery or report once, inside the 8 s budget. When 
 4. **Docs:** `MonitorEvent.dispatch_status` docstring, the `sweep.py`, `alerting.py` and `heartbeat.py` docstrings, monitors.md (§ What gets sent, § Who watches the sweep, § What is still open), and the RUNBOOK triage: for `not_accepted`, the API journal's `not accepted` / `not sending` / `cannot check` lines.
 5. **Ship:** CI on the branch, merge on explicit OK, then `scripts/deploy.sh`. There is no migration.
 
-   Steps 1–4 done on `19-not-accepted`. The sweep and the heartbeat needed no code change, as expected: their tests pin the new rule. The full suite passes locally (1055).
+   **Done 2026-10-05.**
+   - The sweep and the heartbeat needed no code change, as expected: their tests pin the new rule.
+   - Merged as `7343cca..94a912d` after one review round (CR 1–4). CI passed on `main`.
+   - Dev at 22:36Z. Live at 23:12Z through the CI gate; no migration.
+   - Live: `/health` names `94a912dbcaff`, and `/ready` says `schema_state` `current`. The next production passes logged `undelivered_notices: {}` with no traceback, and pinged `co-status-sweep`, `notifier-reachable` and `co-status-api` successfully.
 
 ## Open questions
 

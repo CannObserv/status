@@ -90,6 +90,12 @@ async def sweep_monitors(
 
     A monitor is marked ``missing`` whether or not the alert went out. The
     state describes the consumer, not our luck reaching notifier.
+
+    It also reports, without sending anything, what notifier accepted and
+    did not deliver: each missing monitor's last alert (``undelivered``,
+    #6), and each monitor's latest recovery and report within
+    :data:`NOTICE_WINDOW`, read from ``monitor_events``
+    (``undelivered_notices``, #8).
     """
     now = now or datetime.now(UTC)
     report = SweepReport()

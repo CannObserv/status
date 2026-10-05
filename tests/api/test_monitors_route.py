@@ -390,13 +390,18 @@ class TestWhenNotifierFails:
     async def test_a_preview_that_cannot_reach_notifier_sends_no_report(
         self, api, headers, monitor, notifier, db_session
     ):
-        """Unchecked is not rejected: the check-in lands, the report does not."""
+        """Unchecked is not rejected: the check-in lands, the report does not,
+        and its event says so (#19)."""
         notifier.preview.mock(side_effect=httpx.ConnectError("refused"))
         response = await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
         assert response.status_code == 202
         assert not notifier.dispatch.called
         alert = (await _events(db_session, monitor["id"]))[-1]
-        assert (alert.kind, alert.dispatch_id) == ("alert", None)
+        assert (alert.kind, alert.dispatch_id, alert.dispatch_status) == (
+            "alert",
+            None,
+            "not_accepted",
+        )
 
     async def test_a_notifier_in_the_wrong_environment_is_sent_nothing(
         self, api, headers, monitor, notifier, db_session
@@ -421,12 +426,15 @@ class TestWhenNotifierFails:
         assert response.status_code == 202
         assert response.json()["dispatches"] == []
         assert (await _row(db_session, monitor["id"])).last_checkin_at is not None
+        alert = (await _events(db_session, monitor["id"]))[-1]
+        assert (alert.dispatch_id, alert.dispatch_status) == (None, "not_accepted")
 
     async def test_without_a_notifier_key_the_checkin_still_lands(
         self, client, headers, alerter, db_session
     ):
         """A unit missing its credential cannot start (D13); a hand-run
-        process can, and must still record what arrives."""
+        process can, and must still record what arrives. The report it could
+        not send is lost too (#19)."""
         app.dependency_overrides[get_alerter] = lambda: alerter
         created = await _create(client, headers)
         app.dependency_overrides[get_alerter] = lambda: None
@@ -436,6 +444,8 @@ class TestWhenNotifierFails:
             app.dependency_overrides.pop(get_alerter, None)
         assert response.status_code == 202
         assert (await _row(db_session, created["id"])).last_checkin_at is not None
+        alert = (await _events(db_session, created["id"]))[-1]
+        assert (alert.kind, alert.dispatch_status) == ("alert", "not_accepted")
 
 
 class TestRecovery:
@@ -593,28 +603,6 @@ class TestNotAccepted:
             "not_accepted",
         )
 
-    async def test_a_report_whose_preview_cannot_reach_notifier(
-        self, api, headers, monitor, notifier, db_session
-    ):
-        notifier.preview.mock(side_effect=httpx.ConnectError("refused"))
-        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
-        alert = (await _events(db_session, monitor["id"]))[-1]
-        assert (alert.dispatch_id, alert.dispatch_status) == (None, "not_accepted")
-
-    async def test_a_report_cut_off_by_the_budget(
-        self, api, headers, monitor, notifier, db_session, monkeypatch
-    ):
-        monkeypatch.setattr(alerting, "REQUEST_BUDGET_SECONDS", 0.05)
-
-        async def slow(request):
-            await asyncio.sleep(1)
-            return httpx.Response(202)
-
-        notifier.dispatch.mock(side_effect=slow)
-        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
-        alert = (await _events(db_session, monitor["id"]))[-1]
-        assert (alert.dispatch_id, alert.dispatch_status) == (None, "not_accepted")
-
     async def test_a_lost_recovery_does_not_mark_the_delivered_report(
         self, api, headers, monitor, notifier, db_session
     ):
@@ -630,18 +618,6 @@ class TestNotAccepted:
         events = {e.kind: e for e in await _events(db_session, monitor["id"])}
         assert events["recovered"].dispatch_status == "not_accepted"
         assert events["alert"].dispatch_status == "succeeded"
-
-    async def test_without_a_notifier_key(self, client, headers, alerter, db_session):
-        """Hand-run, or a unit that lost its credential: the notice is lost too."""
-        app.dependency_overrides[get_alerter] = lambda: alerter
-        created = await _create(client, headers)
-        app.dependency_overrides[get_alerter] = lambda: None
-        try:
-            await _checkin(client, headers, created, status="alert", variables={"a": 1})
-        finally:
-            app.dependency_overrides.pop(get_alerter, None)
-        alert = (await _events(db_session, created["id"]))[-1]
-        assert (alert.kind, alert.dispatch_status) == ("alert", "not_accepted")
 
     async def test_a_monitor_with_no_channels_had_nothing_to_send(
         self, api, headers, notifier, db_session

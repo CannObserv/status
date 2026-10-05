@@ -147,7 +147,8 @@ class TestSweepCompleted:
         )
 
     async def test_notices_notifier_never_took_are_counted_beside_them(self, pings):
-        """#19's own status reads like notifier's, so a refusal is not an outage."""
+        """Counted beside notifier's statuses, by name: the body tells a lost
+        notice from a failed one."""
         await Heartbeat(KEY).sweep_completed(
             _report(
                 undelivered_notices={

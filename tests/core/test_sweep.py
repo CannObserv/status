@@ -13,7 +13,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from src.core.alerting import EndpointMismatch, missing_key
+from src.core.alerting import NOT_ACCEPTED, EndpointMismatch, missing_key
 from src.core.models import MonitorEvent
 from src.core.models.monitor import Monitor
 from src.core.monitors import MISSING_TITLE, EventKind, MonitorState
@@ -279,12 +279,16 @@ async def _notice(
     status: str | None,
     at: datetime = NOW - timedelta(hours=1),
 ) -> MonitorEvent:
-    """A check-in notice as the route records it; ``status=None`` was not accepted."""
+    """A check-in notice as the route records it.
+
+    ``status=None`` owed nothing (no channels) or predates #8;
+    ``not_accepted`` was owed and notifier never took it (#19).
+    """
     event = MonitorEvent(
         monitor_id=monitor.id,
         kind=kind,
         at=at,
-        dispatch_id="01J0000000000000000000DISP" if status else None,
+        dispatch_id="01J0000000000000000000DISP" if status not in (None, NOT_ACCEPTED) else None,
         dispatch_status=status,
     )
     db_session.add(event)
@@ -301,7 +305,7 @@ class TestTheUndeliveredNotice:
     each kind, if notifier accepted it and did not deliver it, is reported on
     every pass until a later one of that kind is delivered, or the window ends."""
 
-    @pytest.mark.parametrize("status", ["failed", "partial"])
+    @pytest.mark.parametrize("status", ["failed", "partial", NOT_ACCEPTED])
     @pytest.mark.parametrize(("kind", "label"), NOTICES)
     async def test_an_undelivered_notice_is_reported(
         self, db_session, tenant, alerter, notifier, kind, label, status
@@ -323,13 +327,14 @@ class TestTheUndeliveredNotice:
         report = await sweep_monitors(db_session, alerter, NOW)
         assert report.undelivered_notices == {}
 
+    @pytest.mark.parametrize("status", ["failed", NOT_ACCEPTED])
     @pytest.mark.parametrize(("kind", "label"), NOTICES)
     async def test_a_later_delivered_one_of_its_kind_clears_it(
-        self, db_session, tenant, alerter, notifier, kind, label
+        self, db_session, tenant, alerter, notifier, kind, label, status
     ):
         """A consumer alerting every tick: its newest report got through."""
         monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
-        await _notice(db_session, monitor, kind, "failed", at=NOW - timedelta(hours=2))
+        await _notice(db_session, monitor, kind, status, at=NOW - timedelta(hours=2))
         await _notice(db_session, monitor, kind, "succeeded", at=NOW - timedelta(hours=1))
         report = await sweep_monitors(db_session, alerter, NOW)
         assert report.undelivered_notices == {}
@@ -344,10 +349,21 @@ class TestTheUndeliveredNotice:
         report = await sweep_monitors(db_session, alerter, NOW)
         assert report.undelivered_notices == {str(monitor.id): {"report": "failed"}}
 
-    async def test_a_later_notice_notifier_did_not_take_does_not_hide_it(
+    async def test_a_later_notice_notifier_did_not_take_is_reported_in_its_place(
         self, db_session, tenant, alerter, notifier
     ):
-        """Not accepted is not delivered either."""
+        """Not accepted is not delivered either (#19): the kind stays
+        reported, under the newer reason."""
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, EventKind.ALERT, "failed", at=NOW - timedelta(hours=2))
+        await _notice(db_session, monitor, EventKind.ALERT, NOT_ACCEPTED)
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered_notices == {str(monitor.id): {"report": NOT_ACCEPTED}}
+
+    async def test_a_later_notice_that_owed_nothing_does_not_hide_it(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """No status: the monitor had no channels then, or the row predates #8."""
         monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
         await _notice(db_session, monitor, EventKind.ALERT, "failed", at=NOW - timedelta(hours=2))
         await _notice(db_session, monitor, EventKind.ALERT, None)

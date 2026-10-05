@@ -146,6 +146,22 @@ class TestSweepCompleted:
             b"3 check-in notice(s) undelivered (1 recovery partial, 2 report failed)"
         )
 
+    async def test_notices_notifier_never_took_are_counted_beside_them(self, pings):
+        """#19's own status reads like notifier's, so a refusal is not an outage."""
+        await Heartbeat(KEY).sweep_completed(
+            _report(
+                undelivered_notices={
+                    "01J1": {"recovery": "not_accepted", "report": "failed"},
+                    "01J2": {"report": "not_accepted"},
+                }
+            )
+        )
+        assert _paths(pings)[1] == f"/{KEY}/{NOTIFIER_CHECK}/fail"
+        assert pings.calls[1].request.content == (
+            b"3 check-in notice(s) undelivered "
+            b"(1 recovery not_accepted, 1 report failed, 1 report not_accepted)"
+        )
+
     async def test_notices_are_counted_in_the_sweep_ping(self, pings):
         await Heartbeat(KEY).sweep_completed(
             _report(undelivered_notices={"01J1": {"recovery": "failed", "report": "failed"}})

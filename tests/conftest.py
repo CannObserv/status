@@ -344,9 +344,17 @@ class FakeNotifier:
         """The JSON bodies POSTed to /dispatch, in order."""
         return [json.loads(call.request.content) for call in self.dispatch.calls]
 
-    def delivering(self, status: str) -> None:
-        """Accept every dispatch from now on, with delivery *status* (#6, #8)."""
-        self.dispatch.mock(side_effect=lambda request: _echo_dispatch(request, status))
+    def delivering(self, status: str = "succeeded", **by_reason: str) -> None:
+        """Accept every dispatch from now on, with delivery *status* (#6, #8).
+
+        ``by_reason`` overrides it per ``metadata.reason``: ``recovered="failed"``.
+        """
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            reason = json.loads(request.content).get("metadata", {}).get("reason")
+            return _echo_dispatch(request, by_reason.get(reason, status))
+
+        self.dispatch.mock(side_effect=respond)
 
 
 def _echo_dispatch(request: httpx.Request, status: str = "succeeded") -> httpx.Response:

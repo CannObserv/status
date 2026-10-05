@@ -499,6 +499,24 @@ class TestDeliveryStatus:
             status,
         )
 
+    async def test_recovery_and_report_each_keep_their_own(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """The one request that writes two events with dispatches (CR 3)."""
+        await _make_missing(db_session, monitor["id"])
+        notifier.delivering(recovered="succeeded", report="failed")
+        response = await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        recovery, report = response.json()["dispatches"]
+        events = {e.kind: e for e in await _events(db_session, monitor["id"])}
+        assert (events["recovered"].dispatch_id, events["recovered"].dispatch_status) == (
+            recovery["id"],
+            "succeeded",
+        )
+        assert (events["alert"].dispatch_id, events["alert"].dispatch_status) == (
+            report["id"],
+            "failed",
+        )
+
     async def test_a_recovery_notifier_did_not_take_keeps_none(
         self, api, headers, monitor, notifier, db_session
     ):

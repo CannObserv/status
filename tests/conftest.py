@@ -356,6 +356,16 @@ class FakeNotifier:
 
         self.dispatch.mock(side_effect=respond)
 
+    def refusing(self, reason: str, code: int = 422) -> None:
+        """Refuse every dispatch whose ``metadata.reason`` is *reason*; accept the rest (#19)."""
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            if json.loads(request.content).get("metadata", {}).get("reason") == reason:
+                return httpx.Response(code, json={"detail": "refused"})
+            return _echo_dispatch(request)
+
+        self.dispatch.mock(side_effect=respond)
+
 
 def _echo_dispatch(request: httpx.Request, status: str = "succeeded") -> httpx.Response:
     body = json.loads(request.content)

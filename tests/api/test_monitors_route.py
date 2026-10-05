@@ -7,7 +7,6 @@ leaves a ``monitor_events`` row.
 """
 
 import asyncio
-import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -24,7 +23,7 @@ from src.core.api_keys import mint
 from src.core.models import MonitorEvent, Tenant
 from src.core.models.monitor import Monitor
 from src.core.monitors import RECOVERY_TITLE
-from tests.conftest import CHANNELS, _echo_dispatch
+from tests.conftest import CHANNELS
 
 HEADER = "X-API-Key"
 
@@ -607,13 +606,7 @@ class TestNotAccepted:
         self, api, headers, monitor, notifier, db_session
     ):
         await _make_missing(db_session, monitor["id"])
-
-        def respond(request):
-            if json.loads(request.content)["metadata"]["reason"] == "recovered":
-                return httpx.Response(422, json={"detail": "no"})
-            return _echo_dispatch(request)
-
-        notifier.dispatch.mock(side_effect=respond)
+        notifier.refusing("recovered")
         await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
         events = {e.kind: e for e in await _events(db_session, monitor["id"])}
         assert events["recovered"].dispatch_status == "not_accepted"

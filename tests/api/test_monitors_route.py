@@ -380,7 +380,7 @@ class TestWhenNotifierFails:
         row = await _row(db_session, monitor["id"])
         assert row.last_checkin_at is not None
         alert = (await _events(db_session, monitor["id"]))[-1]
-        assert (alert.kind, alert.dispatch_id) == ("alert", None)
+        assert (alert.kind, alert.dispatch_id, alert.dispatch_status) == ("alert", None, None)
 
     async def test_a_preview_that_cannot_reach_notifier_sends_no_report(
         self, api, headers, monitor, notifier, db_session
@@ -462,6 +462,55 @@ class TestRecovery:
         reasons = [d["metadata"]["reason"] for d in notifier.dispatched()]
         assert reasons == ["recovered", "report"]
         assert len(response.json()["dispatches"]) == 2
+
+
+class TestDeliveryStatus:
+    """Accepted is not delivered (#8): each notice's event keeps notifier's
+    delivery status beside its dispatch id, for the next sweep to surface."""
+
+    @pytest.mark.parametrize("status", ["succeeded", "failed", "partial"])
+    async def test_a_report_keeps_its_delivery_status(
+        self, api, headers, monitor, notifier, db_session, status
+    ):
+        notifier.delivering(status)
+        response = await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        assert response.status_code == 202
+        (sent,) = response.json()["dispatches"]
+        assert sent["status"] == status
+        alert = (await _events(db_session, monitor["id"]))[-1]
+        assert (alert.kind, alert.dispatch_id, alert.dispatch_status) == (
+            "alert",
+            sent["id"],
+            status,
+        )
+
+    @pytest.mark.parametrize("status", ["succeeded", "failed", "partial"])
+    async def test_a_recovery_keeps_its_delivery_status(
+        self, api, headers, monitor, notifier, db_session, status
+    ):
+        await _make_missing(db_session, monitor["id"])
+        notifier.delivering(status)
+        response = await _checkin(api, headers, monitor)
+        (sent,) = response.json()["dispatches"]
+        recovered = (await _events(db_session, monitor["id"]))[-1]
+        assert (recovered.kind, recovered.dispatch_id, recovered.dispatch_status) == (
+            "recovered",
+            sent["id"],
+            status,
+        )
+
+    async def test_a_recovery_notifier_did_not_take_keeps_none(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await _make_missing(db_session, monitor["id"])
+        notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+        await _checkin(api, headers, monitor)
+        recovered = (await _events(db_session, monitor["id"]))[-1]
+        assert (recovered.kind, recovered.dispatch_id, recovered.dispatch_status) == (
+            "recovered",
+            None,
+            None,
+        )
 
 
 class TestTenantIsolation:

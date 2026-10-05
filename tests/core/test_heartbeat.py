@@ -95,6 +95,7 @@ class TestSweepCompleted:
             "owed": 0,
             "undeliverable": 0,
             "undelivered": 0,
+            "undelivered_notices": 0,
         }
 
     async def test_notifier_unreachable_fails_the_notifier_check(self, pings):
@@ -128,6 +129,37 @@ class TestSweepCompleted:
         await Heartbeat(KEY).sweep_completed(_report(owed=["01J1"], undelivered={"01J2": "failed"}))
         assert pings.calls[1].request.content == (
             b"1 alert(s) owed; 1 alert(s) undelivered (1 failed)"
+        )
+
+    async def test_an_undelivered_notice_fails_the_notifier_check(self, pings):
+        """A recovery or report notifier took and could not deliver (#8)."""
+        await Heartbeat(KEY).sweep_completed(
+            _report(
+                undelivered_notices={
+                    "01J1": {"recovery": "partial", "report": "failed"},
+                    "01J2": {"report": "failed"},
+                }
+            )
+        )
+        assert _paths(pings)[1] == f"/{KEY}/{NOTIFIER_CHECK}/fail"
+        assert pings.calls[1].request.content == (
+            b"3 check-in notice(s) undelivered (1 recovery partial, 2 report failed)"
+        )
+
+    async def test_notices_are_counted_in_the_sweep_ping(self, pings):
+        await Heartbeat(KEY).sweep_completed(
+            _report(undelivered_notices={"01J1": {"recovery": "failed", "report": "failed"}})
+        )
+        assert json.loads(pings.calls[0].request.content)["undelivered_notices"] == 2
+
+    async def test_undelivered_alerts_and_notices_are_both_named(self, pings):
+        await Heartbeat(KEY).sweep_completed(
+            _report(
+                undelivered={"01J1": "failed"}, undelivered_notices={"01J2": {"report": "failed"}}
+            )
+        )
+        assert pings.calls[1].request.content == (
+            b"1 alert(s) undelivered (1 failed); 1 check-in notice(s) undelivered (1 report failed)"
         )
 
 

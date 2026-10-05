@@ -118,8 +118,15 @@ async def _check_channels(alerter: Alerter | None, channel_ids: list[str]) -> No
         )
 
 
-def _event(monitor: Monitor, kind: EventKind, at: datetime, dispatch_id: str | None = None):
-    return MonitorEvent(monitor_id=monitor.id, kind=kind, at=at, dispatch_id=dispatch_id)
+def _event(monitor: Monitor, kind: EventKind, at: datetime, sent: DispatchOut | None = None):
+    """A ``monitor_events`` row; with *sent*, its dispatch id and delivery status (#8)."""
+    return MonitorEvent(
+        monitor_id=monitor.id,
+        kind=kind,
+        at=at,
+        dispatch_id=sent.id if sent else None,
+        dispatch_status=sent.status if sent else None,
+    )
 
 
 @router.get("")
@@ -318,7 +325,7 @@ async def checkin(
             )
         if sent is not None:
             dispatches.append(sent)
-        session.add(_event(monitor, EventKind.RECOVERED, now, sent.id if sent else None))
+        session.add(_event(monitor, EventKind.RECOVERED, now, sent))
 
     if previous_state == MonitorState.PENDING:
         session.add(_event(monitor, EventKind.FIRST_CHECKIN, now))
@@ -342,7 +349,7 @@ async def checkin(
             )
         if sent is not None:
             dispatches.append(sent)
-        session.add(_event(monitor, EventKind.ALERT, now, sent.id if sent else None))
+        session.add(_event(monitor, EventKind.ALERT, now, sent))
 
     await session.commit()
     await session.refresh(monitor)

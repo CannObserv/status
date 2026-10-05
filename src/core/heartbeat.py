@@ -8,7 +8,8 @@ alert over their own email and Slack channels when pings stop or fail:
 - ``co-status-sweep`` — the pass completed and committed (``/fail`` if it raised);
 - ``notifier-reachable`` — notifier answered ``/health`` in this environment,
   accepted every alert the pass sent (nothing owed), **and** delivered the
-  last alert of every missing monitor (nothing undelivered, #6);
+  last alert of every missing monitor (nothing undelivered, #6) and every
+  recent recovery and report from the check-in path (#8);
 - ``co-status-api`` — the production API answered ``/ready`` (#13). The API
   is the half that records check-ins: down, it makes every consumer look
   ``missing`` when the fault is co-status.
@@ -112,6 +113,7 @@ class Heartbeat:
             "owed": len(report.owed),
             "undeliverable": len(report.undeliverable),
             "undelivered": len(report.undelivered),
+            "undelivered_notices": sum(len(n) for n in report.undelivered_notices.values()),
         }
         await self._ping(SWEEP_CHECK, ok=True, body=json.dumps(counts))
         problems = _notifier_problems(report)
@@ -177,6 +179,14 @@ def _notifier_problems(report: SweepReport) -> list[str]:
         by_status = Counter(report.undelivered.values())
         detail = ", ".join(f"{n} {status}" for status, n in sorted(by_status.items()))
         problems.append(f"{len(report.undelivered)} alert(s) undelivered ({detail})")
+    if report.undelivered_notices:
+        notices = Counter(
+            f"{notice} {status}"
+            for by_notice in report.undelivered_notices.values()
+            for notice, status in by_notice.items()
+        )
+        detail = ", ".join(f"{n} {what}" for what, n in sorted(notices.items()))
+        problems.append(f"{notices.total()} check-in notice(s) undelivered ({detail})")
     return problems
 
 

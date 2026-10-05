@@ -344,8 +344,12 @@ class FakeNotifier:
         """The JSON bodies POSTed to /dispatch, in order."""
         return [json.loads(call.request.content) for call in self.dispatch.calls]
 
+    def delivering(self, status: str) -> None:
+        """Accept every dispatch from now on, with delivery *status* (#6, #8)."""
+        self.dispatch.mock(side_effect=lambda request: _echo_dispatch(request, status))
 
-def _echo_dispatch(request: httpx.Request) -> httpx.Response:
+
+def _echo_dispatch(request: httpx.Request, status: str = "succeeded") -> httpx.Response:
     body = json.loads(request.content)
     return httpx.Response(
         202,
@@ -358,7 +362,7 @@ def _echo_dispatch(request: httpx.Request) -> httpx.Response:
             # notice a dispatch carried.
             "rendered_title": body["title_template"],
             "rendered_body": body["body_template"],
-            "status": "succeeded",
+            "status": status,
             "metadata": body.get("metadata", {}),
             "created_at": "2026-09-09T12:00:00Z",
             "attempts": [],

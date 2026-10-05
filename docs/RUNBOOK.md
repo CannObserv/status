@@ -116,7 +116,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 | Change a host config (sysctl, earlyoom, slices, needrestart) | Edit `deploy/`, merge, then install it by hand as under First-time setup. A live deploy warns while it differs |
 | What is running | `readlink /srv/status/live /srv/status/dev`; `build` in `/health` and in every sweep line |
 | Is the sweep firing? | `systemctl list-timers 'status-sweep*'` |
-| What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable`, `undelivered` every pass |
+| What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable`, `undelivered`, `undelivered_notices` every pass |
 | Force a pass | `sudo systemctl start status-sweep.service` |
 | Is live behind `main`? | `sudo systemctl start status-drift && journalctl -u status-drift -n 3 -o cat` (#12) |
 | Which key was minted, revoked, or destroyed with its tenant | `journalctl -t status-keys` |
@@ -125,13 +125,15 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 **`undelivered` that does not clear** means notifier took a missing alert but a channel failed it (`failed`), or failed one of several (`partial`). `journalctl -u status-sweep | grep 'with status'` gives each dispatch id with its `monitor_id`; notifier's dispatch attempts say which channel and why. Fixing the channel does not clear it: it clears when the monitor recovers or a later renotify is delivered. Pausing the monitor only hides it until it is resumed. Without `renotify_seconds` nothing resends ([#7](https://github.com/CannObserv/status/issues/7)), so tell the monitor's owner directly.
 
+**`undelivered_notices`** is the same for the check-in path: notifier took a recovery (`"recovery"`) or the consumer's own `alert` report (`"report"`) and a channel failed it ([#8](https://github.com/CannObserv/status/issues/8)). The dispatch is in the **API's** journal, not the sweep's: `journalctl -u status | grep 'with status'`, or by monitor: `sudo -u postgres psql status -c "SELECT kind, at, dispatch_id, dispatch_status FROM monitor_events WHERE monitor_id = '<id>' ORDER BY at DESC LIMIT 5"`. A report is the consumer saying something is wrong, and nobody heard it: tell the monitor's owner what it said (notifier's dispatch has the rendered text). It clears when the next notice of that kind is delivered, or 24 hours after it was sent. Nothing resends it.
+
 **healthchecks.io watches the sweep, the API and what is deployed** ([monitors.md § Who watches co-status](reference/monitors.md#who-watches-co-status)). An alert from it means:
 
 | Check down | Look at |
 |---|---|
 | `co-status-sweep`, silent | `systemctl list-timers 'status-sweep*'`, `systemctl status status-sweep`, then the VM |
 | `co-status-sweep`, `/fail` | `journalctl -u status-sweep -n 50`; the ping body names the exception type. A connection error is usually Postgres |
-| `notifier-reachable` | The ping body names each cause that applies: unreachable, *n* owed, *n* undelivered. notifier's `/health` from here; then `journalctl -u status-sweep \| grep 'not accepted'` — a refusal (revoked key, deleted channels) keeps it down just as an outage does. For undelivered, see above |
+| `notifier-reachable` | The ping body names each cause that applies: unreachable, *n* owed, *n* undelivered, *n* check-in notices undelivered. notifier's `/health` from here; then `journalctl -u status-sweep \| grep 'not accepted'` — a refusal (revoked key, deleted channels) keeps it down just as an outage does. For undelivered and undelivered notices, see above |
 | `co-status-api`, `/fail` | The API was not ready for 20 s; the body is its answer or the error. `systemctl status status`, `journalctl -u status -n 50`. By body: **`ConnectError: All connection attempts failed`**, nothing listening; **`Name or service not known`**, the tailnet no longer resolves `status` (renamed node? `tailscale status`); **`ConnectTimeout`**, packets go nowhere (`tailscale status`); **`TimeoutError`** or **`ReadTimeout`**, connected but no answer: a wedged API or a Postgres that hangs; **`503`** with `"db":false`, Postgres; with `schema_state`, a migration ([DEPLOYMENT.md § The schema check](DEPLOYMENT.md#the-schema-check)); **`environment` not `production`**, `DATABASE_URL` in `/etc/status/.env` |
 | `co-status-api`, silent | The sweep is not running; `co-status-sweep` says the same |
 | `co-status-drift`, `/fail` | Live has lagged `main` in code for over 8 h, or is not on `main`. The body names both builds, the push the clock started at, and `main`'s CI. **CI `success`**: `scripts/deploy.sh`. **Anything else**: fix CI on `main` first; the gate refuses it ([DEPLOYMENT.md § The CI gate](DEPLOYMENT.md#the-ci-gate)). **Not on `main`, or `GitHub does not know live`**: `readlink /srv/status/live` against `git log origin/main`: `main` was rewritten after the deploy (live deploys only take commits on `main`). Every call 404ing means the repo is no longer public, and the CI gate needs a token too ([DEPLOYMENT.md § The CI gate](DEPLOYMENT.md#the-ci-gate)). Clears on the next hourly run after a deploy, or now: `sudo systemctl start status-drift`. **After a rollback** this fires 8 h later by design: `main` still holds what was rolled back, so fix or revert it there and deploy |
@@ -292,7 +294,7 @@ notifier's disabled row stays for 7 days as the fallback. Rolling back before st
 
 ```bash
 systemctl list-timers 'status-sweep*'
-journalctl -u status-sweep -n 1 -o cat | jq -c '{checked, alerted, owed, undeliverable, undelivered}'   # checked: 3
+journalctl -u status-sweep -n 1 -o cat | jq -c '{checked, alerted, owed, undeliverable, undelivered, undelivered_notices}'   # checked: 3
 ```
 
 **What Phase 7 (removal from notifier) must know**, per consumer. The notifier side is notifier's work (spec § Removal from notifier); these are the leftovers the cutover created.

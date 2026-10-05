@@ -53,3 +53,8 @@ class MonitorEvent(Base):
     #: notifier's dispatch id for the alert this event sent, when notifier
     #: accepted one. A pointer into another service's log, so not a key.
     dispatch_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    #: notifier's delivery ``status`` for that dispatch (``succeeded``,
+    #: ``partial`` or ``failed``); ``None`` when there is no dispatch id.
+    #: Accepted is not delivered: the sweep surfaces a check-in notice whose
+    #: status is not ``succeeded`` (#8).
+    dispatch_status: Mapped[str | None] = mapped_column(String, nullable=True)

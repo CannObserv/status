@@ -84,7 +84,22 @@ class TestMonitorEvent:
         event = MonitorEvent(monitor_id=monitor.id, kind=kind, at=datetime.now(UTC))
         db_session.add(event)
         await db_session.flush()
-        assert event.dispatch_id is None
+        assert (event.dispatch_id, event.dispatch_status) == (None, None)
+
+    async def test_keeps_its_dispatchs_delivery_status(self, db_session, tenant):
+        """Accepted is not delivered (#8): the status sits beside the dispatch id."""
+        monitor = await _monitor(db_session, tenant)
+        event = MonitorEvent(
+            monitor_id=monitor.id,
+            kind=EventKind.ALERT,
+            at=datetime.now(UTC),
+            dispatch_id="01J0000000000000000000DISP",
+            dispatch_status="partial",
+        )
+        db_session.add(event)
+        await db_session.flush()
+        await db_session.refresh(event)
+        assert event.dispatch_status == "partial"
 
     async def test_refuses_an_unknown_kind(self, db_session, tenant):
         monitor = await _monitor(db_session, tenant)

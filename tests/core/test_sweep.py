@@ -16,8 +16,8 @@ from sqlalchemy import select
 from src.core.alerting import EndpointMismatch, missing_key
 from src.core.models import MonitorEvent
 from src.core.models.monitor import Monitor
-from src.core.monitors import MISSING_TITLE, MonitorState
-from src.core.sweep import sweep_monitors
+from src.core.monitors import MISSING_TITLE, EventKind, MonitorState
+from src.core.sweep import NOTICE_WINDOW, sweep_monitors
 from tests.conftest import CHANNELS
 
 NOW = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
@@ -206,6 +206,8 @@ class TestTheUndeliveredAlert:
 
         assert report.undelivered == {str(monitor.id): status}
         assert monitor.last_alert_status == status
+        (event,) = await _events(db_session, monitor)
+        assert (event.kind, event.dispatch_status) == ("missing", status)
 
     async def test_a_delivered_alert_is_not(self, db_session, tenant, alerter, notifier):
         monitor = await _save(db_session, tenant)
@@ -268,6 +270,127 @@ class TestTheUndeliveredAlert:
         assert report.owed == [str(monitor.id)]
         assert report.undelivered == {}
         assert monitor.last_alert_status is None
+
+
+async def _notice(
+    db_session,
+    monitor,
+    kind: EventKind,
+    status: str | None,
+    at: datetime = NOW - timedelta(hours=1),
+) -> MonitorEvent:
+    """A check-in notice as the route records it; ``status=None`` was not accepted."""
+    event = MonitorEvent(
+        monitor_id=monitor.id,
+        kind=kind,
+        at=at,
+        dispatch_id="01J0000000000000000000DISP" if status else None,
+        dispatch_status=status,
+    )
+    db_session.add(event)
+    await db_session.flush()
+    return event
+
+
+#: Each check-in notice's event kind, and its name in the report.
+NOTICES = [(EventKind.RECOVERED, "recovery"), (EventKind.ALERT, "report")]
+
+
+class TestTheUndeliveredNotice:
+    """The check-in path's notices (#8): recovery and report. The latest of
+    each kind, if notifier accepted it and did not deliver it, is reported on
+    every pass until a later one of that kind is delivered, or the window ends."""
+
+    @pytest.mark.parametrize("status", ["failed", "partial"])
+    @pytest.mark.parametrize(("kind", "label"), NOTICES)
+    async def test_an_undelivered_notice_is_reported(
+        self, db_session, tenant, alerter, notifier, kind, label, status
+    ):
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, kind, status)
+
+        report = await sweep_monitors(db_session, alerter, NOW)
+
+        assert report.undelivered_notices == {str(monitor.id): {label: status}}
+        assert not notifier.dispatch.called
+
+    @pytest.mark.parametrize(("kind", "label"), NOTICES)
+    async def test_a_delivered_notice_is_not(
+        self, db_session, tenant, alerter, notifier, kind, label
+    ):
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, kind, "succeeded")
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered_notices == {}
+
+    @pytest.mark.parametrize(("kind", "label"), NOTICES)
+    async def test_a_later_delivered_one_of_its_kind_clears_it(
+        self, db_session, tenant, alerter, notifier, kind, label
+    ):
+        """A consumer alerting every tick: its newest report got through."""
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, kind, "failed", at=NOW - timedelta(hours=2))
+        await _notice(db_session, monitor, kind, "succeeded", at=NOW - timedelta(hours=1))
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered_notices == {}
+
+    async def test_a_delivered_recovery_does_not_clear_a_report(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """'It is back' does not carry 'here is what it found'."""
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, EventKind.ALERT, "failed", at=NOW - timedelta(hours=2))
+        await _notice(db_session, monitor, EventKind.RECOVERED, "succeeded")
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered_notices == {str(monitor.id): {"report": "failed"}}
+
+    async def test_a_later_notice_notifier_did_not_take_does_not_hide_it(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """Not accepted is not delivered either."""
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, EventKind.ALERT, "failed", at=NOW - timedelta(hours=2))
+        await _notice(db_session, monitor, EventKind.ALERT, None)
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered_notices == {str(monitor.id): {"report": "failed"}}
+
+    async def test_it_is_reported_until_the_window_ends(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """A one-off report has no next one to clear it, and nothing resends (#7)."""
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, EventKind.ALERT, "failed", at=NOW - NOTICE_WINDOW)
+
+        inside = await sweep_monitors(db_session, alerter, NOW - timedelta(seconds=1))
+        after = await sweep_monitors(db_session, alerter, NOW + timedelta(seconds=1))
+
+        assert inside.undelivered_notices == {str(monitor.id): {"report": "failed"}}
+        assert after.undelivered_notices == {}
+
+    async def test_a_monitor_can_carry_both(self, db_session, tenant, alerter, notifier):
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, EventKind.RECOVERED, "partial")
+        await _notice(db_session, monitor, EventKind.ALERT, "failed")
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered_notices == {
+            str(monitor.id): {"recovery": "partial", "report": "failed"}
+        }
+
+    async def test_a_missing_events_status_is_not_a_notice(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """Missing alerts are #6's ``undelivered``, from ``last_alert_status``."""
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, EventKind.MISSING, "failed")
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered_notices == {}
+
+    async def test_a_disabled_monitor_is_not_reported(self, db_session, tenant, alerter, notifier):
+        """As with #6: pausing hides it, resuming brings it back."""
+        monitor = await _save(db_session, tenant, enabled=False)
+        await _notice(db_session, monitor, EventKind.ALERT, "failed")
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered_notices == {}
 
 
 class TestEndpointCheck:

@@ -18,8 +18,9 @@ from scripts import sweep_monitors
 from scripts.sweep_monitors import run_sweep
 from src.core import build, schema_state
 from src.core.alerting import EndpointMismatch
+from src.core.models import MonitorEvent
 from src.core.models.monitor import Monitor
-from src.core.monitors import MonitorState
+from src.core.monitors import EventKind, MonitorState
 from src.core.schema_state import SchemaBehind
 from src.core.sweep import SweepReport
 from tests.conftest import CHANNELS
@@ -89,6 +90,26 @@ async def test_the_line_names_the_undelivered_monitors(
 
     (line,) = [r for r in caplog.records if r.message == "monitor sweep complete"]
     assert line.undelivered[str(overdue_monitor.id)] == "failed"
+
+
+async def test_the_line_names_the_undelivered_notices(
+    db_session, overdue_monitor, alerter, notifier, caplog
+):
+    """The same, for a recovery or report from the check-in path (#8)."""
+    db_session.add(
+        MonitorEvent(
+            monitor_id=overdue_monitor.id,
+            kind=EventKind.ALERT,
+            at=datetime.now(UTC) - timedelta(hours=1),
+            dispatch_id="01J0000000000000000000DISP",
+            dispatch_status="partial",
+        )
+    )
+    with caplog.at_level("INFO"):
+        await run_sweep(db_session, alerter)
+
+    (line,) = [r for r in caplog.records if r.message == "monitor sweep complete"]
+    assert line.undelivered_notices == {str(overdue_monitor.id): {"report": "partial"}}
 
 
 async def test_the_line_names_the_build_that_ran(

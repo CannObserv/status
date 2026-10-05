@@ -41,7 +41,7 @@ The check-in route sends two notices through `Alerter.send`: **recovery** (a `mi
 
 ## Split out
 
-- **Notices notifier never accepted** (unreachable, rejected, out of budget, preview unavailable): the check-in path has no owed alert, so these are lost with only an ERROR in the API journal. Separate issue.
+- **Notices notifier never accepted** (unreachable, rejected, out of budget, preview unavailable): the check-in path has no owed alert, so these are lost with only an ERROR in the API journal. [#19](https://github.com/CannObserv/status/issues/19).
 
 ## Open questions
 

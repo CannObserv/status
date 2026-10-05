@@ -316,15 +316,15 @@ As listed under [Removal from notifier](#removal-from-notifier). notifier#83 clo
 
 ## Success criteria
 
-- [ ] `co-status` in `pdx`, `tag:status`, survives a reboot with the same identity
-- [ ] The API answers on the tailnet and is unreachable from the exe.dev proxy and the internet; nothing listens on `:8000`
-- [ ] CI green (`lint`, `test`, `migrations`), coverage at least 80%
-- [ ] The contract snapshot test passes against notifier's pinned schema
-- [ ] The dev and production drills were both seen to fire and to recover
-- [ ] All three monitors run on co-status and notifier's copies are disabled, with no false alert during any handover
-- [ ] 7-day soak completed
-- [ ] Notifier has no monitor code, tables, timers or SDK methods; `co-broker` and `co-index` are retired from it; the watcher backup's key is revoked; the two ACL rules are removed; its docs are updated
-- [ ] co-status's docs state [the gap](#the-gap) and link status#1
+- [x] `co-status` in `pdx`, `tag:status`, survives a reboot with the same identity (2026-09-28; again 2026-09-29 for #5)
+- [x] The API answers on the tailnet and is unreachable from the exe.dev proxy and the internet; nothing listens on `:8000` (binds `100.88.216.92:9000,9001` only)
+- [x] CI green (`lint`, `test`, `migrations`), coverage at least 80%
+- [x] The contract snapshot test passes against notifier's pinned schema
+- [x] The dev and production drills were both seen to fire and to recover (2026-09-28)
+- [x] All three monitors run on co-status and notifier's copies are disabled, with no false alert during any handover (2026-09-28, RUNBOOK § Cutover)
+- [x] 7-day soak completed (2026-09-28 18:31 → 2026-10-05 18:31Z), with one 40-minute sweep outage on 2026-09-29 that missed nothing; cause fixed in #9
+- [x] Notifier has no monitor code, tables, timers or SDK methods; `co-broker` and `co-index` are retired from it; the watcher backup's key is revoked; the two ACL rules are removed; its docs are updated (2026-10-02, notifier#83)
+- [x] co-status's docs state [the gap](#the-gap) and link status#1 — superseded: #1 closed the gap, and [monitors.md § Who watches co-status](../reference/monitors.md#who-watches-co-status) describes what does
 
 ## Out of scope
 

@@ -101,31 +101,39 @@ async def sweep_monitors(
         report.notifier_ok = False
 
     result = await session.execute(select(Monitor).where(Monitor.enabled.is_(True)))
-    for monitor in result.scalars().all():
+    monitors = result.scalars().all()
+    for monitor in monitors:
         report.checked += 1
         if should_alert(monitor, now):
             await _alert(session, alerter, monitor, now, report)
         status = monitor.last_alert_status
         if monitor.state == MonitorState.MISSING and status and status != DELIVERED:
             report.undelivered[str(monitor.id)] = status
-    report.undelivered_notices = await _undelivered_notices(session, now - NOTICE_WINDOW)
+    report.undelivered_notices = await _undelivered_notices(
+        session, [m.id for m in monitors], now - NOTICE_WINDOW
+    )
 
     await session.flush()
     return report
 
 
-async def _undelivered_notices(session: AsyncSession, since: datetime) -> dict[str, dict[str, str]]:
-    """Each enabled monitor's latest accepted notice of each kind after *since*, if undelivered.
+async def _undelivered_notices(
+    session: AsyncSession, monitor_ids: list[str], since: datetime
+) -> dict[str, dict[str, str]]:
+    """Each monitor's latest accepted notice of each kind after *since*, if undelivered.
 
-    Latest *accepted*: a later notice notifier never took delivered nothing
-    either, so it does not hide an earlier failure. Disabled monitors are
-    left out, as the missing alerts are.
+    *monitor_ids* are the pass's enabled monitors: disabled ones are left
+    out, as the missing alerts are. Naming them is also what lets Postgres
+    read only the window from ``(monitor_id, at)``, not every event ever
+    written (CR 1). Latest *accepted*: a later notice notifier never took
+    delivered nothing either, so it does not hide an earlier failure.
     """
+    if not monitor_ids:
+        return {}
     latest = (
         select(MonitorEvent.monitor_id, MonitorEvent.kind, MonitorEvent.dispatch_status)
-        .join(Monitor, Monitor.id == MonitorEvent.monitor_id)
         .where(
-            Monitor.enabled.is_(True),
+            MonitorEvent.monitor_id.in_(monitor_ids),
             MonitorEvent.kind.in_(list(CHECKIN_NOTICES)),
             MonitorEvent.dispatch_status.is_not(None),
             MonitorEvent.at > since,

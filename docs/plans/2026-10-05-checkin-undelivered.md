@@ -1,7 +1,7 @@
 ---
 title: Surface undelivered check-in notices (#8)
 date: 2026-10-05
-status: in progress
+status: done
 ---
 
 # Surface undelivered check-in notices
@@ -38,6 +38,11 @@ The check-in route sends two notices through `Alerter.send`: **recovery** (a `mi
 5. **Heartbeat** (tests first): fail body, counts. Journal line in `scripts/sweep_monitors.py`.
 6. **Docs:** monitors.md (§ What gets sent, § Who watches the sweep), RUNBOOK (triage, jq line), AGENTS if needed, module docstrings.
 7. **Ship:** CI on the branch, merge on explicit OK, `scripts/deploy.sh` (migration runs on dev, then live).
+
+   **Done 2026-10-05.**
+   - Merged as `6bad337..000f257` after two review rounds (CR 1–9). CI passed on `main`.
+   - Dev at 17:13Z (`--dev origin/main`), ahead of the soak's end. Live at 18:32Z through the CI gate, after the Phase 6 soak ended at 18:31Z. Migration `9cdfb095d572` ran on both.
+   - Live: `/health` names `000f257407ac`, and `/ready` says `schema_state` `current`. The next production pass logged `undelivered_notices: {}` with no traceback, and pinged `co-status-sweep`, `notifier-reachable` and `co-status-api` successfully.
 
 ## Split out
 

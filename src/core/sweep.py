@@ -16,9 +16,10 @@ Accepted is not delivered (#6): notifier's delivery ``status`` is kept in
 last alert did not succeed, until it recovers or a later alert gets through.
 
 The check-in path's notices, recovery and report, have no pass of their own
-(#8). The route keeps each one's status on its ``monitor_events`` row, and
-every pass here reports the latest of each kind that did not succeed, until a
-later one of that kind does or :data:`NOTICE_WINDOW` ends.
+(#8). The route keeps each one's status on its ``monitor_events`` row,
+``not_accepted`` when notifier never took it (#19), and every pass here
+reports the latest of each kind that did not succeed, until a later one of
+that kind does or :data:`NOTICE_WINDOW` ends. Nothing resends them.
 """
 
 from dataclasses import dataclass, field
@@ -67,8 +68,9 @@ class SweepReport:
     #: Missing, and notifier accepted its last alert but did not deliver it:
     #: monitor id → ``failed`` or ``partial``. Every pass, not just the one that sent.
     undelivered: dict[str, str] = field(default_factory=dict)
-    #: The latest recovery or report notifier accepted but did not deliver,
-    #: within :data:`NOTICE_WINDOW`: monitor id → ``{"recovery" | "report": status}`` (#8).
+    #: The latest recovery or report notifier did not deliver, or never took
+    #: (``not_accepted``, #19), within :data:`NOTICE_WINDOW`:
+    #: monitor id → ``{"recovery" | "report": status}`` (#8).
     undelivered_notices: dict[str, dict[str, str]] = field(default_factory=dict)
     #: notifier's ``/health`` answered, in this environment, at the start of the pass.
     notifier_ok: bool = True
@@ -91,11 +93,11 @@ async def sweep_monitors(
     A monitor is marked ``missing`` whether or not the alert went out. The
     state describes the consumer, not our luck reaching notifier.
 
-    It also reports, without sending anything, what notifier accepted and
-    did not deliver: each missing monitor's last alert (``undelivered``,
-    #6), and each monitor's latest recovery and report within
-    :data:`NOTICE_WINDOW`, read from ``monitor_events``
-    (``undelivered_notices``, #8).
+    It also reports, without sending anything, what did not reach anyone:
+    each missing monitor's last alert, if notifier accepted it and did not
+    deliver it (``undelivered``, #6), and each monitor's latest recovery and
+    report within :data:`NOTICE_WINDOW`, undelivered or never accepted, read
+    from ``monitor_events`` (``undelivered_notices``, #8, #19).
     """
     now = now or datetime.now(UTC)
     report = SweepReport()
@@ -126,13 +128,14 @@ async def sweep_monitors(
 async def _undelivered_notices(
     session: AsyncSession, monitor_ids: list[str], since: datetime
 ) -> dict[str, dict[str, str]]:
-    """Each monitor's latest accepted notice of each kind after *since*, if undelivered.
+    """Each monitor's latest owed notice of each kind after *since*, if undelivered.
 
     *monitor_ids* are the pass's enabled monitors: disabled ones are left
     out, as the missing alerts are. Naming them is also what lets Postgres
     read only the window from ``(monitor_id, at)``, not every event ever
-    written (CR 1). Latest *accepted*: a later notice notifier never took
-    delivered nothing either, so it does not hide an earlier failure.
+    written (CR 1). Latest *with a status*: one notifier never took is
+    ``not_accepted`` and reported in an earlier failure's place (#19); a null
+    owed nothing, or predates #8, so it does not hide one.
     """
     if not monitor_ids:
         return {}

@@ -127,6 +127,8 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 
 **`undelivered_notices`** is the same for the check-in path: notifier took a recovery (`"recovery"`) or the consumer's own `alert` report (`"report"`) and a channel failed it ([#8](https://github.com/CannObserv/status/issues/8)). The dispatch is in the **API's** journal, not the sweep's: `journalctl -u status | grep 'with status'`, or by monitor: `sudo -u postgres psql status -c "SELECT kind, at, dispatch_id, dispatch_status FROM monitor_events WHERE monitor_id = '<id>' ORDER BY at DESC LIMIT 5"`. A report is the consumer saying something is wrong, and nobody heard it: tell the monitor's owner what it said (notifier's dispatch has the rendered text). It clears when the next notice of that kind is delivered, or 24 hours after it was sent. Nothing resends it.
 
+**`not_accepted`** in `undelivered_notices` means notifier never took the notice, so there is no dispatch and no rendered text ([#19](https://github.com/CannObserv/status/issues/19)). The reason is in the API's journal at that time: `journalctl -u status | grep -E 'not accepted|not sending|cannot check|no notifier key'`. Fix that first (an outage, a revoked key, deleted channels). The report's `variables` survive only as the monitor's `last_variables`, and only until its next check-in; events never keep them (D9).
+
 **healthchecks.io watches the sweep, the API and what is deployed** ([monitors.md § Who watches co-status](reference/monitors.md#who-watches-co-status)). An alert from it means:
 
 | Check down | Look at |

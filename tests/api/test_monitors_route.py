@@ -7,6 +7,7 @@ leaves a ``monitor_events`` row.
 """
 
 import asyncio
+import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -23,7 +24,7 @@ from src.core.api_keys import mint
 from src.core.models import MonitorEvent, Tenant
 from src.core.models.monitor import Monitor
 from src.core.monitors import RECOVERY_TITLE
-from tests.conftest import CHANNELS
+from tests.conftest import CHANNELS, _echo_dispatch
 
 HEADER = "X-API-Key"
 
@@ -380,7 +381,11 @@ class TestWhenNotifierFails:
         row = await _row(db_session, monitor["id"])
         assert row.last_checkin_at is not None
         alert = (await _events(db_session, monitor["id"]))[-1]
-        assert (alert.kind, alert.dispatch_id, alert.dispatch_status) == ("alert", None, None)
+        assert (alert.kind, alert.dispatch_id, alert.dispatch_status) == (
+            "alert",
+            None,
+            "not_accepted",
+        )
 
     async def test_a_preview_that_cannot_reach_notifier_sends_no_report(
         self, api, headers, monitor, notifier, db_session
@@ -517,18 +522,149 @@ class TestDeliveryStatus:
             "failed",
         )
 
-    async def test_a_recovery_notifier_did_not_take_keeps_none(
-        self, api, headers, monitor, notifier, db_session
+
+def _unreachable(notifier) -> None:
+    notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+
+
+def _health_unreachable(notifier) -> None:
+    notifier.health.mock(side_effect=httpx.ConnectError("refused"))
+
+
+def _wrong_environment(notifier) -> None:
+    notifier.health.respond(json={"status": "ok", "environment": "production"})
+
+
+def _key_revoked(notifier) -> None:
+    notifier.dispatch.respond(401, json={"detail": "invalid key"})
+
+
+def _refused(notifier) -> None:
+    notifier.dispatch.respond(422, json={"detail": "no"})
+
+
+def _channels_deleted(notifier) -> None:
+    notifier.dispatch.respond(404, json={"detail": {"message": "gone", "channel_ids": CHANNELS}})
+
+
+#: Every way a check-in's notice can go without a dispatch record (#19).
+NOT_TAKEN = [
+    _unreachable,
+    _health_unreachable,
+    _wrong_environment,
+    _key_revoked,
+    _refused,
+    _channels_deleted,
+]
+
+
+class TestNotAccepted:
+    """A notice notifier never took is ``not_accepted`` on its event (#19):
+    should have sent, did not, so the sweep surfaces it beside #8's."""
+
+    @pytest.mark.parametrize("fail", NOT_TAKEN)
+    async def test_a_report_notifier_never_took(
+        self, api, headers, monitor, notifier, db_session, fail
+    ):
+        fail(notifier)
+        response = await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        assert response.status_code == 202
+        assert response.json()["dispatches"] == []
+        alert = (await _events(db_session, monitor["id"]))[-1]
+        assert (alert.kind, alert.dispatch_id, alert.dispatch_status) == (
+            "alert",
+            None,
+            "not_accepted",
+        )
+
+    @pytest.mark.parametrize("fail", NOT_TAKEN)
+    async def test_a_recovery_notifier_never_took(
+        self, api, headers, monitor, notifier, db_session, fail
     ):
         await _make_missing(db_session, monitor["id"])
-        notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
-        await _checkin(api, headers, monitor)
+        fail(notifier)
+        response = await _checkin(api, headers, monitor)
+        assert response.status_code == 202
+        assert response.json()["state"] == "ok"
         recovered = (await _events(db_session, monitor["id"]))[-1]
         assert (recovered.kind, recovered.dispatch_id, recovered.dispatch_status) == (
             "recovered",
             None,
+            "not_accepted",
+        )
+
+    async def test_a_report_whose_preview_cannot_reach_notifier(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        notifier.preview.mock(side_effect=httpx.ConnectError("refused"))
+        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        alert = (await _events(db_session, monitor["id"]))[-1]
+        assert (alert.dispatch_id, alert.dispatch_status) == (None, "not_accepted")
+
+    async def test_a_report_cut_off_by_the_budget(
+        self, api, headers, monitor, notifier, db_session, monkeypatch
+    ):
+        monkeypatch.setattr(alerting, "REQUEST_BUDGET_SECONDS", 0.05)
+
+        async def slow(request):
+            await asyncio.sleep(1)
+            return httpx.Response(202)
+
+        notifier.dispatch.mock(side_effect=slow)
+        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        alert = (await _events(db_session, monitor["id"]))[-1]
+        assert (alert.dispatch_id, alert.dispatch_status) == (None, "not_accepted")
+
+    async def test_a_lost_recovery_does_not_mark_the_delivered_report(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await _make_missing(db_session, monitor["id"])
+
+        def respond(request):
+            if json.loads(request.content)["metadata"]["reason"] == "recovered":
+                return httpx.Response(422, json={"detail": "no"})
+            return _echo_dispatch(request)
+
+        notifier.dispatch.mock(side_effect=respond)
+        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        events = {e.kind: e for e in await _events(db_session, monitor["id"])}
+        assert events["recovered"].dispatch_status == "not_accepted"
+        assert events["alert"].dispatch_status == "succeeded"
+
+    async def test_without_a_notifier_key(self, client, headers, alerter, db_session):
+        """Hand-run, or a unit that lost its credential: the notice is lost too."""
+        app.dependency_overrides[get_alerter] = lambda: alerter
+        created = await _create(client, headers)
+        app.dependency_overrides[get_alerter] = lambda: None
+        try:
+            await _checkin(client, headers, created, status="alert", variables={"a": 1})
+        finally:
+            app.dependency_overrides.pop(get_alerter, None)
+        alert = (await _events(db_session, created["id"]))[-1]
+        assert (alert.kind, alert.dispatch_status) == ("alert", "not_accepted")
+
+    async def test_a_monitor_with_no_channels_had_nothing_to_send(
+        self, api, headers, notifier, db_session
+    ):
+        """Nothing owed, so nothing lost: as the sweep's ``undeliverable``."""
+        created = await _create(api, headers, channel_ids=[])
+        await _make_missing(db_session, created["id"])
+        await _checkin(api, headers, created, status="alert", variables={"source": "x"})
+        events = {e.kind: e for e in await _events(db_session, created["id"])}
+        assert (events["recovered"].dispatch_id, events["recovered"].dispatch_status) == (
+            None,
             None,
         )
+        assert (events["alert"].dispatch_id, events["alert"].dispatch_status) == (None, None)
+
+    async def test_a_plain_checkin_records_no_status(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """Nothing warranted, so nothing to mark, even with notifier down."""
+        _health_unreachable(notifier)
+        await _checkin(api, headers, monitor)
+        (first,) = await _events(db_session, monitor["id"])
+        assert (first.kind, first.dispatch_status) == ("first_checkin", None)
 
 
 class TestTenantIsolation:

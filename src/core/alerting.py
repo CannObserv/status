@@ -46,6 +46,10 @@ NOTIFIER_URLS = {
 #: ``partial`` and ``failed`` are the others.
 DELIVERED = "succeeded"
 
+#: co-status's own ``dispatch_status``, beside notifier's three: a check-in's
+#: notice was owed and notifier never took it, so there is no dispatch (#19).
+NOT_ACCEPTED = "not_accepted"
+
 #: The ``LoadCredential=`` name both units use (spec D13).
 CREDENTIAL_NAME = "notifier-key"
 

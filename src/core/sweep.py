@@ -30,6 +30,7 @@ reports the latest of each kind that did not succeed, until a later one of
 that kind does or :data:`NOTICE_WINDOW` ends. Nothing resends them.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -173,7 +174,7 @@ def _record_delivery(monitor: Monitor, delivery: Delivery, now: datetime) -> Non
 
 
 async def _redeliver_due(
-    alerter: Alerter, monitors: list[Monitor], now: datetime, report: SweepReport
+    alerter: Alerter, monitors: Sequence[Monitor], now: datetime, report: SweepReport
 ) -> None:
     """Redeliver every due missing alert, oldest due first, within the window."""
     due = sorted(

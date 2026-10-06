@@ -12,7 +12,7 @@ consumer's ``variables``: a public status page will be built on this table.
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.models.base import Base, ULIDType, generate_ulid
@@ -42,6 +42,15 @@ class MonitorEvent(Base):
         ),
         # History is read per monitor, newest first.
         Index("ix_monitor_events_monitor_at", "monitor_id", "at"),
+        # Each monitor's latest notice of a kind with a status, as the API
+        # serves it (#20): one probe, however many rows of another kind.
+        Index(
+            "ix_monitor_events_notice",
+            "monitor_id",
+            "kind",
+            "at",
+            postgresql_where=text("dispatch_status IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(ULIDType, primary_key=True, default=generate_ulid)

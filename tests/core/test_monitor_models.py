@@ -8,7 +8,7 @@ domain code.
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from src.core.models import Monitor, MonitorEvent, Tenant
@@ -100,6 +100,18 @@ class TestMonitorEvent:
         await db_session.flush()
         await db_session.refresh(event)
         assert event.dispatch_status == "partial"
+
+    async def test_latest_notice_of_a_kind_is_one_index_probe(self, db_session):
+        """The API serves each monitor's latest recovery and report with a
+        status (#20). Without this index, a monitor that reports every tick
+        makes each read walk its whole history."""
+        indexdef = (
+            await db_session.execute(
+                text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_monitor_events_notice'")
+            )
+        ).scalar_one()
+        assert "(monitor_id, kind, at)" in indexdef
+        assert "WHERE (dispatch_status IS NOT NULL)" in indexdef
 
     async def test_refuses_an_unknown_kind(self, db_session, tenant):
         monitor = await _monitor(db_session, tenant)

@@ -118,7 +118,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 | What is running | `readlink /srv/status/live /srv/status/dev`; `build` in `/health` and in every sweep line |
 | Who changed a release or a link by hand? | Root owns them, so any change took sudo (#14): `sudo journalctl _COMM=sudo -o short-iso \| grep -E '/srv/status\|COMMAND=/(usr/)?bin/(ba)?sh$\|COMMAND=/(usr/)?bin/su( \|$)'`. A root shell shows only as a shell, never what it did. Lines that fall within a deploy (`journalctl -t status-deploy`) are the deploy's own ([DEPLOYMENT.md § Who owns a release](DEPLOYMENT.md#who-owns-a-release)) |
 | Is the sweep firing? | `systemctl list-timers 'status-sweep*'` |
-| What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable`, `undelivered`, `undelivered_notices` every pass |
+| What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable`, `redelivered`, `undelivered`, `undelivered_notices` every pass |
 | Force a pass | `sudo systemctl start status-sweep.service` |
 | Is live behind `main`? | `sudo systemctl start status-drift && journalctl -u status-drift -n 3 -o cat` (#12) |
 | Which key was minted, revoked, or destroyed with its tenant | `journalctl -t status-keys` |
@@ -298,7 +298,7 @@ notifier's disabled row stays for 7 days as the fallback. Rolling back before st
 
 ```bash
 systemctl list-timers 'status-sweep*'
-journalctl -u status-sweep -n 1 -o cat | jq -c '{checked, alerted, owed, undeliverable, undelivered, undelivered_notices}'   # checked: 3
+journalctl -u status-sweep -n 1 -o cat | jq -c '{checked, alerted, owed, undeliverable, redelivered, undelivered, undelivered_notices}'   # checked: 3
 ```
 
 **What Phase 7 (removal from notifier) must know**, per consumer. The notifier side is notifier's work (spec § Removal from notifier); these are the leftovers the cutover created.

@@ -87,13 +87,16 @@ class TestSweepCompleted:
         assert _paths(pings) == [f"/{KEY}/{SWEEP_CHECK}", f"/{KEY}/{NOTIFIER_CHECK}"]
 
     async def test_the_sweep_ping_carries_the_counts_only(self, pings):
-        await Heartbeat(KEY).sweep_completed(_report(alerted=["01J1"], owed=[]))
+        await Heartbeat(KEY).sweep_completed(
+            _report(alerted=["01J1"], owed=[], redelivered={"01J2": "capped"})
+        )
         body = json.loads(pings.calls[0].request.content)
         assert body == {
             "checked": 3,
             "alerted": 1,
             "owed": 0,
             "undeliverable": 0,
+            "redelivered": 1,
             "undelivered": 0,
             "undelivered_notices": 0,
         }

@@ -113,6 +113,7 @@ class Heartbeat:
             "alerted": len(report.alerted),
             "owed": len(report.owed),
             "undeliverable": len(report.undeliverable),
+            "redelivered": len(report.redelivered),
             "undelivered": len(report.undelivered),
             "undelivered_notices": sum(len(n) for n in report.undelivered_notices.values()),
         }

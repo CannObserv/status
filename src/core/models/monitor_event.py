@@ -73,6 +73,9 @@ class MonitorEvent(Base):
     #:   owed, and the monitor row, not this event, says so (#7);
     #: - every other kind: nothing is ever sent.
     #:
+    #: A ``missing`` event keeps what the first send returned. A redelivery
+    #: (#10) updates the monitor's ``last_alert_status``, never this row.
+    #:
     #: The sweep surfaces a check-in notice whose status is not ``succeeded``,
     #: and the API serves each monitor's latest of each kind to its owner (#20).
     dispatch_status: Mapped[str | None] = mapped_column(String, nullable=True)

@@ -31,7 +31,7 @@ Checked 2026-10-06 on `co-status`:
 
 What this buys, given that `exedev` can still `sudo` anything:
 
-- **Changing production code takes `sudo`.** It is no longer a silent `chmod`. sudo journals every command with its user, directory and arguments (`journalctl _COMM=sudo`), so a hand edit leaves a record. Agents running as `exedev` see a permission error where they now succeed.
+- **Changing production code takes `sudo`.** It is no longer a silent `chmod`. sudo journals each command it runs with its user, directory and arguments (`journalctl _COMM=sudo`), so a hand edit leaves a record, unless it is made in a root shell, which is journaled only as a shell (CR 7). Agents running as `exedev` see a permission error where they now succeed.
 - **The code matches its units.** `/etc/systemd/system/` and `/etc/status/` are already root's. #18 installs units with `sudo`, so the deploy path already uses sudo. That removes R2's objection, "a deploy-time `sudo` for no real boundary".
 - **The release no longer shares inodes with the uv cache** (`--link-mode copy`, below), so it is the release's own copy whoever owns it.
 

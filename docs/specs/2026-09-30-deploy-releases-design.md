@@ -100,11 +100,11 @@ The check is used in three places:
 
 **Why:**
 
-- Changing what a unit runs takes `sudo`, which journals the user, directory and command, where `chmod` was silent.
+- Changing what a unit runs takes `sudo`, which journals the user, directory and command it runs, where `chmod` was silent. A root shell (`sudo -i`) is journaled only as a shell, not what is done in it.
 - R2's objection, "a deploy-time `sudo` for no real boundary", went with #18: the deploy already uses sudo to install units.
 - The code now matches its units and `/etc/status`, which root already owned.
 
-**What it is not: an adversarial boundary.** `exedev` can still `sudo`. It stops the accident, and leaves a record of the deliberate edit; it cannot prevent one.
+**What it is not: an adversarial boundary.** `exedev` can still `sudo`. It stops the accident, and makes the deliberate edit a `sudo`, recorded unless it is done in a root shell; it cannot prevent one.
 
 **Rejected:**
 

@@ -25,7 +25,7 @@ How code reaches the units, and how to tell what is running. Design and reasons:
 
 **This is not a security boundary against `exedev`.** `exedev` has passwordless sudo, and so does every agent session. What root ownership buys:
 
-- **Changing production takes `sudo`.** A plain `chmod u+w` and edit no longer works, and sudo journals every command with its user and directory: `sudo journalctl _COMM=sudo`.
+- **Changing production takes `sudo`.** A plain `chmod u+w` and edit no longer works. sudo journals each command it runs with its user and directory (`sudo journalctl _COMM=sudo`). **A root shell is journaled only as a shell:** what is done in `sudo -i` or `sudo bash` leaves no record beyond `COMMAND=/bin/bash`.
 - **An accident fails loudly**, with `Permission denied` where it used to succeed.
 
 **How `deploy.sh` builds:**
@@ -36,7 +36,7 @@ How code reaches the units, and how to tell what is running. Design and reasons:
 - The deploy refuses a root, or a `releases/`, that root does not own, that group or others can write, or that is a link, and names the fix.
 - **`/srv` must be root's and writable by root alone too** (it is, `root:root 755`). Otherwise `exedev` could rename `/srv/status` away and put its own in its place. The deploy does not check it: the tests' roots sit in directories the test user owns.
 
-**A hand fix in an emergency** is `sudo`, and it is recorded. Prefer `deploy.sh --skip-ci` of a pushed fix, which leaves a release that is exactly a commit. A hand-edited release is still marked finished, so the next deploy of that build reuses it as it stands. Deploy a different build.
+**A hand fix in an emergency** is `sudo`. Name the path on sudo's command line (`sudo vim /srv/status/…`, not `sudo -i`), so the journal records it. Prefer `deploy.sh --skip-ci` of a pushed fix, which leaves a release that is exactly a commit. A hand-edited release is still marked finished, so the next deploy of that build reuses it as it stands. Deploy a different build.
 
 **Moving to root ownership** (once per VM; on `co-status` with #14's first deploy):
 

@@ -989,7 +989,7 @@ class TestOwnership:
     """#14: root owns the deploy root, releases/ and every finished release.
 
     exedev has passwordless sudo, so this is no boundary against exedev. What it
-    does: changing what a unit runs takes sudo, which is journaled, where a
+    does: changing what a unit runs takes sudo, which journals the command, where a
     `chmod u+w` was silent. Every test in this file runs against a root exedev
     cannot write, so the switch, the switch back and the prune are covered too.
     """

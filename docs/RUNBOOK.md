@@ -116,7 +116,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 | Change a unit | Edit `deploy/`, merge, `scripts/deploy.sh`: it installs the units that differ and reloads; a new unit it names with its `enable --now` ([DEPLOYMENT.md § Units](DEPLOYMENT.md#units)) |
 | Change a host config (sysctl, earlyoom, slices, needrestart) | Edit `deploy/`, merge, then install it by hand as under First-time setup. A live deploy warns while it differs |
 | What is running | `readlink /srv/status/live /srv/status/dev`; `build` in `/health` and in every sweep line |
-| Who changed a release or a link by hand? | `sudo journalctl _COMM=sudo \| grep /srv/status`: root owns them, so any change took sudo (#14). Lines at the time of a deploy in `journalctl -t status-deploy` are that deploy's own ([DEPLOYMENT.md § Who owns a release](DEPLOYMENT.md#who-owns-a-release)) |
+| Who changed a release or a link by hand? | Root owns them, so any change took sudo (#14): `sudo journalctl _COMM=sudo -o short-iso \| grep -E '/srv/status\|COMMAND=/(usr/)?bin/(ba)?sh$\|COMMAND=/(usr/)?bin/su( \|$)'`. A root shell shows only as a shell, never what it did. Lines that fall within a deploy (`journalctl -t status-deploy`) are the deploy's own ([DEPLOYMENT.md § Who owns a release](DEPLOYMENT.md#who-owns-a-release)) |
 | Is the sweep firing? | `systemctl list-timers 'status-sweep*'` |
 | What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable`, `undelivered`, `undelivered_notices` every pass |
 | Force a pass | `sudo systemctl start status-sweep.service` |

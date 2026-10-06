@@ -39,7 +39,8 @@
 # root, releases/ and every finished release, so the links too (#14): sudo for
 # every write under the root, for systemctl, and for unit files in
 # /etc/systemd/system. exedev can still sudo anything; what root ownership buys
-# is that changing what a unit runs takes sudo, which is journaled. Exits 0
+# is that changing what a unit runs takes sudo, which journals the command
+# (a root shell, only as a shell: docs/DEPLOYMENT.md). Exits 0
 # when every target verified, 4 when a target is left on a build that did not
 # answer (no rollback possible, or the old build failed too), 1 otherwise.
 set -euo pipefail

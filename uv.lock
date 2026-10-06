@@ -158,7 +158,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.30.0,<0.32" },
     { name = "fastapi", specifier = ">=0.115.0,<0.137" },
     { name = "httpx", specifier = ">=0.28.0,<0.29" },
-    { name = "notifier-client", git = "https://github.com/CannObserv/notifier.git?subdirectory=clients%2Fpython&tag=v0.3.1" },
+    { name = "notifier-client", git = "https://github.com/CannObserv/notifier.git?subdirectory=clients%2Fpython&tag=v0.3.2" },
     { name = "pydantic", specifier = ">=2.13.4,<3" },
     { name = "python-json-logger", specifier = ">=4.0.0,<5" },
     { name = "python-ulid", specifier = ">=4.0.1,<5" },
@@ -537,8 +537,8 @@ wheels = [
 
 [[package]]
 name = "notifier-client"
-version = "0.3.1"
-source = { git = "https://github.com/CannObserv/notifier.git?subdirectory=clients%2Fpython&tag=v0.3.1#36537f730bb597d646a46677638646a2404350cc" }
+version = "0.3.2"
+source = { git = "https://github.com/CannObserv/notifier.git?subdirectory=clients%2Fpython&tag=v0.3.2#8e7c020b52e3c2d4b8cea9fa1bbe0e9be2e86e4f" }
 dependencies = [
     { name = "attrs" },
     { name = "httpx" },

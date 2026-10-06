@@ -11,7 +11,7 @@ dependencies = [
     "asyncpg>=0.30.0,<0.32",
     "fastapi>=0.115.0,<0.137",
     "httpx>=0.28.0,<0.29",
-    "notifier-client>=0.3.1,<0.4",
+    "notifier-client>=0.3.2,<0.4",
     "pydantic>=2.13.4,<3",
     "python-json-logger>=4.0.0,<5",
     "python-ulid>=4.0.1,<5",
@@ -21,10 +21,9 @@ dependencies = [
 
 [tool.uv.sources]
 # Pinned to a tag, never a branch (notifier docs/RELEASING.md § Adopting a
-# release). Public repo, so no credential. v0.3.1 predates notifier's monitors
-# but already has everything co-status calls: health, dispatch, preview and
-# channels.list.
-notifier-client = { git = "https://github.com/CannObserv/notifier.git", subdirectory = "clients/python", tag = "v0.3.1" }
+# release). Public repo, so no credential. v0.3.2 has everything co-status
+# calls: health, dispatch, preview, channels.list and redeliver (#10).
+notifier-client = { git = "https://github.com/CannObserv/notifier.git", subdirectory = "clients/python", tag = "v0.3.2" }
 
 [dependency-groups]
 dev = [

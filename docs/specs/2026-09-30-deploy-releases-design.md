@@ -88,7 +88,7 @@ The check is used in three places:
 
 **Decision: the issue's option 1, extended to the root.**
 
-- **Ownership.** `/srv/status` and `releases/` are `root:root 0755`. `deploy.sh` refuses either if it is not root's, or is writable by group or others, and names the fix. A link is protected by its directory, so the links can only be replaced with `sudo`.
+- **Ownership.** `/srv/status` and `releases/` are `root:root 0755`. `deploy.sh` refuses either if it is not root's, is writable by group or others, or is a link, and names the fix. A link is protected by its directory, so the links can only be replaced with `sudo`.
 - **Build.**
   - `deploy.sh` still runs as `exedev`, and builds as `exedev`, in place (R4): `sudo install -d -o exedev` makes the directory.
   - Then `chmod -R a-w` and `sudo chown -R root:root`.

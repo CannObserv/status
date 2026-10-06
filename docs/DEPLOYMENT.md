@@ -33,7 +33,8 @@ How code reaches the units, and how to tell what is running. Design and reasons:
 - `exedev` builds the release in place, at its final path, since a uv venv embeds that path. Then it removes write permission, and `sudo chown -R root:root` hands the tree to root. `REVISION` is written last, by root.
 - Venvs are built with `--link-mode copy`. Hardlinked to the uv cache, as releases were before #14, a chown would reach the cache, and an edit in one venv would reach every venv sharing the file. Each release is about 70 MB.
 - **A release not owned by root is not reused.** It is rebuilt, or refused while a target runs it, as an interrupted build is.
-- The deploy refuses a root, or a `releases/`, that root does not own or that group or others can write, and names the `sudo chown` or `sudo chmod` that fixes it.
+- The deploy refuses a root, or a `releases/`, that root does not own, that group or others can write, or that is a link, and names the fix.
+- **`/srv` must be root's and writable by root alone too** (it is, `root:root 755`). Otherwise `exedev` could rename `/srv/status` away and put its own in its place. The deploy does not check it: the tests' roots sit in directories the test user owns.
 
 **A hand fix in an emergency** is `sudo`, and it is recorded. Prefer `deploy.sh --skip-ci` of a pushed fix, which leaves a release that is exactly a commit. A hand-edited release is still marked finished, so the next deploy of that build reuses it as it stands. Deploy a different build.
 

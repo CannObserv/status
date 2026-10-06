@@ -1062,6 +1062,17 @@ class TestOwnership:
         assert f"sudo chmod 755 {world.root}" in result.stderr
         assert not [c for c in world.calls() if c.startswith("sudo ")]
 
+    def test_a_deploy_root_that_is_a_link_is_refused_as_one(self, world):
+        """CR 3: find -perm reads a link's own mode, 777, so this was refused as
+        "writable by more than root", which sends the operator to chmod."""
+        real = world.tmp / "real-srv"
+        world.root.rename(real)
+        world.root.symlink_to(real)
+        result = world.run()
+        assert result.returncode == 1
+        assert "a link" in result.stderr and "writable" not in result.stderr
+        assert not [c for c in world.calls() if c.startswith("sudo ")]
+
     def test_a_missing_releases_directory_is_made_by_root(self, world):
         assert_ok(world.run())
         assert f"sudo install -d -m 755 {world.root}/releases" in world.calls()

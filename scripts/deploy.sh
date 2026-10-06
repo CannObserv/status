@@ -125,6 +125,8 @@ git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 ||
 # Root's, and writable by root alone: a link is only as safe as its directory,
 # and exedev could otherwise repoint live with ln (#14).
 roots_alone() { # <dir>
+  # A link's own mode is 777, so find would call it writable (CR 3).
+  [[ ! -L "$1" ]] || die "$1 is a link; it must be the directory itself (#14)"
   [[ "$(stat -c %u -- "$1")" == 0 ]] ||
     die "$1 is not root's, so exedev can change what the units run (#14)." \
       "Once: sudo chown root:root $1 (docs/DEPLOYMENT.md § Who owns a release)"

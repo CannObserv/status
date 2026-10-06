@@ -100,11 +100,13 @@ def _with_notices() -> Select:
 
 def _to_out(
     m: Monitor,
-    report_at: datetime | None = None,
-    report_status: str | None = None,
-    recovery_at: datetime | None = None,
-    recovery_status: str | None = None,
+    report_at: datetime | None,
+    report_status: str | None,
+    recovery_at: datetime | None,
+    recovery_status: str | None,
 ) -> MonitorOut:
+    """A row of :func:`_with_notices` as served. No defaults: a monitor
+    without its notices would read as one that never sent any (CR 2)."""
     return MonitorOut(
         id=str(m.id),
         tenant_id=str(m.tenant_id),
@@ -240,8 +242,7 @@ async def create_monitor(
         raise HTTPException(
             status_code=409, detail=f"A monitor named '{body.name}' already exists."
         ) from exc
-    await session.refresh(monitor)
-    return _to_out(monitor)
+    return await _load_out(session, monitor.id, tenant_id)
 
 
 @router.get("/{monitor_id}")

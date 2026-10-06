@@ -1,7 +1,7 @@
 ---
 title: Root-owned releases, links and deploy root (#14)
 date: 2026-10-06
-status: in progress
+status: implemented; ship pending
 ---
 
 # Root-owned releases, links and deploy root

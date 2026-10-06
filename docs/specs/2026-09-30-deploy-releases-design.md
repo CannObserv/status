@@ -22,7 +22,7 @@ Two further problems share this cause:
 | # | Decision | Why |
 |---|---|---|
 | **R1** | **Every unit runs an immutable release directory, never a git checkout.** Live and dev alike. | It removes the premise rather than guarding it (broker#22). A guard on a dev tree trades silent drift for a refused restart (replicator#94). |
-| **R2** | **Layout:** `/srv/status/releases/<build>/`, plus two symlinks, `/srv/status/live` and `/srv/status/dev`. Owned by `exedev`; a finished release is read-only (`a-w`). One commit is one release, shared by both symlinks. | A symlink swap by `rename(2)` is atomic, and rollback is repointing it. Owned by `exedev` because the units run as `exedev` and `exedev` has sudo anyway: root ownership adds a deploy-time `sudo` for no real boundary here. Read-only is what stops the accidental edit, which is the actual failure. |
+| **R2** | **Layout:** `/srv/status/releases/<build>/`, plus two symlinks, `/srv/status/live` and `/srv/status/dev`. ~~Owned by `exedev`~~ **Root owns `/srv/status`, `releases/` and every finished release** (amended, [#14](#amendment-r2-root-owns-the-releases-14)); a finished release is read-only (`a-w`). One commit is one release, shared by both symlinks. | A symlink swap by `rename(2)` is atomic, and rollback is repointing it. ~~Owned by `exedev` because the units run as `exedev` and `exedev` has sudo anyway: root ownership adds a deploy-time `sudo` for no real boundary here.~~ Read-only is what stops the accidental edit, which is the actual failure. Root ownership makes changing what a unit runs take `sudo`, which is journaled (#14). |
 | **R3** | **Source:** `git archive <sha>` from the development checkout, after `git fetch origin`. Live requires `<sha>` to be on `origin/main`; dev requires it on some `origin/*` branch. | The repo is public, so fetching needs no credential, and there is no store-helper trap. The ancestry check is what makes "pushed" true. An archive has no `.git`, no submodules and no untracked files, so there is nothing in a release to drift. |
 | **R4** | **Build in place:** `uv sync --locked --no-dev --compile-bytecode` inside the release, then write `REVISION`, then `chmod -R a-w`. **`REVISION` is written last**, so a directory without one is an interrupted build: deleted and rebuilt. | A uv venv embeds its absolute path in its scripts' shebangs, so a venv built elsewhere and moved into place breaks. Building at the final path, with `REVISION` as the commit marker, gives the same all-or-nothing result. |
 | **R5** | **Units run `uv run --frozen --no-sync`.** Syncing is a build step, never a start or pass side effect. | The cohort template (`init-project-fastapi`) and replicator. It also covers the hand-run inner loop in a worktree: the developer syncs. |
@@ -33,14 +33,14 @@ Two further problems share this cause:
 | **R10** | **Build id is the release's `REVISION`, read by the app** (`src/core/build.py`). There is no `ExecStartPre` git stamp. It is `dev` when absent. The sweep logs `build` on every pass. | The code that ran reports itself. It is correct for the sweep, which never had a stamp, and it needs no git in a release. |
 | **R11** | **Env:** live units read `/etc/status/.env` only. Dev units read `/etc/status/dev.env` (`DEV_DATABASE_URL`, `root:exedev 0640`). **No unit reads a repo `.env`.** | Removes the PATs and API keys from production's environment (broker#22 Q6). A release has no `.env` anyway. |
 | **R12** | **Dev is deployed, not an exception.** `scripts/deploy.sh --dev <ref>` puts any pushed ref on `:9001`. The inner loop is `scripts/dev_server.sh` run by hand from a worktree, after `sudo systemctl stop status-dev`, as before. | broker#22 Q11: no named loophole. The dev endpoint carries watcher's non-production traffic, so it deserves a deploy too. |
-| **R13** | **`scripts/deploy.sh` runs as `exedev`,** with `sudo` for `systemctl` only, serialized by `flock`. It keeps the 5 most recently deployed releases plus whatever `live` and `dev` point at. | A deploy should be runnable by an agent or an operator alike. The retention covers several rollbacks and costs about 100 MB. |
+| **R13** | **`scripts/deploy.sh` runs as `exedev`,** with `sudo` for `systemctl` only (since #18 also unit files, since #14 every write under `/srv/status`), serialized by `flock`. It keeps the 5 most recently deployed releases plus whatever `live` and `dev` point at. | A deploy should be runnable by an agent or an operator alike. The retention covers several rollbacks and costs about 100 MB. |
 
 **Deferred** (none blocks this):
 
 - A CI-green check before a live deploy. CI is the only correctness signal (AGENTS.md), but reading check runs needs a token in the deploy path. **2026-10-01:** #11 gates live deploys on the commit's push run, unauthenticated ([plan](../plans/2026-10-01-ci-gate.md), [DEPLOYMENT.md § The CI gate](../DEPLOYMENT.md#the-ci-gate)).
 - A drift signal when `live` lags `origin/main` (broker#22 goal 4). **2026-10-02:** #12, an hourly timer and healthchecks.io's `co-status-drift` ([plan](../plans/2026-10-02-drift-check.md)).
 - `OnFailure=` (broker#22 Q10). **2026-10-01:** #13 watches the API from the production sweep instead ([plan](../plans/2026-10-01-watch-the-api.md)).
-- A root-owned deploy root (R2).
+- A root-owned deploy root (R2). **2026-10-06:** #14, root owns the deploy root, `releases/` and every finished release ([§ Amendment](#amendment-r2-root-owns-the-releases-14), [plan](../plans/2026-10-06-root-owned-releases.md)).
 - Installing the units. **2026-10-04:** #18, each target's units from its release, on every deploy ([plan](../plans/2026-10-04-deploy-installs-units.md), [DEPLOYMENT.md § Units](../DEPLOYMENT.md#units)).
 
 ## Design
@@ -80,14 +80,47 @@ The check is used in three places:
 - **API:** `/ready`, with `schema_state` on the 200 payload, and on the 503 whenever the database was reached (one `NotReadyResponse` model).
 - **Deploy and `dev_server.sh`:** the CLI `python -m src.core.schema_state`, which prints the state. Exit 0 means `current` or `ahead`, 3 means `behind` or `unmigrated`, 2 means anything else (unreachable, refused, crashed); never 1, which is any uncaught exception. This replaces `dev_server.sh`'s bash `alembic current` test.
 
+## Amendment: R2, root owns the releases (#14)
+
+**2026-10-06.** [Issue](https://github.com/CannObserv/status/issues/14), [plan](../plans/2026-10-06-root-owned-releases.md). Supersedes R2's ownership; the layout, atomic swap and read-only releases stand.
+
+**Facts that day:** the releases, `/srv/status`, `releases/` and both links were `exedev:exedev`, and `exedev`, the user of every agent session, editor and unit, has passwordless sudo. So `chmod u+w` and an edit changed production silently, and so did `ln -sfn` on a link. The release venvs were also hardlinked into the uv cache, so `chmod -R a-w` already reached the cache's inodes, and an edit of a dependency in a release would have edited every venv that shared the file.
+
+**Decision: the issue's option 1, extended to the root.**
+
+- **Ownership.** `/srv/status` and `releases/` are `root:root 0755`. `deploy.sh` refuses either if it is not root's, or is writable by group or others, and names the fix. A link is protected by its directory, so the links can only be replaced with `sudo`.
+- **Build.**
+  - `deploy.sh` still runs as `exedev`, and builds as `exedev`, in place (R4): `sudo install -d -o exedev` makes the directory.
+  - Then `chmod -R a-w` and `sudo chown -R root:root`.
+  - **`REVISION` is still written last, by root.** A build cut short in the chown has none and is rebuilt.
+  - Venvs are built `--link-mode copy`, so a release shares no inode with the uv cache.
+- **Reuse.** A release whose directory is not root's is not finished: built before #14, or handed back. It is rebuilt, or refused while a target runs it (CR 15, 27). This replaces the writable check (CR 26).
+- **Sudo for every write under the root:** the swap, `touch`, removing a release to rebuild it, and the prune.
+- **Lock.** The lock is `flock` on the root directory, since `exedev` cannot create a file in it.
+
+**Why:**
+
+- Changing what a unit runs takes `sudo`, which journals the user, directory and command, where `chmod` was silent.
+- R2's objection, "a deploy-time `sudo` for no real boundary", went with #18: the deploy already uses sudo to install units.
+- The code now matches its units and `/etc/status`, which root already owned.
+
+**What it is not: an adversarial boundary.** `exedev` can still `sudo`. It stops the accident, and leaves a record of the deliberate edit; it cannot prevent one.
+
+**Rejected:**
+
+- **Option 2, a `status` user with a sudoers rule for `deploy.sh`:** meaningless while `exedev`'s blanket sudo stands. That sudo is exe.dev's VM default, and narrowing it is a VM-wide decision beyond co-status.
+- **Option 3, keep R2 and document it:** leaves the silent path open, and the hardlinks showed the boundary was weaker than R2 assumed.
+
+**Legacy releases** stay `exedev`'s; `chown -R` would reach the cache's inodes. They age out of the prune, and a rollback to one rebuilds it.
+
 ## broker#22's questions
 
 | Q | co-status |
 |---|---|
-| 1 Location, ownership | `/srv/status`, `exedev`, releases read-only (R2) |
+| 1 Location, ownership | `/srv/status`, root's, releases read-only and root's; the units run as `exedev` (R2, #14) |
 | 2 Atomicity, rollback | release per commit plus a symlink swap; rollback is `deploy.sh <old sha>` (R2, R4, R9) |
 | 3 Git source | local object store after `git fetch`, ancestry against `origin/*` (R3) |
-| 4 Who deploys | `scripts/deploy.sh`, as `exedev`, sudo for systemctl (R13) |
+| 4 Who deploys | `scripts/deploy.sh`, as `exedev`, sudo for systemctl, unit files and every write under `/srv/status` (R13, #18, #14) |
 | 5 Dependencies | `uv sync --locked --no-dev` at build (R4, R5). No private wheels |
 | 6 Env and state | `/etc/status/` only (R11). The units write nothing under their working directory |
 | 7 Restart | the deploy restarts the API and forces a sweep pass (R6). No restart window: check-ins retry |

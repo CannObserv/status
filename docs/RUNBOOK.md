@@ -55,12 +55,13 @@ sudo install -m 640 -o root -g exedev /dev/null /etc/status/dev.env
 echo 'DEV_DATABASE_URL=postgresql+asyncpg://status:<generated>@localhost:5432/status_dev' \
   | sudo tee /etc/status/dev.env > /dev/null
 
-# The deploy root (docs/DEPLOYMENT.md). The first deploy builds a release from
+# The deploy root (docs/DEPLOYMENT.md), root's so that only sudo changes what
+# the units run (#14); deploy.sh refuses it otherwise. The first deploy builds a release from
 # origin/main, migrates status_dev then status, links both targets, and
 # installs their units (#18); --no-restart because none is enabled yet. It
 # names each new unit with its enable --now, and warns about every host
 # config below, not yet installed.
-sudo mkdir /srv/status && sudo chown exedev: /srv/status
+sudo install -d -m 755 /srv/status
 cd /home/exedev/status && scripts/deploy.sh --no-restart
 
 # Units: the API on :9000, the dev API on :9001, and both sweeps, all running
@@ -115,6 +116,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 | Change a unit | Edit `deploy/`, merge, `scripts/deploy.sh`: it installs the units that differ and reloads; a new unit it names with its `enable --now` ([DEPLOYMENT.md § Units](DEPLOYMENT.md#units)) |
 | Change a host config (sysctl, earlyoom, slices, needrestart) | Edit `deploy/`, merge, then install it by hand as under First-time setup. A live deploy warns while it differs |
 | What is running | `readlink /srv/status/live /srv/status/dev`; `build` in `/health` and in every sweep line |
+| Who changed a release or a link by hand? | `sudo journalctl _COMM=sudo \| grep /srv/status`: root owns them, so any change took sudo (#14). Lines at the time of a deploy in `journalctl -t status-deploy` are that deploy's own ([DEPLOYMENT.md § Who owns a release](DEPLOYMENT.md#who-owns-a-release)) |
 | Is the sweep firing? | `systemctl list-timers 'status-sweep*'` |
 | What did it find? | `journalctl -u status-sweep -f` — `checked`, `alerted`, `owed`, `undeliverable`, `undelivered`, `undelivered_notices` every pass |
 | Force a pass | `sudo systemctl start status-sweep.service` |

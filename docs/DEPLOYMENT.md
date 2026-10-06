@@ -5,21 +5,53 @@ How code reaches the units, and how to tell what is running. Design and reasons:
 ## Releases, not a checkout
 
 ```
-/srv/status/
-  releases/<build>/   git archive of one pushed commit + its own .venv; read-only; REVISION
+/srv/status/                 root:root 0755
+  releases/                  root:root 0755
+    <build>/                 git archive of one pushed commit + its own .venv; root's, read-only; REVISION
   live -> releases/<build>   status.service, status-sweep.service   (:9000, database status)
                              status-drift.service (#12; GitHub and healthchecks.io only)
   dev  -> releases/<build>   status-dev.service, status-sweep-dev.service (:9001, status_dev)
 ```
 
 - **No unit runs `/home/exedev/status`.** On 2026-09-29 they all did, and an unmigrated model edit crashed the production sweep for 40 minutes ([#9](https://github.com/CannObserv/status/issues/9)). Saving, committing, switching branches or running `uv sync` in a checkout now changes nothing a unit runs.
-- **A release is one commit, built once.** `<build>` is the commit's 12-character short SHA. `REVISION` is written last, so a directory without one is an interrupted build and gets rebuilt. `live` and `dev` share a release when they run the same commit.
+- **A release is one commit, built once.** `<build>` is the commit's 12-character short SHA. `REVISION` is written last, by root, once the tree is root's, so a directory without one is an interrupted build and gets rebuilt. `live` and `dev` share a release when they run the same commit.
+- **Root owns what the units run** ([§ Who owns a release](#who-owns-a-release)). The units run as `exedev` and only read it.
 - **Units never sync.** They `uv run --frozen --no-sync` the venv the deploy built.
 - **Env comes from `/etc/status/` only.** Live units read `.env`; dev units read `dev.env` (`DEV_DATABASE_URL`). No unit reads a repo `.env`.
 
+## Who owns a release
+
+**Root owns `/srv/status`, `releases/` and every finished release** ([#14](https://github.com/CannObserv/status/issues/14), [spec § Amendment](specs/2026-09-30-deploy-releases-design.md#amendment-r2-root-owns-the-releases-14)). The units run as `exedev` and read. `exedev` cannot edit a release, `chmod` it, or repoint `live` or `dev`: a link can only be replaced by someone who can write its directory.
+
+**This is not a security boundary against `exedev`.** `exedev` has passwordless sudo, and so does every agent session. What root ownership buys:
+
+- **Changing production takes `sudo`.** A plain `chmod u+w` and edit no longer works, and sudo journals every command with its user and directory: `sudo journalctl _COMM=sudo`.
+- **An accident fails loudly**, with `Permission denied` where it used to succeed.
+
+**How `deploy.sh` builds:**
+
+- `exedev` builds the release in place, at its final path, since a uv venv embeds that path. Then it removes write permission, and `sudo chown -R root:root` hands the tree to root. `REVISION` is written last, by root.
+- Venvs are built with `--link-mode copy`. Hardlinked to the uv cache, as releases were before #14, a chown would reach the cache, and an edit in one venv would reach every venv sharing the file. Each release is about 70 MB.
+- **A release not owned by root is not reused.** It is rebuilt, or refused while a target runs it, as an interrupted build is.
+- The deploy refuses a root, or a `releases/`, that root does not own or that group or others can write, and names the `sudo chown` or `sudo chmod` that fixes it.
+
+**A hand fix in an emergency** is `sudo`, and it is recorded. Prefer `deploy.sh --skip-ci` of a pushed fix, which leaves a release that is exactly a commit. A hand-edited release is still marked finished, so the next deploy of that build reuses it as it stands. Deploy a different build.
+
+**Moving to root ownership** (once per VM; on `co-status` with #14's first deploy):
+
+```bash
+sudo chown root:root /srv/status /srv/status/releases
+sudo chmod 755 /srv/status /srv/status/releases
+sudo rm -f /srv/status/.deploy.lock        # the lock is the directory now
+scripts/deploy.sh                          # a fresh root-owned release for both targets
+stat -c '%U %a %n' /srv/status /srv/status/releases "$(readlink -f /srv/status/live)"
+```
+
+The releases built before #14 stay `exedev`'s. `chown -R` would reach the uv cache's inodes through their hardlinks. The prune removes them over the next deploys, and a rollback to one rebuilds it.
+
 ## `scripts/deploy.sh`
 
-Run it as `exedev` from any checkout. It fetches `origin` itself.
+Run it as `exedev` from any checkout. It fetches `origin` itself, builds as `exedev`, and uses `sudo` for `systemctl`, unit files and every write under `/srv/status`.
 
 ```bash
 scripts/deploy.sh                       # origin/main to dev, then live, once its CI passed
@@ -52,7 +84,7 @@ The defaults are what production uses. The variables exist for the tests and for
 4. **Verify.** The pass must exit 0, bounded by the unit's `TimeoutStartSec=120`. Then, within 60 s, `/ready` must be 200 and `/health` must report `build` equal to `<build>`.
 5. **On failure,** switch back, units included, clear the unit's start limit, restart, and prove the old build the same way: its sweep pass, then its API. Exit 1 when the old build answers. Exit 4 when the target is left on a build that does not answer: the old build failed too, or there was nothing to switch back to. Either way the message names the step. The journal records the outcome only after that check. The migration stays applied. A first deploy has nothing to switch back to. Nor does a deploy of the build a target already ran, unless it replaced units: then those go back, and the build is proved on them ([§ Units](#units)).
 
-A failure on dev stops the deploy before live is touched. A failure on live leaves dev on the new build and its units, so redeploy dev from the old build if that matters. The deploy keeps the 5 most recently deployed releases, plus whatever `live` and `dev` point at. Every switch and rollback is logged: `journalctl -t status-deploy`.
+A failure on dev stops the deploy before live is touched. A failure on live leaves dev on the new build and its units, so redeploy dev from the old build if that matters. The deploy keeps the 5 most recently deployed releases, plus whatever `live` and `dev` point at. Every switch and rollback is logged: `journalctl -t status-deploy`. One deploy at a time: the lock is `flock` on `/srv/status` itself.
 
 ## The CI gate
 

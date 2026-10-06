@@ -135,7 +135,7 @@ The check is used in three places:
 ## Cutover
 
 1. **`/etc/status/dev.env`.** Copy `DEV_DATABASE_URL` from the repo `.env` into it, `root:exedev 0640`.
-2. **First deploy, units not yet switched.** `sudo mkdir /srv/status && sudo chown exedev: /srv/status`. Then build and link without restarting: `deploy.sh --no-restart`, a flag that exists for this step only.
+2. **First deploy, units not yet switched.** `sudo mkdir /srv/status && sudo chown exedev: /srv/status` (as run on 2026-09-30; superseded by #14, under which `deploy.sh` refuses a root `exedev` owns: set up a VM from the [RUNBOOK](../RUNBOOK.md)). Then build and link without restarting: `deploy.sh --no-restart`, a flag that exists for this step only.
 3. **Switch the units.** Copy them to `/etc/systemd/system/`, `daemon-reload`, restart the APIs, and start both sweeps by hand. Check `/health` `build`, `/ready`, `list-timers`, and the healthchecks.io checks.
 4. **Clean up.** Delete `.skills/worktree_venv` in the development checkout, because its `.venv` is no longer production's.
 

@@ -12,11 +12,13 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
+from sqlalchemy.dialects import postgresql
 from ulid import ULID
 
 from src.api.deps import get_alerter
 from src.api.main import app
+from src.api.routes.monitors import _with_notices
 from src.core import alerting
 from src.core.alerting import recovery_key
 from src.core.api_keys import mint
@@ -722,6 +724,16 @@ class TestNoticeStatus:
         listed = {m["id"]: m for m in (await api.get("/api/v1/monitors", headers=headers)).json()}
         assert _served(listed[monitor["id"]], "report") == (at, "partial")
         assert _served(listed[other["id"]], "report") == (None, None)
+
+    async def test_each_notice_is_one_probe_of_its_index(self, db_session):
+        """The query must match ``ix_monitor_events_notice``'s predicate, or
+        Postgres falls back to walking each monitor's history and every
+        other test here still passes (CR 4)."""
+        stmt = _with_notices().where(Monitor.tenant_id == "01J0000000000000000000TENT")
+        sql = stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+        await db_session.execute(text("SET LOCAL enable_seqscan = off"))
+        plan = "\n".join(row[0] for row in await db_session.execute(text(f"EXPLAIN {sql}")))
+        assert plan.count("Index Scan Backward using ix_monitor_events_notice") == 2, plan
 
     async def test_an_update_answers_from_one_moment(self, api, headers, monitor, db_session):
         """The monitor's columns are re-read with its notices, not left as the

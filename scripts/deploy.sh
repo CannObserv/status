@@ -135,7 +135,8 @@ roots_alone() { # <dir>
     die "$1 is writable by more than root (#14). Once: sudo chmod 755 $1"
 }
 roots_alone "$ROOT"
-[[ ! -e "$ROOT/releases" ]] || roots_alone "$ROOT/releases"
+# -L too: -e is false for a link to nowhere, which install -d cannot make (CR 12).
+[[ ! -e "$ROOT/releases" && ! -L "$ROOT/releases" ]] || roots_alone "$ROOT/releases"
 
 # The root directory itself: exedev cannot create a lock file in it.
 exec 9<"$ROOT"
@@ -285,7 +286,8 @@ in_release() { (cd "$release" && uv run --frozen --no-sync "$@"); }
 build_release() {
   [[ ! -e "$release" ]] || sudo rm -rf "$release"
   note "building $build"
-  [[ -d "$ROOT/releases" ]] || sudo install -d -m 755 "$ROOT/releases"
+  [[ -d "$ROOT/releases" ]] || sudo install -d -m 755 "$ROOT/releases" ||
+    die "cannot make $ROOT/releases; nothing switched"
   # Built where it will run, by exedev: a uv venv embeds its absolute path in
   # its scripts, so one built elsewhere and moved would not start.
   sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" "$release" ||

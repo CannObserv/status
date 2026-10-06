@@ -1100,6 +1100,16 @@ class TestOwnership:
         assert world.root_owned(made)
         assert not made.stat().st_mode & 0o222
 
+    def test_a_releases_link_to_nowhere_is_refused_as_a_link(self, world):
+        """CR 12: -e is false for a dangling link, so the link check never ran
+        and install -d failed on it with no word of why."""
+        with world.as_root():
+            (world.root / "releases").symlink_to(world.tmp / "nowhere")
+        result = world.run()
+        assert result.returncode == 1
+        assert f"{world.root}/releases is a link" in result.stderr
+        assert not [c for c in world.calls() if " sync " in c or c.startswith("sudo ")]
+
     def test_a_missing_releases_directory_is_made_by_root(self, world):
         assert_ok(world.run())
         assert f"sudo install -d -m 755 {world.root}/releases" in world.calls()

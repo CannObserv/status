@@ -57,6 +57,6 @@ A missing alert that notifier accepted but didn't deliver (`failed`, `partial`) 
 
 ## Open questions / risks
 
-- **Rollback window.** The previous release on the new schema renotifies without updating the two columns. If co-status rolls forward later, it could redeliver an older dispatch of the same outage, or of an earlier one if that release also handled a first crossing. It is bounded by the cap, and the result is an at-least-once duplicate of a real alert. Accepted.
+- **Rollback window** (CR 2). A release from before #10, running on the new schema, starts outages and renotifies without touching the two columns. If co-status then rolls forward, a chain left from before the rollback can redeliver an older dispatch, possibly from an earlier outage. That dispatch's status then lands in `last_alert_status`. `succeeded`, returned unchanged, would take the current outage's undelivered alert out of `undelivered` and turn `notifier-reachable` green. That's a silent miss, not just a duplicate. Mitigation: a step in DEPLOYMENT.md § Rollback. Before rolling forward past `b3344354c124`, run `UPDATE monitors SET last_alert_redeliver_at = NULL`. No code guard: the only cheap one compares notifier's clock with co-status's, and clock skew would turn redelivery off silently.
 - **A pass that dies after a redelivery and before its commit** calls again next pass and uses one more attempt. The cap still bounds it.
 - **At-least-once** (§ 5 of the comment): a channel whose `False` result wasn't real can get the alert twice.

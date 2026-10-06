@@ -1,7 +1,7 @@
 ---
 title: Root-owned releases, links and deploy root (#14)
 date: 2026-10-06
-status: implemented; ship pending
+status: done
 ---
 
 # Root-owned releases, links and deploy root
@@ -96,6 +96,14 @@ New or changed tests:
    ```
 
    Check: `stat -c '%U %a %n' /srv/status /srv/status/releases "$(readlink -f /srv/status/live)"` reads `root` throughout. `stat -c %h` of a file in its venv is `1`. `/health` names the new build on both ports.
+
+   **Done 2026-10-06.**
+   - The move ran on `co-status` at 18:57Z: `/srv/status` and `releases/` chowned to root, and `.deploy.lock` removed.
+   - `9f456b964701` went to dev and live through the CI gate ([run](https://github.com/CannObserv/status/actions/runs/37499809628)), and both verified. The deploy pruned `8dca9e568966`.
+   - `stat`: `/srv/status`, `releases/` and the release are `root`; the release is `555` and its `REVISION` `444`. No file in it is another user's or writable. A venv file has 1 link. The `live` and `dev` links are root's.
+   - As `exedev`: an edit in the release, a `chmod` of it, and `ln -sfn` over `live` are all refused.
+   - `/health` names `9f456b964701` on both ports; `/ready` 200, `schema_state` `current`; the production sweep passes on it.
+   - The four pre-#14 releases stay `exedev`'s, as planned, until pruned.
 
 ## Open questions
 

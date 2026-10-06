@@ -85,7 +85,10 @@ New or changed tests:
 5. **Docs:** spec R2 amendment, § Deferred, Q1, Q4, Q6 and cutover; DEPLOYMENT (layout, the boundary and what it is not, a one-time migration); RUNBOOK (setup creates a root-owned root; routine ops); AGENTS; the `deploy.sh` header.
 6. **Ship (operator).** Merge, then once on `co-status`:
 
+   From a checkout with #14 in it (an older `deploy.sh` fails at its lock file with a bare `Permission denied`):
+
    ```bash
+   git -C /home/exedev/status switch main && git -C /home/exedev/status pull --ff-only
    sudo chown root:root /srv/status /srv/status/releases
    sudo chmod 755 /srv/status /srv/status/releases
    sudo rm -f /srv/status/.deploy.lock

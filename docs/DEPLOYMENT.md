@@ -39,7 +39,10 @@ How code reaches the units, and how to tell what is running. Design and reasons:
 
 **Moving to root ownership** (once per VM; on `co-status` with #14's first deploy):
 
+From a checkout on `main` with #14 in it. `deploy.sh` runs the checkout's own copy, and an older one fails at its lock file with a bare `Permission denied`:
+
 ```bash
+git -C /home/exedev/status switch main && git -C /home/exedev/status pull --ff-only
 sudo chown root:root /srv/status /srv/status/releases
 sudo chmod 755 /srv/status /srv/status/releases
 sudo rm -f /srv/status/.deploy.lock        # the lock is the directory now

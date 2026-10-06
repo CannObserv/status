@@ -775,21 +775,28 @@ class TestTheCIGate:
         assert "--skip-ci" in result.stderr
         assert_nothing_happened(world)
 
-    def test_an_answer_that_is_not_json_refuses_the_deploy(self, world):
-        world.ci_answers("<html>unicorn</html>")
-        result = world.run()
+    @pytest.mark.parametrize("body", ["<html>unicorn</html>", '{"total_count":0}', "", " \n"])
+    def test_a_runs_answer_that_is_not_what_was_expected_refuses_the_deploy(self, world, body):
+        """#21: an empty body is no run, not a refusal, so it waits for one; no wait here
+        keeps that from taking the default 600 s."""
+        world.ci_answers(body)
+        result = world.run(STATUS_DEPLOY_CI_WAIT_SECONDS="0")
         assert result.returncode == 1
-        assert "JSON" in result.stderr
+        assert "not the JSON expected" in result.stderr
+        assert "nothing was built" in result.stderr and "--skip-ci" in result.stderr
         assert_nothing_happened(world)
 
-    @pytest.mark.parametrize("body", ["<html>unicorn</html>", '{"total_count":0}'])
+    @pytest.mark.parametrize("body", ["<html>unicorn</html>", '{"total_count":0}', "", " \n"])
     def test_a_jobs_answer_that_is_not_what_was_expected_refuses_the_deploy(self, world, body):
-        """CR 10: jq alone exits 5 and says neither that nothing was built nor --skip-ci."""
+        """CR 10: jq alone exits 5 and says neither that nothing was built nor --skip-ci.
+        #21: an empty body passed: jq given no input prints nothing and exits 0, so no
+        job looked failed."""
         world.ci_answers([ci_run(7, world.main[-1])])
         (world.ci / "jobs-7.json").write_text(body)
         result = world.run()
         assert result.returncode == 1
-        assert "JSON" in result.stderr and "nothing was built" in result.stderr
+        assert "not the JSON expected" in result.stderr
+        assert "nothing was built" in result.stderr and "--skip-ci" in result.stderr
         assert_nothing_happened(world)
 
     def test_skip_ci_deploys_without_asking_and_logs_it_first(self, world):

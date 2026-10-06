@@ -194,6 +194,12 @@ github() { # <path>: GitHub's JSON answer, or a refusal naming GitHub's message
   local out
   if out="$(curl -sS --fail-with-body --max-time 10 \
     -H 'Accept: application/vnd.github+json' "$GITHUB_API/$1")"; then
+    # A JSON object, or refused: jq reads an empty body as no input at all,
+    # prints nothing and exits 0, so an empty jobs answer listed no failed job
+    # and passed (#21).
+    jq -e 'type == "object"' <<<"$out" >/dev/null 2>&1 ||
+      die "GitHub's answer about $build's CI is not the JSON expected; nothing was built." \
+        "Deploy again later, or pass --skip-ci."
     printf '%s\n' "$out"
     return
   fi
@@ -210,7 +216,8 @@ push_run() { # the run as JSON, or nothing
   jq -c --arg sha "$sha" '[.workflow_runs[]
     | select(.head_sha == $sha and .event == "push" and .head_branch == "main")]
     | max_by(.created_at) // empty' ||
-    die "GitHub's answer about $build's CI runs is not the JSON expected; nothing was built"
+    die "GitHub's answer about $build's CI runs is not the JSON expected; nothing was built." \
+      "Deploy again later, or pass --skip-ci."
 }
 
 # Waits for the run, bounded. A commit behind origin/main's tip with no run is
@@ -260,7 +267,8 @@ ci_gate() {
       (($required | split(" "))[] as $name | select(any(.jobs[]; .name == $name) | not)
         | "\($name) (not in the run)")
     ] | join(", ")' <<<"$jobs")" ||
-    die "GitHub's answer about $build's CI jobs is not the JSON expected; nothing was built"
+    die "GitHub's answer about $build's CI jobs is not the JSON expected; nothing was built." \
+      "Deploy again later, or pass --skip-ci."
   [[ "$conclusion" == success ]] || problems="run concluded $conclusion${problems:+; $problems}"
   # Cancelled is not a verdict: a newer push, or a dispatch on main sharing
   # ci.yml's concurrency group, cancels a queued run with nothing to fix (CR 12).

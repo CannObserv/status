@@ -12,6 +12,10 @@ What the script must hold (spec R2–R4, R6, R9, R13):
 - **Immutable releases.** One per commit, built once, read-only, with
   ``REVISION`` written last. A directory without ``REVISION`` is an
   interrupted build.
+- **Root owns what the units run** (#14): the deploy root, ``releases/``, each
+  finished release, and so the links. The stubs play root: a ledger of what
+  it owns, kept unwritable but through ``sudo``, so a write under the root
+  without ``sudo`` fails here as it would on the VM.
 - **Order.** Dev before live. Migrate, then switch, then restart, then verify.
   A failed verify switches back.
 - **A database ahead of the release is not migrated.** That is a rollback.
@@ -23,14 +27,18 @@ What the script must hold (spec R2–R4, R6, R9, R13):
   installed.
 """
 
+import contextlib
 import fcntl
+import grp
 import json
 import os
+import pwd
 import re
 import shutil
 import stat
 import subprocess
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -61,16 +69,48 @@ esac
 exit 0
 """
 
+# Plays root (#14). FAKE_ROOT_OWNED is the ledger of what root owns, one
+# "D <dir>" (that directory) or "R <path>" (that tree) per line; the stat stub
+# answers from it. What root owns is kept unwritable, and only a command run
+# through here opens it, so a write under the deploy root without sudo fails.
 STUB_SUDO = r"""#!/usr/bin/env bash
 echo "sudo $*" >> "$FAKE_LOG"
 # Files are real, under STATUS_DEPLOY_ETC; FAKE_INSTALL_FAIL fails installing
 # that unit name, FAKE_TRY_RESTART_FAIL restarting it (#18).
 [[ "$*" == "systemctl try-restart ${FAKE_TRY_RESTART_FAIL:-none}" ]] && exit 1
+[[ "$1" == chown && -n "${FAKE_CHOWN_FAIL:-}" ]] && exit 1
+as_root() {
+  local kind path opened=() rc=0
+  while read -r kind path; do
+    [[ -d "$path" && ! -L "$path" ]] && chmod u+w "$path" && opened+=("$path")
+  done <"$FAKE_ROOT_OWNED"
+  # Root needs no permission to delete a read-only tree.
+  if [[ "$1" == rm && "$2" == -rf ]]; then
+    for path in "${@:3}"; do [[ -e "$path" ]] && chmod -R u+w "$path"; done
+  fi
+  "$@" || rc=$?
+  for path in "${opened[@]}"; do [[ -d "$path" ]] && chmod a-w "$path"; done
+  return $rc
+}
+ledger() { echo "$1 $2" >>"$FAKE_ROOT_OWNED"; }
 case "$1" in
   install)
     [[ -n "${FAKE_INSTALL_FAIL:-}" && "${@: -1}" == */"$FAKE_INSTALL_FAIL" ]] && exit 1
-    exec "$@" ;;
-  rm) exec "$@" ;;
+    as_root "$@" || exit
+    # A directory install -d makes is root's unless it names another owner.
+    [[ "$2" == -d* && " $* " != *" -o "* ]] && ledger D "${@: -1}"
+    exit 0 ;;
+  chown)
+    [[ "$2" == -R && "$3" == root:root ]] || { echo "stub sudo: chown $*?" >&2; exit 1; }
+    ledger R "$4"
+    exit 0 ;;
+  rm)
+    as_root "$@" || exit
+    for path in "${@:2}"; do
+      [[ -e "$path" ]] || sed -i "\\#^[DR] $path\\(/.*\\)\\{0,1\\}\$#d" "$FAKE_ROOT_OWNED"
+    done
+    exit 0 ;;
+  ln | mv | chmod | touch | tee) as_root "$@"; exit ;;
 esac
 # FAKE_SWEEP_FAIL fails that unit's pass, but only while its target runs
 # FAKE_SWEEP_FAIL_BUILD when that is set: a broken build, not a broken unit (CR 24).
@@ -168,6 +208,20 @@ STUB_LOGGER = r"""#!/usr/bin/env bash
 echo "logger $*" >> "$FAKE_LOG"
 """
 
+# `stat -c %u -- <path>`: 0 for what the ledger says root owns (#14).
+STUB_STAT = r"""#!/usr/bin/env bash
+if [[ "$1" == -c && "$2" == %u ]]; then
+  path="${@: -1}"
+  while read -r kind owned; do
+    if [[ "$path" == "$owned" || ("$kind" == R && "$path" == "$owned"/*) ]]; then
+      echo 0
+      exit 0
+    fi
+  done <"$FAKE_ROOT_OWNED"
+fi
+exec @STAT@ "$@"
+"""
+
 
 def ci_run(
     run_id: int,
@@ -219,10 +273,14 @@ class World:
         self.ci = tmp / "ci"
         self.sysetc = tmp / "sysetc"  # /etc, for units and host configs (#18)
         self.units = self.sysetc / "systemd" / "system"
+        self.owned = tmp / "root-owned"  # the sudo and stat stubs' ledger (#14)
         for d in (self.root, self.etc, self.stubs, self.ci):
             d.mkdir()
         self.units.mkdir(parents=True)
         self.log.touch()
+        # As the RUNBOOK makes it: root's, so only sudo writes in it (#14).
+        self.owned.write_text(f"D {self.root}\n")
+        self.root.chmod(0o555)
 
         git(tmp, "init", "-q", "--bare", "-b", "main", str(self.origin))
         git(tmp, "clone", "-q", str(self.origin), str(self.checkout))
@@ -251,6 +309,7 @@ class World:
             ("logger", STUB_LOGGER),
             ("systemctl", STUB_SYSTEMCTL),
             ("rm", STUB_RM),
+            ("stat", STUB_STAT.replace("@STAT@", shutil.which("stat") or "/usr/bin/stat")),
         ):
             stub = self.stubs / name
             stub.write_text(body)
@@ -266,6 +325,7 @@ class World:
             "STATUS_DEPLOY_VERIFY_SECONDS": "2",
             "STATUS_BIND_HOST": "127.0.0.1",
             "FAKE_LOG": str(self.log),
+            "FAKE_ROOT_OWNED": str(self.owned),
             # The build FAKE_STALE_PORT refuses to report: the one being deployed.
             "FAKE_NEW_BUILD": self.build(self.main[-1]),
             **fake,
@@ -340,6 +400,33 @@ class World:
     def calls(self) -> list[str]:
         return self.log.read_text().splitlines()
 
+    def root_owned(self, path: Path) -> bool:
+        """Whether the ledger says root owns ``path``, as the stat stub answers."""
+        for line in self.owned.read_text().splitlines():
+            kind, owned = line.split(" ", 1)
+            if str(path) == owned or (kind == "R" and str(path).startswith(owned + "/")):
+                return True
+        return False
+
+    def disown(self, path: Path) -> None:
+        """``path`` is exedev's again: built before #14, or handed back by hand."""
+        lines = self.owned.read_text().splitlines()
+        self.owned.write_text("".join(f"{x}\n" for x in lines if x.split(" ", 1)[1] != str(path)))
+
+    @contextlib.contextmanager
+    def as_root(self) -> Iterator[None]:
+        """A hand edit under the deploy root, done with sudo as an operator would."""
+        dirs = [Path(x.split(" ", 1)[1]) for x in self.owned.read_text().splitlines()]
+        dirs = [d for d in dirs if d.is_dir() and not d.is_symlink()]
+        for d in dirs:
+            d.chmod(d.stat().st_mode | stat.S_IWUSR)
+        try:
+            yield
+        finally:
+            for d in dirs:
+                if d.is_dir():
+                    d.chmod(d.stat().st_mode & ~0o222)
+
     def github_calls(self) -> list[str]:
         return [c for c in self.calls() if c.startswith("curl https://api.github.com/")]
 
@@ -351,10 +438,9 @@ class World:
 def world(tmp_path):
     w = World(tmp_path)
     yield w
-    # Releases are read-only; make them deletable for tmp_path's cleanup.
-    releases = w.root / "releases"
-    if releases.exists():
-        for path in [releases, *releases.rglob("*")]:
+    # The root and releases are read-only; make them deletable for tmp_path's cleanup.
+    if w.root.exists():
+        for path in [w.root, *w.root.rglob("*")]:
             if not path.is_symlink():
                 path.chmod(path.stat().st_mode | stat.S_IWUSR)
 
@@ -783,7 +869,11 @@ class TestReleases:
     def test_an_interrupted_build_is_rebuilt(self, world):
         """No REVISION means the build never finished: start it again."""
         partial = world.root / "releases" / world.build(world.main[-1])
-        partial.mkdir(parents=True)
+        with world.as_root():
+            partial.parent.mkdir()
+        world.owned.write_text(world.owned.read_text() + f"D {partial.parent}\n")
+        with world.as_root():
+            partial.mkdir()
         (partial / "half-written").write_text("x")
         assert_ok(world.run())
         assert not (partial / "half-written").exists()
@@ -833,22 +923,39 @@ class TestReleases:
         for path in [release, *release.rglob("*")]:
             if not path.is_symlink():
                 path.chmod(path.stat().st_mode | 0o200)
-        shutil.rmtree(release)
+        with world.as_root():
+            shutil.rmtree(release)
+        world.disown(release)
         assert_ok(world.run("--dev", world.main[0]))
         assert (release / "REVISION").exists()
 
-    def test_a_writable_release_is_never_reused(self, world):
-        """CR 26: uv rebuilds a writable release's broken venv empty and says 0.
-
-        A finished release is read-only; a writable one with REVISION was cut
-        short between REVISION and chmod, or half-pruned.
-        """
+    def test_a_release_root_does_not_own_is_rebuilt(self, world):
+        """#14: built before root owned releases, or handed back by hand, so
+        exedev may have changed it. It replaces CR 26's writable check: REVISION
+        is now written after the chmod and the chown, so a release cut short
+        between them has none."""
         assert_ok(world.run(world.main[0]))
         assert_ok(world.run(world.main[1]))
-        (world.root / "releases" / world.build(world.main[0])).chmod(0o755)
+        release = world.root / "releases" / world.build(world.main[0])
+        world.disown(release)
         world.reset_log()
-        assert_ok(world.run(world.main[0]))
+        result = world.run(world.main[0])
+        assert_ok(result)
         assert [c for c in world.calls() if " sync " in c]
+        assert "not root's" in result.stderr, "why it rebuilt"
+        assert world.root_owned(release)
+
+    def test_a_linked_release_root_does_not_own_is_never_rebuilt(self, world):
+        """CR 15 holds for it too: live runs from it."""
+        assert_ok(world.run(world.main[0]))
+        release = world.root / "releases" / world.build(world.main[0])
+        world.disown(release)
+        world.reset_log()
+        result = world.run("--dev", world.main[0])
+        assert result.returncode != 0
+        assert (release / "REVISION").exists()
+        assert not [c for c in world.calls() if " sync " in c]
+        assert "not root's" in result.stderr and "live" in result.stderr
 
     def test_the_reuse_probe_imports_the_dependencies_not_just_python(self, world):
         """CR 26: `import sys` passes on an empty venv."""
@@ -864,8 +971,9 @@ class TestReleases:
         assert_ok(world.run("--dev", world.main[1]))
         live = world.root / "live"
         target = world.root / "releases" / world.build(world.main[0])
-        live.unlink()
-        live.symlink_to(target)
+        with world.as_root():
+            live.unlink()
+            live.symlink_to(target)
         assert_ok(world.run("--dev", world.main[2], STATUS_DEPLOY_KEEP="1"))
         assert target.exists(), "prune deleted the release live runs"
 
@@ -875,6 +983,124 @@ class TestReleases:
         assert_ok(world.run("--dev", "origin/feature", STATUS_DEPLOY_KEEP="1"))
         kept = {p.name for p in (world.root / "releases").iterdir()}
         assert kept == {world.build(world.main[0]), world.build(world.feature)}
+
+
+class TestOwnership:
+    """#14: root owns the deploy root, releases/ and every finished release.
+
+    exedev has passwordless sudo, so this is no boundary against exedev. What it
+    does: changing what a unit runs takes sudo, which is journaled, where a
+    `chmod u+w` was silent. Every test in this file runs against a root exedev
+    cannot write, so the switch, the switch back and the prune are covered too.
+    """
+
+    def test_a_built_release_is_roots_throughout(self, world):
+        assert_ok(world.run())
+        release = world.root / "releases" / world.build(world.main[-1])
+        assert world.root_owned(world.root / "releases")
+        assert world.root_owned(release)
+        assert world.root_owned(release / "REVISION")
+        assert world.root_owned(release / ".venv")
+
+    def test_root_takes_the_release_before_revision_marks_it_finished(self, world):
+        """R4: REVISION last, so a build cut short in the chown is rebuilt."""
+        assert_ok(world.run())
+        release = world.root / "releases" / world.build(world.main[-1])
+        calls = world.calls()
+        chown = calls.index(f"sudo chown -R root:root {release}")
+        assert chown < calls.index(f"sudo tee {release}/REVISION")
+        # By sudo: the ledger cannot catch a plain chmod by the file's owner.
+        assert f"sudo chmod 444 {release}/REVISION" in calls
+        assert (release / "REVISION").stat().st_mode & 0o777 == 0o444
+
+    def test_the_release_is_built_where_it_runs_by_exedev(self, world):
+        """R4: a uv venv embeds its path, so the directory is made for exedev
+        at its final path, and only the finished tree goes to root."""
+        assert_ok(world.run())
+        release = world.root / "releases" / world.build(world.main[-1])
+        me, group = pwd.getpwuid(os.getuid()).pw_name, grp.getgrgid(os.getgid()).gr_name
+        calls = world.calls()
+        made = calls.index(f"sudo install -d -m 755 -o {me} -g {group} {release}")
+        assert made < index_of(calls, " sync ") < calls.index(f"sudo chown -R root:root {release}")
+
+    def test_the_venv_is_its_own_copy_not_the_uv_caches(self, world):
+        """Hardlinked, a chown would reach the cache, and an edit in a release
+        would edit the cache and every venv sharing the file."""
+        assert_ok(world.run())
+        (sync,) = [c for c in world.calls() if " sync " in c]
+        assert "--link-mode copy" in sync
+
+    def test_a_failed_chown_switches_nothing_and_leaves_no_revision(self, world):
+        result = world.run(FAKE_CHOWN_FAIL="1")
+        assert result.returncode == 1
+        assert world.target("dev") is None and world.target("live") is None
+        release = world.root / "releases" / world.build(world.main[-1])
+        assert not (release / "REVISION").exists()
+        assert "root" in result.stderr
+
+    def test_a_deploy_root_root_does_not_own_is_refused_with_the_fix(self, world):
+        """As on co-status before #14: exedev's, so exedev could repoint live."""
+        world.disown(world.root)
+        result = world.run()
+        assert result.returncode == 1
+        assert f"sudo chown root:root {world.root}" in result.stderr
+        assert not [c for c in world.calls() if " sync " in c or c.startswith("sudo ")]
+
+    def test_a_releases_directory_root_does_not_own_is_refused_with_the_fix(self, world):
+        assert_ok(world.run(world.main[0]))
+        world.disown(world.root / "releases")
+        world.reset_log()
+        result = world.run()
+        assert result.returncode == 1
+        assert f"sudo chown root:root {world.root}/releases" in result.stderr
+        assert not [c for c in world.calls() if " sync " in c or c.startswith("sudo ")]
+
+    def test_a_group_writable_deploy_root_is_refused(self, world):
+        world.root.chmod(0o575)
+        result = world.run()
+        assert result.returncode == 1
+        assert f"sudo chmod 755 {world.root}" in result.stderr
+        assert not [c for c in world.calls() if c.startswith("sudo ")]
+
+    def test_a_missing_releases_directory_is_made_by_root(self, world):
+        assert_ok(world.run())
+        assert f"sudo install -d -m 755 {world.root}/releases" in world.calls()
+
+    def test_the_links_are_replaced_by_root(self, world):
+        assert_ok(world.run())
+        calls = world.calls()
+        for target in ("dev", "live"):
+            assert f"sudo mv -Tf {world.root}/{target}.new {world.root}/{target}" in calls
+
+    def test_a_switch_back_is_done_by_root(self, world):
+        assert_ok(world.run(world.main[0]))
+        world.reset_log()
+        result = world.run(FAKE_STALE_PORT="9000")
+        assert result.returncode == 1, result.stderr
+        assert world.target("live") == f"releases/{world.build(world.main[0])}"
+        move = f"sudo mv -Tf {world.root}/live.new {world.root}/live"
+        assert world.calls().count(move) == 2, "there and back"
+
+    def test_a_reused_release_is_touched_by_root(self, world):
+        """Prune order is last deploy (R13). The ledger cannot catch a plain
+        touch: the test's user owns the directory, and an owner may set its
+        times. exedev, on the VM, is not the owner."""
+        assert_ok(world.run(world.main[0]))
+        world.reset_log()
+        assert_ok(world.run(world.main[0]))
+        release = world.root / "releases" / world.build(world.main[0])
+        assert f"sudo touch {release}" in world.calls()
+
+    def test_the_prune_is_done_by_root_revision_first(self, world):
+        assert_ok(world.run(world.main[0]))
+        assert_ok(world.run(world.main[1]))
+        world.reset_log()
+        assert_ok(world.run(world.main[2], STATUS_DEPLOY_KEEP="1"))
+        old = world.root / "releases" / world.build(world.main[0])
+        assert not old.exists()
+        calls = world.calls()
+        assert calls.index(f"sudo rm -f {old}/REVISION") < calls.index(f"sudo rm -rf {old}")
+        assert not world.root_owned(old), "the ledger forgets what was removed"
 
 
 class TestMigrations:
@@ -905,7 +1131,8 @@ class TestMigrations:
         result = world.run(FAKE_MIGRATE_RC="1")
         assert result.returncode != 0
         assert world.target("dev") is None
-        assert not [c for c in world.calls() if c.startswith("sudo ")]
+        switched = ("sudo ln ", "sudo mv ", "sudo systemctl ", "sudo install -m 644 ")
+        assert not [c for c in world.calls() if c.startswith(switched)]
 
 
 class TestVerification:
@@ -1010,8 +1237,9 @@ class TestVerification:
         elsewhere = world.tmp / "elsewhere"
         elsewhere.mkdir()
         live = world.root / "live"
-        live.unlink()
-        live.symlink_to(elsewhere)
+        with world.as_root():
+            live.unlink()
+            live.symlink_to(elsewhere)
         result = world.run(FAKE_STALE_PORT="9000")
         assert result.returncode == 1, "a checkout answers as 'dev', and it did (CR 36)"
         assert "which is answering" in result.stderr
@@ -1106,7 +1334,7 @@ class TestOperation:
         installs them (#18): TestUnits, test_no_restart_installs_and_reloads_*."""
         assert_ok(world.run("--no-restart"))
         assert world.target("live") == f"releases/{world.build(world.main[-1])}"
-        assert not [c for c in world.calls() if c.startswith(("sudo ", "curl http://"))]
+        assert not [c for c in world.calls() if c.startswith(("sudo systemctl", "curl http://"))]
         assert [c for c in world.calls() if "alembic upgrade" in c]
 
     def test_no_restart_is_refused_once_a_target_runs_a_release(self, world):
@@ -1119,22 +1347,31 @@ class TestOperation:
         assert "first deploy" in result.stderr
         assert world.target("live") == before
         # CR 17: a first deploy that failed half way retries by removing the link.
-        assert f"rm {world.root}/dev" in result.stderr
+        assert f"sudo rm {world.root}/dev" in result.stderr
 
     def test_a_concurrent_deploy_is_refused(self, world):
-        with open(world.root / ".deploy.lock", "w") as held:
+        """The lock is the deploy root itself (#14): exedev cannot create a
+        file in a directory root owns."""
+        held = os.open(world.root, os.O_RDONLY)
+        try:
             fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
             result = world.run()
+        finally:
+            os.close(held)
         assert result.returncode != 0
         assert "another deploy" in result.stderr
         # CR 11: the lock is taken before the CI gate, which may wait 10 minutes.
         assert not world.github_calls()
 
+    def test_the_lock_leaves_nothing_behind(self, world):
+        assert_ok(world.run())
+        assert sorted(p.name for p in world.root.iterdir()) == ["dev", "live", "releases"]
+
     def test_a_missing_root_says_how_to_create_it(self, world):
         world.root.rmdir()
         result = world.run()
         assert result.returncode != 0
-        assert "mkdir" in result.stderr
+        assert f"sudo install -d -m 755 {world.root}" in result.stderr
 
     def test_a_missing_env_file_is_refused(self, world):
         (world.etc / "dev.env").unlink()
@@ -1195,7 +1432,8 @@ class TestOperation:
         assert world.run("--live-only").returncode != 0
 
     def test_root_is_refused(self):
-        """Releases belong to exedev, the units' user (R13); root would own them."""
+        """exedev builds (R13): as root, uv would build with root's cache and
+        interpreters, which the units cannot read. Root only takes the result (#14)."""
         assert '"$(id -u)" -eq 0' in DEPLOY.read_text()
 
 
@@ -1209,8 +1447,8 @@ V1 = {
 
 
 def installs(calls: list[str]) -> list[str]:
-    """The unit names `sudo install` wrote, in order."""
-    return [Path(c.split()[-1]).name for c in calls if c.startswith("sudo install ")]
+    """The unit names `sudo install` wrote, in order; not the release directories (#14)."""
+    return [Path(c.split()[-1]).name for c in calls if c.startswith("sudo install -m 644 ")]
 
 
 class TestUnits:

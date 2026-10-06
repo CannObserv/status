@@ -35,9 +35,12 @@
 # slice drop-ins, needrestart) are compared with their installed copies; a
 # difference is a warning, never installed (#18).
 #
-# Runs as exedev, the units' user; sudo for systemctl and for unit files in
-# /etc/systemd/system (install, and rm on a switch back) only. Exits 0 when
-# every target verified, 4 when a target is left on a build that did not
+# Runs as exedev, the units' user, and builds as exedev. Root owns the deploy
+# root, releases/ and every finished release, so the links too (#14): sudo for
+# every write under the root, for systemctl, and for unit files in
+# /etc/systemd/system. exedev can still sudo anything; what root ownership buys
+# is that changing what a unit runs takes sudo, which is journaled. Exits 0
+# when every target verified, 4 when a target is left on a build that did not
 # answer (no rollback possible, or the old build failed too), 1 otherwise.
 set -euo pipefail
 
@@ -109,18 +112,31 @@ live=0
 [[ " ${targets[*]} " == *" live "* ]] && live=1
 ((live || !skip_ci)) || die "--skip-ci is for live; dev is never gated"
 
-# Releases belong to exedev, the user every unit runs as. Built by root they
-# would be root's, and the units could not read their own venvs.
-[[ "$(id -u)" -eq 0 ]] && die "run as exedev, not root; the script sudoes for systemctl itself"
+# exedev builds, and root only takes the finished release (#14). Built by
+# root, uv would use root's cache and interpreters, which the units cannot read.
+[[ "$(id -u)" -eq 0 ]] && die "run as exedev, not root; the script sudoes where it needs to"
 
 # A release has a copy of this script and no .git to build from (CR 11).
 git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 ||
   die "run from a checkout (/home/exedev/status/scripts/deploy.sh); $SRC is not one"
 
-[[ -d "$ROOT" ]] || die "$ROOT does not exist. Once: sudo mkdir $ROOT && sudo chown exedev: $ROOT"
+[[ -d "$ROOT" ]] || die "$ROOT does not exist. Once: sudo install -d -m 755 $ROOT"
 
-exec 9>"$ROOT/.deploy.lock"
-flock -n 9 || die "another deploy is running (it holds $ROOT/.deploy.lock)"
+# Root's, and writable by root alone: a link is only as safe as its directory,
+# and exedev could otherwise repoint live with ln (#14).
+roots_alone() { # <dir>
+  [[ "$(stat -c %u -- "$1")" == 0 ]] ||
+    die "$1 is not root's, so exedev can change what the units run (#14)." \
+      "Once: sudo chown root:root $1 (docs/DEPLOYMENT.md § Who owns a release)"
+  [[ -z "$(find "$1" -maxdepth 0 -perm /022)" ]] ||
+    die "$1 is writable by more than root (#14). Once: sudo chmod 755 $1"
+}
+roots_alone "$ROOT"
+[[ ! -e "$ROOT/releases" ]] || roots_alone "$ROOT/releases"
+
+# The root directory itself: exedev cannot create a lock file in it.
+exec 9<"$ROOT"
+flock -n 9 || die "another deploy is running (it holds the lock on $ROOT)"
 
 # The installed units each target replaces, kept for a switch back (#18).
 backup="$(mktemp -d "${TMPDIR:-/tmp}/status-deploy.XXXXXX")"
@@ -134,7 +150,7 @@ if ((!restart)); then
   for target in "${targets[@]}"; do
     [[ ! -L "$ROOT/$target" ]] ||
       die "--no-restart is for the first deploy only: $target already runs $(readlink "$ROOT/$target")." \
-        "If no unit runs $ROOT yet (a first deploy that failed half way): rm $ROOT/$target, and retry (CR 17)."
+        "If no unit runs $ROOT yet (a first deploy that failed half way): sudo rm $ROOT/$target, and retry (CR 17)."
   done
 fi
 
@@ -263,28 +279,30 @@ fi
 # Commands inside the release run exactly what was built (R5).
 in_release() { (cd "$release" && uv run --frozen --no-sync "$@"); }
 
-make_writable() { chmod -R u+w "$1"; }
-
 build_release() {
-  if [[ -e "$release" ]]; then
-    make_writable "$release"
-    rm -rf "$release"
-  fi
+  [[ ! -e "$release" ]] || sudo rm -rf "$release"
   note "building $build"
-  mkdir -p "$release"
+  [[ -d "$ROOT/releases" ]] || sudo install -d -m 755 "$ROOT/releases"
+  # Built where it will run, by exedev: a uv venv embeds its absolute path in
+  # its scripts, so one built elsewhere and moved would not start.
+  sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" "$release"
   git -C "$SRC" archive "$sha" | tar -x -C "$release"
-  # Built where it will run: a uv venv embeds its absolute path in its
-  # scripts, so one built elsewhere and moved would not start.
-  (cd "$release" && uv sync --locked --no-dev --compile-bytecode --quiet) ||
+  # Copied, not hardlinked to the uv cache: the chown below would reach the
+  # cache's inodes, and an edit in a release would edit every venv sharing the
+  # file (#14).
+  (cd "$release" && uv sync --locked --no-dev --compile-bytecode --link-mode copy --quiet) ||
     die "uv sync failed for $build; nothing switched"
   in_release python -m compileall -q src scripts alembic >/dev/null ||
     die "compileall failed for $build; nothing switched"
   local heads
   heads="$(in_release alembic heads | grep -c .)" || true
   [[ "$heads" == 1 ]] || die "$build has $heads Alembic heads, not 1; nothing switched"
-  # REVISION last: a release without one is an interrupted build (R4).
-  echo "$build" >"$release/REVISION"
   chmod -R a-w "$release"
+  sudo chown -R root:root "$release" || die "cannot hand $build to root; nothing switched"
+  # REVISION last, by root: a release without one is an interrupted build (R4),
+  # the chown included.
+  { echo "$build" | sudo tee "$release/REVISION" >/dev/null && sudo chmod 444 "$release/REVISION"; } ||
+    die "cannot write $build's REVISION; nothing switched"
 }
 
 # The build a target's link names, by its last component: a link made by hand
@@ -309,10 +327,11 @@ linked_by() { # the targets whose link names this release
 # from under its sweep and API, unverified, and a failed sync leaves the target
 # with no release at all (CR 15).
 # Why this release cannot be reused as it stands; nothing when it can.
-#   - No REVISION: an interrupted build (R4).
-#   - Writable: finished releases are read-only, so this one was cut short
-#     between REVISION and chmod, or half-pruned; uv would quietly rebuild its
-#     venv empty rather than fail the probe (CR 26).
+#   - No REVISION: an interrupted build (R4), or half-pruned (CR 26).
+#   - Not root's: built before #14, or handed back by hand, so exedev may have
+#     changed it. REVISION follows the chmod and the chown, so this also covers
+#     CR 26's release cut short before its chmod, which uv would quietly
+#     rebuild empty rather than fail the probe.
 #   - The probe fails: its venv no longer runs, say a uv-managed interpreter
 #     since removed (CR 9). It imports dependencies, as `import sys` passes on
 #     an empty venv.
@@ -322,8 +341,8 @@ unusable() {
     echo "not built"
   elif [[ ! -f "$release/REVISION" ]]; then
     echo "an interrupted build"
-  elif [[ -w "$release" ]]; then
-    echo "writable, so never finished"
+  elif [[ "$(stat -c %u -- "$release")" != 0 ]]; then
+    echo "not root's (#14)"
   elif ! out="$(in_release python -c 'import fastapi, sqlalchemy, alembic' 2>&1)"; then
     echo "a venv that no longer runs (${out:-no output})"
   fi
@@ -345,7 +364,7 @@ else
   [[ "$why" == "not built" ]] || note "release $build is $why; rebuilding"
   build_release
 fi
-touch "$release" # prune by last deploy, not first build
+sudo touch "$release" # prune by last deploy, not first build
 
 # --- each target -----------------------------------------------------------
 
@@ -406,8 +425,8 @@ served_build() {
 }
 
 swap() { # <link> <target>: rename(2) over the old link, so there is no moment without one
-  ln -sfn "$2" "$1.new"
-  mv -Tf "$1.new" "$1"
+  sudo ln -sfn "$2" "$1.new"
+  sudo mv -Tf "$1.new" "$1"
 }
 
 verify_http() { # <port> <build>: /ready 200 and /health naming <build>
@@ -638,7 +657,6 @@ ls -1t "$ROOT/releases" | tail -n +$((KEEP + 1)) | while read -r old; do
   # deploy (CR 10).
   # REVISION first: a prune cut short leaves an interrupted build, never a
   # "complete" one with half its files (CR 26).
-  { make_writable "$ROOT/releases/$old" && rm -f "$ROOT/releases/$old/REVISION" &&
-    rm -rf "${ROOT:?}/releases/$old"; } ||
-    note "prune failed for $old; remove it by hand (chmod -R u+w first)"
+  { sudo rm -f "$ROOT/releases/$old/REVISION" && sudo rm -rf "${ROOT:?}/releases/$old"; } ||
+    note "prune failed for $old; remove it by hand: sudo rm -rf $ROOT/releases/$old"
 done

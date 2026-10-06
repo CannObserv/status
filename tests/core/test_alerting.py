@@ -12,6 +12,7 @@ import httpx
 import pytest
 import respx
 from notifier_client import NotifierClient, RetryConfig
+from notifier_client.types import DispatchOut
 
 from src.core.alerting import (
     CREDENTIAL_NAME,
@@ -22,9 +23,11 @@ from src.core.alerting import (
     AlertRejected,
     Budget,
     BudgetExceeded,
+    Delivery,
     EndpointMismatch,
     NoDeliverableChannel,
     NotifierUnavailable,
+    RedeliveryCapped,
     TemplateRejected,
     alerter_from_environment,
     missing_key,
@@ -341,6 +344,101 @@ class TestSend:
         callers catch one base class."""
         for cls in (NotifierUnavailable, AlertRejected, NoDeliverableChannel, BudgetExceeded):
             assert issubclass(cls, AlertNotAccepted)
+
+
+REDELIVER = "/api/v1/dispatch/01J0000000000000000000DISP/redeliver"
+
+
+def _attempt(attempt: int, status: str, minute: int, channel: str = CHANNELS[0]) -> dict:
+    return {
+        "attempt": attempt,
+        "channel_id": channel,
+        "reason": "" if status == "succeeded" else "refused",
+        "started_at": f"2026-09-09T12:{minute:02d}:00Z",
+        "finished_at": f"2026-09-09T12:{minute:02d}:04Z",
+        "status": status,
+    }
+
+
+class TestRedeliver:
+    """notifier's ``redeliver()`` (#10, notifier#96), mapped as ``send`` maps."""
+
+    async def test_returns_the_updated_record(self, alerter, notifier):
+        route = notifier.post(REDELIVER).respond(
+            202,
+            json=_dispatch(
+                "succeeded", attempts=[_attempt(1, "failed", 0), _attempt(2, "succeeded", 1)]
+            ),
+        )
+        delivery = await alerter.redeliver("01J0000000000000000000DISP")
+        assert delivery.dispatch_id == "01J0000000000000000000DISP"
+        assert delivery.status == "succeeded"
+        assert route.call_count == 1
+
+    @pytest.mark.parametrize("status", ["failed", "partial"])
+    async def test_still_failing_is_a_record_not_an_error(self, alerter, notifier, status):
+        notifier.post(REDELIVER).respond(202, json=_dispatch(status))
+        delivery = await alerter.redeliver("01J0000000000000000000DISP")
+        assert delivery.status == status
+
+    async def test_a_409_is_capped_and_names_the_channels(self, alerter, notifier):
+        notifier.post(REDELIVER).respond(
+            409, json={"detail": {"message": "attempt cap", "channel_ids": [CHANNELS[1]]}}
+        )
+        with pytest.raises(RedeliveryCapped) as caught:
+            await alerter.redeliver("01J0000000000000000000DISP")
+        assert caught.value.channel_ids == (CHANNELS[1],)
+        assert caught.value.status_code == 409
+
+    async def test_a_409_without_a_body_is_still_capped(self, alerter, notifier):
+        notifier.post(REDELIVER).respond(409, text="conflict")
+        with pytest.raises(RedeliveryCapped) as caught:
+            await alerter.redeliver("01J0000000000000000000DISP")
+        assert caught.value.channel_ids == ()
+
+    @pytest.mark.parametrize("code", [401, 403, 404, 422])
+    async def test_a_refusal_is_rejected(self, alerter, notifier, code):
+        notifier.post(REDELIVER).respond(code, json={"detail": "no"})
+        with pytest.raises(AlertRejected) as caught:
+            await alerter.redeliver("01J0000000000000000000DISP")
+        assert caught.value.status_code == code
+        assert not isinstance(caught.value, RedeliveryCapped)
+
+    async def test_a_network_failure_is_unavailable(self, alerter, notifier):
+        notifier.post(REDELIVER).mock(side_effect=httpx.ConnectError("refused"))
+        with pytest.raises(NotifierUnavailable):
+            await alerter.redeliver("01J0000000000000000000DISP")
+
+    @pytest.mark.parametrize("code", [429, 503])
+    async def test_a_5xx_or_429_is_unavailable_and_never_retried(self, alerter, notifier, code):
+        """Each call can spend an attempt against notifier's cap."""
+        route = notifier.post(REDELIVER).respond(code)
+        with pytest.raises(NotifierUnavailable):
+            await alerter.redeliver("01J0000000000000000000DISP")
+        assert route.call_count == 1
+
+    def test_capped_is_a_rejection(self):
+        """Callers that only care whether a record came back catch one family."""
+        assert issubclass(RedeliveryCapped, AlertRejected)
+
+
+class TestLatestAttempt:
+    """What the sweep spaces the next redelivery from (#10)."""
+
+    def test_is_the_highest_attempt_and_when_it_started(self, client):
+        record = _dispatch(
+            "partial",
+            attempts=[
+                _attempt(1, "failed", 0, CHANNELS[0]),
+                _attempt(1, "succeeded", 0, CHANNELS[1]),
+                _attempt(2, "failed", 1, CHANNELS[0]),
+            ],
+        )
+        delivery = Delivery(dispatch=DispatchOut.from_dict(record))
+        assert delivery.latest_attempt == (2, datetime(2026, 9, 9, 12, 1, tzinfo=UTC))
+
+    def test_none_without_attempts(self):
+        assert Delivery(dispatch=DispatchOut.from_dict(_dispatch("failed"))).latest_attempt is None
 
 
 class TestCheckTemplate:

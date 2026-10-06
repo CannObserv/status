@@ -75,6 +75,18 @@ class AlertRejected(AlertNotAccepted):
         self.status_code = status_code
 
 
+class RedeliveryCapped(AlertRejected):
+    """notifier's 409: every failed channel of the dispatch used its attempts.
+
+    Terminal for that dispatch (#10). Fixing a channel afterwards does not
+    reopen it; only a new alert, under a new key, reaches it again.
+    """
+
+    def __init__(self, message: str, channel_ids: tuple[str, ...]) -> None:
+        super().__init__(message, 409)
+        self.channel_ids = channel_ids
+
+
 class NoDeliverableChannel(AlertNotAccepted):
     """No channel id left that notifier recognises — or none configured."""
 
@@ -110,6 +122,18 @@ class Delivery:
     @property
     def status(self) -> str:
         return str(self.dispatch.status)
+
+    @property
+    def latest_attempt(self) -> tuple[int, datetime] | None:
+        """The highest attempt number, and when the newest attempt started.
+
+        What the sweep spaces the next redelivery from (#10). ``None`` when
+        notifier listed no attempts.
+        """
+        attempts = self.dispatch.attempts
+        if not attempts:
+            return None
+        return max(a.attempt for a in attempts), max(a.started_at for a in attempts)
 
 
 def read_notifier_key(environ: Mapping[str, str] = os.environ) -> str:
@@ -176,16 +200,24 @@ class Budget:
         return await within_budget(awaitable, budget=self.remaining())
 
 
-def _unknown_channel_ids(error: NotifierError) -> list[str]:
-    """The ids a 404 from ``/dispatch`` names, or ``[]`` for any other 404."""
-    if error.status_code != 404 or error.response is None:
+def _detail_channel_ids(error: NotifierError) -> list[str]:
+    """The ``detail.channel_ids`` an error body names, or ``[]``."""
+    if error.response is None:
         return []
     try:
-        detail = error.response.json().get("detail", {})
+        body = error.response.json()
     except ValueError:
         return []
+    detail = body.get("detail") if isinstance(body, dict) else None
     ids = detail.get("channel_ids") if isinstance(detail, dict) else None
     return [str(i) for i in ids] if isinstance(ids, list) else []
+
+
+def _unknown_channel_ids(error: NotifierError) -> list[str]:
+    """The ids a 404 from ``/dispatch`` names, or ``[]`` for any other 404."""
+    if error.status_code != 404:
+        return []
+    return _detail_channel_ids(error)
 
 
 class Alerter:
@@ -283,6 +315,27 @@ class Alerter:
                 },
             )
         return delivery
+
+    async def redeliver(self, dispatch_id: str) -> Delivery:
+        """Retry the failed channels of an accepted dispatch (#10, notifier#96).
+
+        Returns the updated record, whatever its ``status``; one with nothing
+        failed comes back unchanged. Raises :class:`RedeliveryCapped` on a
+        409, :class:`AlertRejected` on any other 4xx (a 404 is a dispatch
+        notifier no longer has), and :class:`NotifierUnavailable` as ``send``
+        does. Never retried here or in the SDK: each call can spend an attempt
+        against notifier's per-channel cap. Sweep only — one call can take
+        about 8 s per failed channel, more than a check-in's budget.
+        """
+        try:
+            dispatch = await self._client.redeliver(dispatch_id)
+        except (httpx.TransportError, ServerError, RateLimited) as exc:
+            raise NotifierUnavailable(f"notifier redeliver unreachable: {exc!r}") from exc
+        except NotifierError as exc:
+            if exc.status_code == 409:
+                raise RedeliveryCapped(str(exc), tuple(_detail_channel_ids(exc))) from exc
+            raise AlertRejected(str(exc), exc.status_code) from exc
+        return Delivery(dispatch=dispatch)
 
     async def _dispatch(
         self,

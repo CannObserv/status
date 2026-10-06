@@ -216,3 +216,38 @@ def recovery_notification(monitor: Monitor, now: datetime) -> Notice:
             "last_checkin": _last_seen(monitor),
         },
     )
+
+
+#: How long after an attempt the sweep redelivers a missing alert notifier
+#: accepted and did not deliver (#10), by attempt number: the original send
+#: is attempt 1. The last delay repeats; notifier's per-channel cap ends the
+#: chain with a 409, so nothing here counts attempts. Retrying every 60 s
+#: pass would spend the cap in four minutes on a channel that is usually
+#: down for longer.
+REDELIVERY_DELAYS = (
+    timedelta(minutes=1),
+    timedelta(minutes=5),
+    timedelta(minutes=15),
+    timedelta(minutes=60),
+)
+
+
+def redelivery_due(attempt: int, started_at: datetime) -> datetime:
+    """When to redeliver after *attempt*, which notifier started at *started_at*."""
+    index = min(max(attempt, 1), len(REDELIVERY_DELAYS)) - 1
+    return _as_utc(started_at) + REDELIVERY_DELAYS[index]
+
+
+def should_redeliver(monitor: Monitor, now: datetime) -> bool:
+    """Whether this pass should redeliver the monitor's last missing alert.
+
+    ``last_alert_redeliver_at`` is the switch: the sweep clears it once the
+    alert is delivered or notifier caps it. A monitor that renotifies is
+    included — ``redeliver()`` needs no new key and does not repeat channels
+    that delivered, which were #7's reasons to leave it out.
+    """
+    if not monitor.enabled or monitor.state != MonitorState.MISSING:
+        return False
+    if not monitor.last_alert_dispatch_id or monitor.last_alert_redeliver_at is None:
+        return False
+    return now >= _as_utc(monitor.last_alert_redeliver_at)

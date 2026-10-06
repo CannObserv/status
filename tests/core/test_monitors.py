@@ -16,6 +16,7 @@ import pytest
 
 from src.core.models.monitor import Monitor
 from src.core.monitors import (
+    REDELIVERY_DELAYS,
     CheckinStatus,
     EventKind,
     MonitorState,
@@ -25,7 +26,9 @@ from src.core.monitors import (
     is_overdue,
     missing_notification,
     recovery_notification,
+    redelivery_due,
     should_alert,
+    should_redeliver,
 )
 
 NOW = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
@@ -162,6 +165,71 @@ class TestShouldAlert:
             renotify_seconds=3600,
         )
         assert should_alert(monitor, NOW) is True
+
+
+class TestRedeliveryDue:
+    """Spaced from notifier's own attempt log, not the 60 s sweep (#10)."""
+
+    def test_the_schedule_is_1_5_15_then_60_minutes(self):
+        assert [d.total_seconds() / 60 for d in REDELIVERY_DELAYS] == [1, 5, 15, 60]
+
+    @pytest.mark.parametrize(("attempt", "minutes"), [(1, 1), (2, 5), (3, 15), (4, 60)])
+    def test_each_attempt_waits_its_delay(self, attempt, minutes):
+        assert redelivery_due(attempt, NOW) == NOW + timedelta(minutes=minutes)
+
+    def test_past_the_schedule_the_last_delay_repeats(self):
+        """notifier's cap ends it with a 409, not a count kept here."""
+        assert redelivery_due(9, NOW) == NOW + timedelta(minutes=60)
+
+    def test_an_attempt_below_one_reads_as_the_first(self):
+        assert redelivery_due(0, NOW) == NOW + timedelta(minutes=1)
+
+
+class TestShouldRedeliver:
+    def _due(self, **overrides) -> Monitor:
+        fields = {
+            "state": MonitorState.MISSING,
+            "last_alert_at": NOW - timedelta(minutes=2),
+            "last_alert_status": "failed",
+            "last_alert_dispatch_id": "01J0000000000000000000DISP",
+            "last_alert_redeliver_at": NOW - timedelta(minutes=1),
+        }
+        fields.update(overrides)
+        return _monitor(**fields)
+
+    def test_a_missing_monitor_past_its_redelivery_is_due(self):
+        assert should_redeliver(self._due(), NOW)
+
+    def test_the_due_time_itself_is_due(self):
+        assert should_redeliver(self._due(last_alert_redeliver_at=NOW), NOW)
+
+    def test_not_before_it(self):
+        assert not should_redeliver(
+            self._due(last_alert_redeliver_at=NOW + timedelta(seconds=1)), NOW
+        )
+
+    def test_none_scheduled_is_never_due(self):
+        """Delivered, or capped by notifier."""
+        assert not should_redeliver(self._due(last_alert_redeliver_at=None), NOW)
+
+    def test_no_dispatch_is_never_due(self):
+        assert not should_redeliver(self._due(last_alert_dispatch_id=None), NOW)
+
+    @pytest.mark.parametrize("state", [MonitorState.OK, MonitorState.PENDING])
+    def test_a_monitor_no_longer_missing_is_not(self, state):
+        assert not should_redeliver(self._due(state=state), NOW)
+
+    def test_a_disabled_monitor_is_not(self):
+        assert not should_redeliver(self._due(enabled=False), NOW)
+
+    def test_a_renotifying_monitor_is_included(self):
+        """redeliver() needs no new key and skips channels that delivered: #7's
+        reasons to leave these out do not apply, and a 24 h renotify is long."""
+        assert should_redeliver(self._due(renotify_seconds=86400), NOW)
+
+    def test_naive_timestamps_are_read_as_utc(self):
+        due = (NOW - timedelta(minutes=1)).replace(tzinfo=None)
+        assert should_redeliver(self._due(last_alert_redeliver_at=due), NOW)
 
 
 class TestFormatDuration:

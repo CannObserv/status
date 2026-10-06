@@ -65,7 +65,23 @@ class MonitorUpdate(BaseModel):
 
 
 class MonitorOut(BaseModel):
-    """Response body for the monitor CRUD endpoints."""
+    """Response body for the monitor CRUD endpoints.
+
+    Three ``last_*`` families, each about something different:
+
+    - ``last_checkin_at``, ``last_status``, ``last_variables``: the latest
+      check-in, whatever it sent.
+    - ``last_alert_at``, ``last_alert_status``: the latest alert that this
+      monitor had gone missing (#6).
+    - ``last_report_*`` and ``last_recovery_*``: the latest report (a
+      check-in with ``status: alert``) and the latest recovery notice that
+      owed a dispatch, at any age (#20).
+
+    Every ``*_status`` is what became of that notice: ``succeeded``,
+    ``partial`` or ``failed`` as notifier delivered it, or, for a report or
+    recovery, ``not_accepted`` when notifier never took it (#19). A 202 from
+    the check-in is not a delivery.
+    """
 
     id: str
     tenant_id: str

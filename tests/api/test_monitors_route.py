@@ -725,6 +725,13 @@ class TestNoticeStatus:
         assert _served(listed[monitor["id"]], "report") == (at, "partial")
         assert _served(listed[other["id"]], "report") == (None, None)
 
+    async def test_the_owner_is_told_which_last_is_which(self):
+        """The owner reads OpenAPI, not our comments: ``last_report_*`` is not
+        the latest check-in, and the statuses are named there (CR 7)."""
+        described = app.openapi()["components"]["schemas"]["MonitorOut"]["description"]
+        for name in ("last_status", "last_alert_status", "last_report_", "not_accepted"):
+            assert name in described
+
     async def test_each_notice_is_one_probe_of_its_index(self, db_session):
         """The query must match ``ix_monitor_events_notice``'s predicate, or
         Postgres falls back to walking each monitor's history and every

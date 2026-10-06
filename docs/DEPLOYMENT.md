@@ -38,12 +38,10 @@ How code reaches the units, and how to tell what is running. Design and reasons:
 
 **A hand fix in an emergency** is `sudo`. Name the path on sudo's command line (`sudo vim /srv/status/…`, not `sudo -i`), so the journal records it. Prefer `deploy.sh --skip-ci` of a pushed fix, which leaves a release that is exactly a commit. A hand-edited release is still marked finished, so the next deploy of that build reuses it as it stands. Deploy a different build.
 
-**Moving to root ownership** (once per VM; on `co-status` with #14's first deploy):
-
-From a checkout on `main` with #14 in it. `deploy.sh` runs the checkout's own copy, and an older one fails at its lock file with a bare `Permission denied`:
+**Moving to root ownership** (once per VM; on `co-status` with #14's first deploy), from a checkout on `main` with #14 in it. `deploy.sh` runs the checkout's own copy, and an older one fails at its lock file with a bare `Permission denied`:
 
 ```bash
-git -C /home/exedev/status switch main && git -C /home/exedev/status pull --ff-only
+cd /home/exedev/status && git switch main && git pull --ff-only
 sudo chown root:root /srv/status /srv/status/releases
 sudo chmod 755 /srv/status /srv/status/releases
 sudo rm -f /srv/status/.deploy.lock        # the lock is the directory now

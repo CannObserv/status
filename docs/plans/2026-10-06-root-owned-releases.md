@@ -88,7 +88,7 @@ New or changed tests:
    From a checkout with #14 in it (an older `deploy.sh` fails at its lock file with a bare `Permission denied`):
 
    ```bash
-   git -C /home/exedev/status switch main && git -C /home/exedev/status pull --ff-only
+   cd /home/exedev/status && git switch main && git pull --ff-only
    sudo chown root:root /srv/status /srv/status/releases
    sudo chmod 755 /srv/status /srv/status/releases
    sudo rm -f /srv/status/.deploy.lock

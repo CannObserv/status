@@ -13,6 +13,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from src.core import sweep
 from src.core.alerting import NOT_ACCEPTED, EndpointMismatch, missing_key
 from src.core.models import MonitorEvent
 from src.core.models.monitor import Monitor
@@ -43,10 +44,27 @@ async def _save(db_session, tenant, **overrides) -> Monitor:
     return monitor
 
 
-def _dispatch_record(status: str, key: str = "k") -> dict:
+DISP = "01J0000000000000000000DISP"
+
+
+def _attempt(attempt: int, at: datetime, status: str = "failed") -> dict:
+    """One channel attempt as notifier lists it."""
+    return {
+        "attempt": attempt,
+        "channel_id": CHANNELS[0],
+        "reason": "" if status == "succeeded" else "refused",
+        "started_at": at.isoformat(),
+        "finished_at": (at + timedelta(seconds=4)).isoformat(),
+        "status": status,
+    }
+
+
+def _dispatch_record(
+    status: str, key: str = "k", id: str = DISP, attempts: list[dict] | None = None
+) -> dict:
     """A dispatch notifier accepted, with delivery *status*."""
     return {
-        "id": "01J0000000000000000000DISP",
+        "id": id,
         "tenant_id": "01J0000000000000000000TENT",
         "template_id": None,
         "idempotency_key": key,
@@ -55,7 +73,7 @@ def _dispatch_record(status: str, key: str = "k") -> dict:
         "status": status,
         "metadata": {},
         "created_at": "2026-09-09T12:00:00Z",
-        "attempts": [],
+        "attempts": attempts or [],
     }
 
 
@@ -223,7 +241,7 @@ class TestTheUndeliveredAlert:
         monitor = await _save(db_session, tenant)
         await sweep_monitors(db_session, alerter, NOW)
 
-        report = await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
+        report = await sweep_monitors(db_session, alerter, NOW + timedelta(seconds=30))
 
         assert report.alerted == []
         assert report.undelivered == {str(monitor.id): "failed"}
@@ -270,6 +288,241 @@ class TestTheUndeliveredAlert:
         assert report.owed == [str(monitor.id)]
         assert report.undelivered == {}
         assert monitor.last_alert_status is None
+
+
+class TestTheRedelivery:
+    """#10: an undelivered missing alert is redelivered through notifier, on
+    a schedule spaced from notifier's own attempts, until it is delivered or
+    notifier caps it."""
+
+    async def _undelivered(self, db_session, tenant, alerter, notifier, **overrides) -> Monitor:
+        """A monitor whose first missing alert, at NOW, came back failed."""
+        notifier.dispatch.respond(202, json=_dispatch_record("failed", attempts=[_attempt(1, NOW)]))
+        monitor = await _save(db_session, tenant, **overrides)
+        await sweep_monitors(db_session, alerter, NOW)
+        return monitor
+
+    async def test_the_send_keeps_the_dispatch_and_when_to_retry_it(
+        self, db_session, tenant, alerter, notifier
+    ):
+        monitor = await self._undelivered(db_session, tenant, alerter, notifier)
+        assert monitor.last_alert_dispatch_id == DISP
+        assert monitor.last_alert_redeliver_at == NOW + timedelta(minutes=1)
+        assert notifier.redelivered() == []
+
+    async def test_without_attempts_the_pass_is_the_first_attempt(
+        self, db_session, tenant, alerter, notifier
+    ):
+        notifier.dispatch.respond(202, json=_dispatch_record("partial"))
+        monitor = await _save(db_session, tenant)
+        await sweep_monitors(db_session, alerter, NOW)
+        assert monitor.last_alert_redeliver_at == NOW + timedelta(minutes=1)
+
+    async def test_a_delivered_send_schedules_nothing(self, db_session, tenant, alerter, notifier):
+        monitor = await _save(db_session, tenant)
+        await sweep_monitors(db_session, alerter, NOW)
+        assert monitor.last_alert_dispatch_id is not None
+        assert monitor.last_alert_redeliver_at is None
+
+    async def test_a_new_outage_forgets_the_last_ones_dispatch(
+        self, db_session, tenant, alerter, notifier
+    ):
+        notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+        monitor = await _save(
+            db_session,
+            tenant,
+            last_alert_at=NOW - timedelta(days=1),
+            last_alert_status="failed",
+            last_alert_dispatch_id=DISP,
+            last_alert_redeliver_at=NOW - timedelta(days=1),
+        )
+        await sweep_monitors(db_session, alerter, NOW)
+        assert monitor.last_alert_dispatch_id is None
+        assert monitor.last_alert_redeliver_at is None
+
+    async def test_not_before_it_is_due(self, db_session, tenant, alerter, notifier):
+        await self._undelivered(db_session, tenant, alerter, notifier)
+        report = await sweep_monitors(db_session, alerter, NOW + timedelta(seconds=59))
+        assert notifier.redelivered() == []
+        assert report.redelivered == {}
+
+    async def test_a_delivered_redelivery_clears_it_in_the_same_pass(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """What turns ``notifier-reachable`` green without a new alert."""
+        monitor = await self._undelivered(db_session, tenant, alerter, notifier)
+
+        report = await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
+
+        assert notifier.redelivered() == [DISP]
+        assert report.redelivered == {str(monitor.id): "succeeded"}
+        assert report.undelivered == {}
+        assert report.alerted == []
+        assert monitor.last_alert_status == "succeeded"
+        assert monitor.last_alert_redeliver_at is None
+        assert monitor.last_alert_at == NOW  # when the alert went out, not the retry
+
+    async def test_still_failing_is_retried_on_the_schedule(
+        self, db_session, tenant, alerter, notifier
+    ):
+        monitor = await self._undelivered(db_session, tenant, alerter, notifier)
+        retried = NOW + timedelta(minutes=1)
+        notifier.redeliver.respond(
+            202,
+            json=_dispatch_record(
+                "failed", attempts=[_attempt(1, NOW), _attempt(2, retried + timedelta(seconds=2))]
+            ),
+        )
+
+        report = await sweep_monitors(db_session, alerter, retried)
+
+        assert report.redelivered == {str(monitor.id): "failed"}
+        assert report.undelivered == {str(monitor.id): "failed"}
+        assert monitor.last_alert_redeliver_at == retried + timedelta(minutes=5, seconds=2)
+
+    async def test_a_partial_redelivery_is_still_undelivered(
+        self, db_session, tenant, alerter, notifier
+    ):
+        monitor = await self._undelivered(db_session, tenant, alerter, notifier)
+        notifier.redelivering("partial")
+        report = await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
+        assert report.undelivered == {str(monitor.id): "partial"}
+
+    async def test_a_409_ends_the_redelivery_and_keeps_it_reported(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """notifier's cap is terminal for the dispatch; a person is paged (#6)."""
+        monitor = await self._undelivered(db_session, tenant, alerter, notifier)
+        notifier.redeliver.respond(409, json={"detail": {"channel_ids": [CHANNELS[0]]}})
+
+        report = await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
+        later = await sweep_monitors(db_session, alerter, NOW + timedelta(days=1))
+
+        assert report.redelivered == {str(monitor.id): "capped"}
+        assert monitor.last_alert_redeliver_at is None
+        assert notifier.redeliver.call_count == 1
+        assert later.undelivered == {str(monitor.id): "failed"}
+
+    async def test_a_dispatch_notifier_no_longer_has_ends_it(
+        self, db_session, tenant, alerter, notifier
+    ):
+        monitor = await self._undelivered(db_session, tenant, alerter, notifier)
+        notifier.redeliver.respond(404, json={"detail": "not found"})
+        report = await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
+        assert monitor.last_alert_redeliver_at is None
+        assert report.undelivered == {str(monitor.id): "failed"}
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            httpx.ConnectError("refused"),
+            httpx.Response(503),
+            httpx.Response(401, json={"detail": "no"}),
+        ],
+    )
+    async def test_any_other_failure_leaves_it_due(
+        self, db_session, tenant, alerter, notifier, failure
+    ):
+        monitor = await self._undelivered(db_session, tenant, alerter, notifier)
+        notifier.redeliver.mock(side_effect=[failure])
+        report = await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
+        assert monitor.last_alert_redeliver_at == NOW + timedelta(minutes=1)
+        assert report.undelivered == {str(monitor.id): "failed"}
+        assert report.redelivered == {}
+
+    async def test_nothing_is_redelivered_when_notifier_did_not_answer_health(
+        self, db_session, tenant, alerter, notifier
+    ):
+        await self._undelivered(db_session, tenant, alerter, notifier)
+        notifier.health.mock(side_effect=httpx.ConnectError("refused"))
+        await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
+        assert notifier.redelivered() == []
+
+    async def test_a_monitor_that_renotifies_is_redelivered_too(
+        self, db_session, tenant, alerter, notifier
+    ):
+        await self._undelivered(db_session, tenant, alerter, notifier, renotify_seconds=86400)
+        await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
+        assert notifier.redelivered() == [DISP]
+
+    async def test_a_renotify_starts_a_new_chain(self, db_session, tenant, alerter, notifier):
+        """The renotify's dispatch replaces the old one, which is not retried after it."""
+        monitor = await self._undelivered(
+            db_session, tenant, alerter, notifier, renotify_seconds=3600
+        )
+        renotified = NOW + timedelta(hours=1)
+        newer = "01J0000000000000000000DSP2"
+        notifier.dispatch.respond(
+            202, json=_dispatch_record("failed", id=newer, attempts=[_attempt(1, renotified)])
+        )
+
+        report = await sweep_monitors(db_session, alerter, renotified)
+
+        assert report.alerted == [str(monitor.id)]
+        assert notifier.redelivered() == []
+        assert monitor.last_alert_dispatch_id == newer
+        assert monitor.last_alert_redeliver_at == renotified + timedelta(minutes=1)
+
+    async def test_an_alert_from_before_10_is_left_as_it_was(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """No dispatch id: it clears as before, on recovery or a renotify."""
+        monitor = await _save(
+            db_session,
+            tenant,
+            state=MonitorState.MISSING,
+            last_alert_at=NOW - timedelta(hours=1),
+            last_alert_status="failed",
+        )
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert notifier.redelivered() == []
+        assert report.undelivered == {str(monitor.id): "failed"}
+
+    async def test_a_recovered_monitor_is_not_redelivered(
+        self, db_session, tenant, alerter, notifier
+    ):
+        await _save(
+            db_session,
+            tenant,
+            state=MonitorState.OK,
+            last_checkin_at=NOW - timedelta(minutes=5),
+            last_alert_status="failed",
+            last_alert_dispatch_id=DISP,
+            last_alert_redeliver_at=NOW - timedelta(minutes=1),
+        )
+        await sweep_monitors(db_session, alerter, NOW)
+        assert notifier.redelivered() == []
+
+    async def test_the_window_defers_the_rest_oldest_due_first(
+        self, db_session, tenant, alerter, notifier, monkeypatch
+    ):
+        """A redelivery can take ~8 s per failed channel, and the unit has 120 s."""
+        ids = [f"01J000000000000000000DSP{n:02d}" for n in range(3)]
+        for n, dispatch_id in enumerate(ids):
+            await _save(
+                db_session,
+                tenant,
+                state=MonitorState.MISSING,
+                last_alert_at=NOW - timedelta(hours=1),
+                last_alert_status="failed",
+                last_alert_dispatch_id=dispatch_id,
+                # Saved newest-due first, so the order is the sweep's own.
+                last_alert_redeliver_at=NOW - timedelta(minutes=n),
+            )
+        clock = [0.0]
+        monkeypatch.setattr(sweep, "monotonic", lambda: clock[0])
+
+        def slow(request):
+            clock[0] += sweep.REDELIVERY_WINDOW.total_seconds() / 2
+            return httpx.Response(202, json=_dispatch_record("failed"))
+
+        notifier.redeliver.mock(side_effect=slow)
+
+        report = await sweep_monitors(db_session, alerter, NOW)
+
+        assert notifier.redelivered() == [ids[2], ids[1]]
+        assert len(report.redelivered) == 2
+        assert len(report.undelivered) == 3
 
 
 async def _notice(

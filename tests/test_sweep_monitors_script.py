@@ -112,6 +112,23 @@ async def test_the_line_names_the_undelivered_notices(
     assert line.undelivered_notices == {str(overdue_monitor.id): {"report": "partial"}}
 
 
+async def test_the_line_names_the_redeliveries(
+    db_session, overdue_monitor, alerter, notifier, caplog
+):
+    """What each redelivery came to, capped included (#10)."""
+    overdue_monitor.state = MonitorState.MISSING
+    overdue_monitor.last_alert_at = datetime.now(UTC) - timedelta(hours=1)
+    overdue_monitor.last_alert_status = "failed"
+    overdue_monitor.last_alert_dispatch_id = "01J0000000000000000000DISP"
+    overdue_monitor.last_alert_redeliver_at = datetime.now(UTC) - timedelta(minutes=1)
+    with caplog.at_level("INFO"):
+        await run_sweep(db_session, alerter)
+
+    (line,) = [r for r in caplog.records if r.message == "monitor sweep complete"]
+    assert line.redelivered == {str(overdue_monitor.id): "succeeded"}
+    assert line.undelivered == {}
+
+
 async def test_the_line_names_the_build_that_ran(
     db_session, overdue_monitor, alerter, notifier, caplog
 ):

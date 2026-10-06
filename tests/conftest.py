@@ -339,6 +339,7 @@ class FakeNotifier:
     channels: respx.Route
     preview: respx.Route
     dispatch: respx.Route
+    redeliver: respx.Route
 
     def dispatched(self) -> list[dict]:
         """The JSON bodies POSTed to /dispatch, in order."""
@@ -355,6 +356,14 @@ class FakeNotifier:
             return _echo_dispatch(request, by_reason.get(reason, status))
 
         self.dispatch.mock(side_effect=respond)
+
+    def redelivered(self) -> list[str]:
+        """The dispatch ids POSTed to /dispatch/{id}/redeliver, in order (#10)."""
+        return [call.request.url.path.split("/")[-2] for call in self.redeliver.calls]
+
+    def redelivering(self, status: str = "succeeded") -> None:
+        """Answer every redelivery from now on with delivery *status* (#10)."""
+        self.redeliver.mock(side_effect=lambda request: _echo_redelivery(request, status))
 
     def refusing(self, reason: str, code: int = 422) -> None:
         """Refuse every dispatch whose ``metadata.reason`` is *reason*; accept the rest (#19)."""
@@ -388,6 +397,26 @@ def _echo_dispatch(request: httpx.Request, status: str = "succeeded") -> httpx.R
     )
 
 
+def _echo_redelivery(request: httpx.Request, status: str = "succeeded") -> httpx.Response:
+    """The dispatch the path names, with *status*; no attempts, as the fake sends none."""
+    dispatch_id = request.url.path.split("/")[-2]
+    return httpx.Response(
+        202,
+        json={
+            "id": dispatch_id,
+            "tenant_id": "01J0000000000000000000TENT",
+            "template_id": None,
+            "idempotency_key": None,
+            "rendered_title": "t",
+            "rendered_body": "b",
+            "status": status,
+            "metadata": {},
+            "created_at": "2026-09-09T12:00:00Z",
+            "attempts": [],
+        },
+    )
+
+
 @pytest.fixture
 def notifier() -> Iterator[FakeNotifier]:
     """A development notifier that accepts everything, until a test says not."""
@@ -411,6 +440,9 @@ def notifier() -> Iterator[FakeNotifier]:
             ),
             preview=mock.post("/api/v1/preview").respond(json={"title": "t", "body": "b"}),
             dispatch=mock.post("/api/v1/dispatch").mock(side_effect=_echo_dispatch),
+            redeliver=mock.post(path__regex=r"^/api/v1/dispatch/[^/]+/redeliver$").mock(
+                side_effect=_echo_redelivery
+            ),
         )
 
 

@@ -15,6 +15,14 @@ Accepted is not delivered (#6): notifier's delivery ``status`` is kept in
 ``last_alert_status``, and every pass reports each ``missing`` monitor whose
 last alert did not succeed, until it recovers or a later alert gets through.
 
+Nor is it given up on (#10): the pass redelivers that dispatch through
+notifier, which retries only the channels that failed, under the same
+dispatch. Spaced by :data:`~src.core.monitors.REDELIVERY_DELAYS` from
+notifier's own attempts, until it is delivered — which takes the monitor out
+of ``undelivered`` in that pass — or notifier caps it with a 409. Only here,
+after every alert of the pass is sent, never on the check-in path: one
+redelivery can take about 8 s per failed channel.
+
 The check-in path's notices, recovery and report, have no pass of their own
 (#8). The route keeps each one's status on its ``monitor_events`` row,
 ``not_accepted`` when notifier never took it (#19), and every pass here
@@ -24,6 +32,7 @@ that kind does or :data:`NOTICE_WINDOW` ends. Nothing resends them.
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import distinct_on
@@ -33,13 +42,24 @@ from src.core.alerting import (
     DELIVERED,
     Alerter,
     AlertNotAccepted,
+    AlertRejected,
+    Delivery,
     NotifierUnavailable,
+    RedeliveryCapped,
     missing_key,
 )
 from src.core.logging import get_logger
 from src.core.models import MonitorEvent
 from src.core.models.monitor import Monitor
-from src.core.monitors import EventKind, MonitorState, missing_notification, should_alert
+from src.core.monitors import (
+    EventKind,
+    MonitorState,
+    _as_utc,
+    missing_notification,
+    redelivery_due,
+    should_alert,
+    should_redeliver,
+)
 
 logger = get_logger(__name__)
 
@@ -48,6 +68,15 @@ logger = get_logger(__name__)
 #: nothing resends it (#7): without an end it would hold ``notifier-reachable``
 #: down for good. A working day, so somebody sees it (#8).
 NOTICE_WINDOW = timedelta(hours=24)
+
+#: No redelivery starts later than this into a pass's redeliveries; the rest
+#: stay due for the next pass. One can take ~8 s per failed channel, and the
+#: unit has ``TimeoutStartSec=120`` for everything (#10). One already sent is
+#: never cancelled: it could land at notifier and spend an attempt unrecorded.
+REDELIVERY_WINDOW = timedelta(seconds=45)
+
+#: :attr:`SweepReport.redelivered`'s value for a dispatch notifier capped.
+CAPPED = "capped"
 
 #: The check-in path's notices: the event kind each is recorded as, and its
 #: name in :attr:`SweepReport.undelivered_notices`.
@@ -65,6 +94,9 @@ class SweepReport:
     owed: list[str] = field(default_factory=list)
     #: Overdue with no channel configured at all: nowhere to send.
     undeliverable: list[str] = field(default_factory=list)
+    #: Redelivered this pass (#10): monitor id → the status notifier returned,
+    #: or ``capped`` when it refused because every failed channel is out of attempts.
+    redelivered: dict[str, str] = field(default_factory=dict)
     #: Missing, and notifier accepted its last alert but did not deliver it:
     #: monitor id → ``failed`` or ``partial``. Every pass, not just the one that sent.
     undelivered: dict[str, str] = field(default_factory=dict)
@@ -93,7 +125,8 @@ async def sweep_monitors(
     A monitor is marked ``missing`` whether or not the alert went out. The
     state describes the consumer, not our luck reaching notifier.
 
-    It also reports, without sending anything, what did not reach anyone:
+    Then it redelivers each missing alert notifier did not deliver, once due
+    (#10). It also reports, without sending anything, what did not reach anyone:
     each missing monitor's last alert, if notifier accepted it and did not
     deliver it (``undelivered``, #6), and each monitor's latest recovery and
     report within :data:`NOTICE_WINDOW`, undelivered or never accepted, read
@@ -114,6 +147,9 @@ async def sweep_monitors(
         report.checked += 1
         if should_alert(monitor, now):
             await _alert(session, alerter, monitor, now, report)
+    if report.notifier_ok:
+        await _redeliver_due(alerter, monitors, now, report)
+    for monitor in monitors:
         status = monitor.last_alert_status
         if monitor.state == MonitorState.MISSING and status and status != DELIVERED:
             report.undelivered[str(monitor.id)] = status
@@ -123,6 +159,61 @@ async def sweep_monitors(
 
     await session.flush()
     return report
+
+
+def _record_delivery(monitor: Monitor, delivery: Delivery, now: datetime) -> None:
+    """Keep the dispatch and its status, and when to redeliver it, if ever."""
+    monitor.last_alert_status = delivery.status
+    monitor.last_alert_dispatch_id = delivery.dispatch_id
+    if delivery.status == DELIVERED:
+        monitor.last_alert_redeliver_at = None
+    else:
+        attempt, started_at = delivery.latest_attempt or (1, now)
+        monitor.last_alert_redeliver_at = redelivery_due(attempt, started_at)
+
+
+async def _redeliver_due(
+    alerter: Alerter, monitors: list[Monitor], now: datetime, report: SweepReport
+) -> None:
+    """Redeliver every due missing alert, oldest due first, within the window."""
+    due = sorted(
+        (m for m in monitors if should_redeliver(m, now)),
+        key=lambda m: _as_utc(m.last_alert_redeliver_at),
+    )
+    started = monotonic()
+    for n, monitor in enumerate(due):
+        if monotonic() - started >= REDELIVERY_WINDOW.total_seconds():
+            logger.warning(f"{len(due) - n} redelivery(ies) deferred to the next pass")
+            return
+        await _redeliver(alerter, monitor, now, report)
+
+
+async def _redeliver(
+    alerter: Alerter, monitor: Monitor, now: datetime, report: SweepReport
+) -> None:
+    """Redeliver one monitor's last missing alert, and record what came of it."""
+    monitor_id = str(monitor.id)
+    dispatch_id = monitor.last_alert_dispatch_id
+    extra = {"monitor_id": monitor_id, "dispatch_id": dispatch_id}
+    try:
+        delivery = await alerter.redeliver(dispatch_id)
+    except RedeliveryCapped as exc:
+        # Terminal for this dispatch; it stays undelivered, so a person is paged (#6).
+        monitor.last_alert_redeliver_at = None
+        report.redelivered[monitor_id] = CAPPED
+        logger.error(
+            f"missing alert for {monitor.name} capped by notifier; no more redeliveries "
+            f"(channels {', '.join(exc.channel_ids) or 'unnamed'})",
+            extra=extra,
+        )
+    except AlertNotAccepted as exc:
+        if isinstance(exc, AlertRejected) and exc.status_code == 404:
+            # notifier no longer has it: asking again cannot bring it back.
+            monitor.last_alert_redeliver_at = None
+        logger.error(f"redelivery of missing alert for {monitor.name} failed: {exc}", extra=extra)
+    else:
+        _record_delivery(monitor, delivery, now)
+        report.redelivered[monitor_id] = delivery.status
 
 
 async def _undelivered_notices(
@@ -165,6 +256,8 @@ async def _alert(
     if first_crossing:
         # A new outage: the last one's delivery says nothing about this one.
         monitor.last_alert_status = None
+        monitor.last_alert_dispatch_id = None
+        monitor.last_alert_redeliver_at = None
     dispatch_id = dispatch_status = None
     if not monitor.channel_ids:
         report.undeliverable.append(str(monitor.id))
@@ -194,7 +287,7 @@ async def _alert(
         else:
             dispatch_id, dispatch_status = delivery.dispatch_id, delivery.status
             monitor.last_alert_at = now
-            monitor.last_alert_status = delivery.status
+            _record_delivery(monitor, delivery, now)
             report.alerted.append(str(monitor.id))
 
     if first_crossing:

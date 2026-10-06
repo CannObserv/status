@@ -64,6 +64,7 @@ async def run_sweep(
             "alerted": report.alerted,
             "owed": report.owed,
             "undeliverable": report.undeliverable,
+            "redelivered": report.redelivered,
             "undelivered": report.undelivered,
             "undelivered_notices": report.undelivered_notices,
         },

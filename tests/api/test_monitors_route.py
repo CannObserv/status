@@ -479,6 +479,21 @@ class TestRecovery:
         assert reasons == ["recovered", "report"]
         assert len(response.json()["dispatches"]) == 2
 
+    async def test_a_due_redelivery_is_left_to_the_sweep(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """One redelivery can take ~8 s per failed channel: past a check-in's budget (#10)."""
+        await _make_missing(db_session, monitor["id"])
+        row = await _row(db_session, monitor["id"])
+        row.last_alert_status = "failed"
+        row.last_alert_dispatch_id = "01J0000000000000000000DISP"
+        row.last_alert_redeliver_at = datetime.now(UTC) - timedelta(minutes=1)
+        await db_session.flush()
+
+        await _checkin(api, headers, monitor)
+
+        assert notifier.redelivered() == []
+
 
 class TestDeliveryStatus:
     """Accepted is not delivered (#8): each notice's event keeps notifier's

@@ -9,7 +9,9 @@ because the sweep's owed-alert rule turns on it (``last_alert_at`` is set only
 on acceptance). So every way of not getting a dispatch record raises one
 family, :class:`AlertNotAccepted`, and a record comes back as a
 :class:`Delivery` whatever its delivery ``status``: a 202 says notifier took
-the alert, not that it reached anyone (notifier#70).
+the alert, not that it reached anyone (notifier#70). One it took and did not
+deliver can be redelivered (:meth:`Alerter.redeliver`, #10) until notifier
+caps it.
 """
 
 import asyncio

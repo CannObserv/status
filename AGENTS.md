@@ -28,9 +28,9 @@ Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 
 | Module | Role |
 |---|---|
-| `src/core/monitors.py` | Pure: deadlines, `should_alert` (incl. the owed-alert rule), built-in wording as `Notice` |
-| `src/core/alerting.py` | **The only module that talks to notifier.** Endpoint check, idempotency keys, `send()`, request `Budget` |
-| `src/core/sweep.py` | The pass that marks missing monitors and sends/owes their alerts; reports undelivered ones, the check-in's notices too, never-accepted ones included (#6, #8, #19) |
+| `src/core/monitors.py` | Pure: deadlines, `should_alert` (incl. the owed-alert rule), `should_redeliver` and its schedule, built-in wording as `Notice` |
+| `src/core/alerting.py` | **The only module that talks to notifier.** Endpoint check, idempotency keys, `send()`, `redeliver()`, request `Budget` |
+| `src/core/sweep.py` | The pass that marks missing monitors and sends/owes their alerts; redelivers undelivered ones, spaced, until delivered or capped (#10); reports undelivered ones, the check-in's notices too, never-accepted ones included (#6, #8, #19) |
 | `src/core/heartbeat.py` | healthchecks.io pings after each production pass (#1), and the API's `/ready` (#13); never fails the sweep. `ping()` for any check |
 | `src/core/drift.py` | Does live lag `origin/main` in code that runs? GitHub, unauthenticated; hourly `status-drift.timer` → `co-status-drift` (#12) |
 | `src/core/importer.py` | One monitor in from notifier's export, disabled |

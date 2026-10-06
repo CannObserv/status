@@ -100,7 +100,8 @@ class MonitorOut(BaseModel):
     last_variables: dict[str, Any]
     last_alert_at: datetime | None
     #: notifier's delivery ``status`` for that alert: ``succeeded``,
-    #: ``partial`` or ``failed``. Accepted is not delivered (#6).
+    #: ``partial`` or ``failed``. Accepted is not delivered (#6). It can move
+    #: to ``succeeded`` later, when the sweep's redelivery gets through (#10).
     last_alert_status: str | None
     #: When the latest report (a check-in with ``status: alert``) that owed
     #: a notice arrived. Not the latest check-in: that is

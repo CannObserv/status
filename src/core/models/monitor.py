@@ -113,6 +113,7 @@ class Monitor(Base, TimestampMixin):
     #: (``succeeded``, ``partial`` or ``failed``). Cleared when an outage
     #: begins; kept after recovery, when nothing reads it — the sweep only
     #: reports it for ``missing`` monitors. Accepted is not delivered (#6).
+    #: A redelivery's result replaces it (#10).
     last_alert_status: Mapped[str | None] = mapped_column(String, nullable=True)
     #: The notifier dispatch ``last_alert_status`` describes: the one the
     #: sweep redelivers (#10). Set and cleared with the status. Not the

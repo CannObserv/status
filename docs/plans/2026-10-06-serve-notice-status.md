@@ -31,7 +31,7 @@ The check-in keeps each recovery's and report's delivery status on its `monitor_
 ## Steps
 
 1. **Index + migration** (test first): `MonitorEvent.__table_args__` gains the partial index; Alembic revision; `alembic check` clean.
-2. **Schema + route** (tests first, `tests/api/test_monitors_route.py`): get, list and patch serve each kind's latest status and `at`. A later delivered report replaces an earlier failed one. A later null-status report doesn't. Recovery and report are independent. `not_accepted` is served as is. Null with no events. Another tenant's events never leak (it can't see the monitor). A real check-in, end to end, shows `failed` from a refusing notifier.
+2. **Schema + route** (tests first, `tests/api/test_monitors_route.py`): get, list and patch serve each kind's latest status and `at`. A later delivered report replaces an earlier failed one. A later null-status report doesn't. Recovery and report are independent. `not_accepted` is served as is. Null with no events. A real check-in, end to end, shows `failed` when notifier delivers it so, and `not_accepted` for each way #19 names. Another tenant's events can't leak, because it can't see the monitor at all (`TestTenantIsolation`).
 3. **Docs:** `MonitorOut` field comments, monitors.md (§ The sweep: drop "only the operator sees it"; say what the owner sees), the `dispatch_status` docstring, the RUNBOOK if it tells owners to ask the operator.
 4. **Ship:** CI on the branch, merge on explicit OK, then `scripts/deploy.sh` (the migration runs on dev, then live).
 

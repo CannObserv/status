@@ -425,7 +425,7 @@ class TestRedeliver:
 class TestLatestAttempt:
     """What the sweep spaces the next redelivery from (#10)."""
 
-    def test_is_the_highest_attempt_and_when_it_started(self, client):
+    def test_is_the_highest_attempt_and_when_it_started(self):
         record = _dispatch(
             "partial",
             attempts=[

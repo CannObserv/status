@@ -97,8 +97,12 @@ case "$1" in
   install)
     [[ -n "${FAKE_INSTALL_FAIL:-}" && "${@: -1}" == */"$FAKE_INSTALL_FAIL" ]] && exit 1
     as_root "$@" || exit
-    # A directory install -d makes is root's unless it names another owner.
-    [[ "$2" == -d* && " $* " != *" -o "* ]] && ledger D "${@: -1}"
+    # A directory install -d makes is root's unless it names another owner,
+    # and unwritable at once, like the rest of what root owns (CR 8).
+    if [[ "$2" == -d* && " $* " != *" -o "* ]]; then
+      ledger D "${@: -1}"
+      chmod a-w "${@: -1}"
+    fi
     exit 0 ;;
   chown)
     [[ "$2" == -R && "$3" == root:root ]] || { echo "stub sudo: chown $*?" >&2; exit 1; }
@@ -1081,6 +1085,17 @@ class TestOwnership:
         assert result.returncode == 1
         assert "a link" in result.stderr and "writable" not in result.stderr
         assert not [c for c in world.calls() if c.startswith("sudo ")]
+
+    def test_a_directory_the_sudo_stub_makes_as_root_is_unwritable_at_once(self, world):
+        """CR 8: the harness relocked only what was root's before the command,
+        so a new root directory stayed writable until the next sudo."""
+        made = world.root / "releases"
+        env = {**os.environ, "FAKE_LOG": str(world.log), "FAKE_ROOT_OWNED": str(world.owned)}
+        subprocess.run(
+            [str(world.stubs / "sudo"), "install", "-d", "-m", "755", str(made)], env=env, check=True
+        )
+        assert world.root_owned(made)
+        assert not made.stat().st_mode & 0o222
 
     def test_a_missing_releases_directory_is_made_by_root(self, world):
         assert_ok(world.run())

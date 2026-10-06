@@ -1093,7 +1093,9 @@ class TestOwnership:
         made = world.root / "releases"
         env = {**os.environ, "FAKE_LOG": str(world.log), "FAKE_ROOT_OWNED": str(world.owned)}
         subprocess.run(
-            [str(world.stubs / "sudo"), "install", "-d", "-m", "755", str(made)], env=env, check=True
+            [str(world.stubs / "sudo"), "install", "-d", "-m", "755", str(made)],
+            env=env,
+            check=True,
         )
         assert world.root_owned(made)
         assert not made.stat().st_mode & 0o222

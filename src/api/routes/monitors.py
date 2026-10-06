@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import Select, select, true
+from sqlalchemy import Lateral, Select, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,7 +60,7 @@ router = APIRouter(prefix="/monitors", tags=["monitors"])
 AlerterDep = Annotated[Alerter | None, Depends(get_alerter)]
 
 
-def _latest_notice(kind: EventKind):
+def _latest_notice(kind: EventKind) -> Lateral:
     """Each monitor's latest *kind* event that owed a notice: its ``at`` and status.
 
     One probe of ``ix_monitor_events_notice`` per monitor, however many

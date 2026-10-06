@@ -376,45 +376,41 @@ class FakeNotifier:
         self.dispatch.mock(side_effect=respond)
 
 
+def _record(**fields) -> dict:
+    """A ``DispatchOut`` as notifier returns it; *fields* override the defaults."""
+    return {
+        "id": str(ULID()),
+        "tenant_id": "01J0000000000000000000TENT",
+        "template_id": None,
+        "idempotency_key": None,
+        "rendered_title": "t",
+        "rendered_body": "b",
+        "status": "succeeded",
+        "metadata": {},
+        "created_at": "2026-09-09T12:00:00Z",
+        "attempts": [],
+    } | fields
+
+
 def _echo_dispatch(request: httpx.Request, status: str = "succeeded") -> httpx.Response:
     body = json.loads(request.content)
     return httpx.Response(
         202,
-        json={
-            "id": str(ULID()),
-            "tenant_id": "01J0000000000000000000TENT",
-            "template_id": None,
-            "idempotency_key": body.get("idempotency_key"),
+        json=_record(
+            idempotency_key=body.get("idempotency_key"),
             # No Jinja here: echoing the template is enough to tell which
             # notice a dispatch carried.
-            "rendered_title": body["title_template"],
-            "rendered_body": body["body_template"],
-            "status": status,
-            "metadata": body.get("metadata", {}),
-            "created_at": "2026-09-09T12:00:00Z",
-            "attempts": [],
-        },
+            rendered_title=body["title_template"],
+            rendered_body=body["body_template"],
+            status=status,
+            metadata=body.get("metadata", {}),
+        ),
     )
 
 
 def _echo_redelivery(request: httpx.Request, status: str = "succeeded") -> httpx.Response:
     """The dispatch the path names, with *status*; no attempts, as the fake sends none."""
-    dispatch_id = request.url.path.split("/")[-2]
-    return httpx.Response(
-        202,
-        json={
-            "id": dispatch_id,
-            "tenant_id": "01J0000000000000000000TENT",
-            "template_id": None,
-            "idempotency_key": None,
-            "rendered_title": "t",
-            "rendered_body": "b",
-            "status": status,
-            "metadata": {},
-            "created_at": "2026-09-09T12:00:00Z",
-            "attempts": [],
-        },
-    )
+    return httpx.Response(202, json=_record(id=request.url.path.split("/")[-2], status=status))
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 ---
 title: Redeliver undelivered missing alerts through notifier (#10)
 date: 2026-10-06
-status: in progress
+status: done
 ---
 
 # Redeliver undelivered missing alerts through notifier
@@ -58,6 +58,11 @@ A missing alert that notifier accepted but didn't deliver (`failed`, `partial`) 
    Each due time is the returned attempt's `started_at` plus its delay, not the 60 s timer. Every pass's journal line showed `redelivered: {…: "failed"}`, and the monitor stayed in `undelivered`.
 7. **Docs:** monitors.md § Accepted is not delivered (drop "Nothing is resent"), sweep/alerting docstrings, the model's column comments, and the AGENTS.md layout rows.
 8. **Ship:** CI on the branch, merge on an explicit OK, then `scripts/deploy.sh` (migration on dev, then live).
+
+   **Done 2026-10-06.**
+   - Merged as `971e5b3..ee3f650` after three review rounds (CR 1–16; #22 filed from CR 16). CI passed on `main`. Live at 22:46Z through the CI gate, and migration `b3344354c124` ran there.
+   - Live: `/health` names `ee3f6507a36f`, and `/ready` says `schema_state` `current`. The first pass logged `redelivered: {}` and `undelivered: {}` with no traceback, and pinged `co-status-sweep`, `notifier-reachable` and `co-status-api` successfully. No production monitor has a dispatch id yet, so nothing is due.
+   - The dev chain ran to the end: attempt 5 at 21:47:29 (+60 min), then a 409 at 22:47:46. The journal line showed `redelivered: {…: "capped"}`, the due time was cleared, and the monitor stayed `undelivered`. The scratch tenant and monitor were then deleted from `status_dev`.
 
 ## Open questions / risks
 

@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from ulid import ULID
 
 from src.api.deps import get_alerter
@@ -722,6 +722,19 @@ class TestNoticeStatus:
         listed = {m["id"]: m for m in (await api.get("/api/v1/monitors", headers=headers)).json()}
         assert _served(listed[monitor["id"]], "report") == (at, "partial")
         assert _served(listed[other["id"]], "report") == (None, None)
+
+    async def test_an_update_answers_from_one_moment(self, api, headers, monitor, db_session):
+        """The monitor's columns are re-read with its notices, not left as the
+        session last saw them: a check-in landing meanwhile shows in both (CR 1)."""
+        await _row(db_session, monitor["id"])  # the session now holds the monitor
+        await db_session.execute(
+            update(Monitor).where(Monitor.id == monitor["id"]).values(last_status="alert"),
+            execution_options={"synchronize_session": False},
+        )
+        response = await api.patch(
+            f"/api/v1/monitors/{monitor['id']}", headers=headers, json={"name": "renamed"}
+        )
+        assert response.json()["last_status"] == "alert"
 
     async def test_an_update_answers_with_them(self, api, headers, monitor, db_session):
         at = await _notice(db_session, monitor["id"], "recovered", "failed", timedelta(hours=1))

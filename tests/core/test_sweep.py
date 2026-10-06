@@ -525,6 +525,35 @@ class TestTheRedelivery:
         assert len(report.redelivered) == 2
         assert len(report.undelivered) == 3
 
+    async def test_the_window_counts_from_the_start_of_the_pass(
+        self, db_session, tenant, alerter, notifier, monkeypatch
+    ):
+        """Slow sends spend it too: the unit's bound covers the whole pass (CR 8)."""
+        await _save(
+            db_session,
+            tenant,
+            state=MonitorState.MISSING,
+            last_alert_at=NOW - timedelta(hours=1),
+            last_alert_status="failed",
+            last_alert_dispatch_id=DISP,
+            last_alert_redeliver_at=NOW - timedelta(minutes=1),
+        )
+        await _save(db_session, tenant)  # overdue: alerted this pass
+        clock = [0.0]
+        monkeypatch.setattr(sweep, "monotonic", lambda: clock[0])
+
+        def slow_send(request):
+            clock[0] += sweep.REDELIVERY_WINDOW.total_seconds()
+            return httpx.Response(202, json=_dispatch_record("failed"))
+
+        notifier.dispatch.mock(side_effect=slow_send)
+
+        report = await sweep_monitors(db_session, alerter, NOW)
+
+        assert len(report.alerted) == 1
+        assert notifier.redelivered() == []
+        assert report.redelivered == {}
+
 
 async def _notice(
     db_session,

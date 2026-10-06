@@ -70,10 +70,12 @@ logger = get_logger(__name__)
 #: down for good. A working day, so somebody sees it (#8).
 NOTICE_WINDOW = timedelta(hours=24)
 
-#: No redelivery starts later than this into a pass's redeliveries; the rest
-#: stay due for the next pass. One can take ~8 s per failed channel, and the
-#: unit has ``TimeoutStartSec=120`` for everything (#10). One already sent is
-#: never cancelled: it could land at notifier and spend an attempt unrecorded.
+#: No redelivery starts later than this into the pass — counted from its
+#: start, so slow sends spend it too; the rest stay due for the next pass.
+#: One can take ~8 s per failed channel, and the unit has
+#: ``TimeoutStartSec=120`` for the pass and the heartbeat after it (#10,
+#: ``tests/deploy/test_sweep_units.py``). One already sent is never
+#: cancelled: it could land at notifier and spend an attempt unrecorded.
 REDELIVERY_WINDOW = timedelta(seconds=45)
 
 #: :attr:`SweepReport.redelivered`'s value for a dispatch notifier capped.
@@ -134,6 +136,7 @@ async def sweep_monitors(
     from ``monitor_events`` (``undelivered_notices``, #8, #19).
     """
     now = now or datetime.now(UTC)
+    started = monotonic()
     report = SweepReport()
 
     try:
@@ -149,7 +152,7 @@ async def sweep_monitors(
         if should_alert(monitor, now):
             await _alert(session, alerter, monitor, now, report)
     if report.notifier_ok:
-        await _redeliver_due(alerter, monitors, now, report)
+        await _redeliver_due(alerter, monitors, now, report, started)
     for monitor in monitors:
         status = monitor.last_alert_status
         if monitor.state == MonitorState.MISSING and status and status != DELIVERED:
@@ -174,14 +177,18 @@ def _record_delivery(monitor: Monitor, delivery: Delivery, now: datetime) -> Non
 
 
 async def _redeliver_due(
-    alerter: Alerter, monitors: Sequence[Monitor], now: datetime, report: SweepReport
+    alerter: Alerter,
+    monitors: Sequence[Monitor],
+    now: datetime,
+    report: SweepReport,
+    started: float,
 ) -> None:
-    """Redeliver every due missing alert, oldest due first, within the window."""
+    """Redeliver every due missing alert, oldest due first, until the window
+    closes; *started* is the pass's own ``monotonic()`` start."""
     due = sorted(
         (m for m in monitors if should_redeliver(m, now)),
         key=lambda m: _as_utc(m.last_alert_redeliver_at),
     )
-    started = monotonic()
     for n, monitor in enumerate(due):
         if monotonic() - started >= REDELIVERY_WINDOW.total_seconds():
             logger.warning(f"{len(due) - n} redelivery(ies) deferred to the next pass")

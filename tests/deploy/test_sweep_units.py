@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core import db_safety, heartbeat
+from src.core import db_safety, heartbeat, sweep
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = REPO_ROOT / "deploy"
@@ -156,6 +156,13 @@ class TestScheduling:
         TimeoutStartSec. Past it systemd kills the pass before any /fail, every pass."""
         heartbeat_seconds = heartbeat.API_WINDOW_SECONDS + 3 * heartbeat.PING_TIMEOUT_SECONDS
         assert heartbeat_seconds <= _seconds(PROD_SERVICE, "TimeoutStartSec") / 2
+
+    def test_redeliveries_and_the_heartbeat_fit_the_bound(self):
+        """#10: no redelivery starts past REDELIVERY_WINDOW into the pass. 30 s is
+        left for the one still in flight (~8 s per failed channel) and the commit."""
+        heartbeat_seconds = heartbeat.API_WINDOW_SECONDS + 3 * heartbeat.PING_TIMEOUT_SECONDS
+        window = sweep.REDELIVERY_WINDOW.total_seconds()
+        assert window + heartbeat_seconds <= _seconds(PROD_SERVICE, "TimeoutStartSec") - 30
 
 
 class TestScript:

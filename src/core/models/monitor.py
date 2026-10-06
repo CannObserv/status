@@ -114,3 +114,14 @@ class Monitor(Base, TimestampMixin):
     #: begins; kept after recovery, when nothing reads it — the sweep only
     #: reports it for ``missing`` monitors. Accepted is not delivered (#6).
     last_alert_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    #: The notifier dispatch ``last_alert_status`` describes: the one the
+    #: sweep redelivers (#10). Set and cleared with the status. Not the
+    #: ``missing`` event's ``dispatch_id``, which is the first crossing's only
+    #: — null when that alert was owed, and never a renotify's.
+    last_alert_dispatch_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    #: When the sweep next redelivers that dispatch; null for never (it
+    #: succeeded, notifier capped it, or there is none). Spaced from the
+    #: attempts notifier returns (``src.core.monitors.REDELIVERY_DELAYS``).
+    last_alert_redeliver_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

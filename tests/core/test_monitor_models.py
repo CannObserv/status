@@ -42,6 +42,20 @@ class TestMonitor:
         assert monitor.channel_ids == []
         assert monitor.last_variables == {}
 
+    async def test_keeps_the_dispatch_to_redeliver_and_when(self, db_session, tenant):
+        """#10: the dispatch ``last_alert_status`` describes, and its next retry."""
+        due = datetime(2026, 9, 9, 12, 1, tzinfo=UTC)
+        monitor = await _monitor(
+            db_session,
+            tenant,
+            last_alert_status="failed",
+            last_alert_dispatch_id="01J0000000000000000000DISP",
+            last_alert_redeliver_at=due,
+        )
+        await db_session.refresh(monitor)
+        assert monitor.last_alert_dispatch_id == "01J0000000000000000000DISP"
+        assert monitor.last_alert_redeliver_at == due
+
     async def test_has_no_template_id(self):
         """co-status stores no templates (spec D5); a template_id would name
         a row in a database it cannot read."""

@@ -60,11 +60,11 @@ def _attempt(attempt: int, at: datetime, status: str = "failed") -> dict:
 
 
 def _dispatch_record(
-    status: str, key: str = "k", id: str = DISP, attempts: list[dict] | None = None
+    status: str, key: str = "k", dispatch_id: str = DISP, attempts: list[dict] | None = None
 ) -> dict:
     """A dispatch notifier accepted, with delivery *status*."""
     return {
-        "id": id,
+        "id": dispatch_id,
         "tenant_id": "01J0000000000000000000TENT",
         "template_id": None,
         "idempotency_key": key,
@@ -453,7 +453,8 @@ class TestTheRedelivery:
         renotified = NOW + timedelta(hours=1)
         newer = "01J0000000000000000000DSP2"
         notifier.dispatch.respond(
-            202, json=_dispatch_record("failed", id=newer, attempts=[_attempt(1, renotified)])
+            202,
+            json=_dispatch_record("failed", dispatch_id=newer, attempts=[_attempt(1, renotified)]),
         )
 
         report = await sweep_monitors(db_session, alerter, renotified)

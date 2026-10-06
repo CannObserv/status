@@ -1,7 +1,7 @@
 ---
 title: Serve check-in notice delivery status to the monitor's owner (#20)
 date: 2026-10-06
-status: draft
+status: approved
 ---
 
 # Serve check-in notice delivery status to the monitor's owner

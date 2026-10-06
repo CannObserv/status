@@ -287,7 +287,8 @@ build_release() {
   [[ -d "$ROOT/releases" ]] || sudo install -d -m 755 "$ROOT/releases"
   # Built where it will run, by exedev: a uv venv embeds its absolute path in
   # its scripts, so one built elsewhere and moved would not start.
-  sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" "$release"
+  sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" "$release" ||
+    die "cannot make releases/$build for $(id -un) to build in; nothing switched"
   git -C "$SRC" archive "$sha" | tar -x -C "$release"
   # Copied, not hardlinked to the uv cache: the chown below would reach the
   # cache's inodes, and an edit in a release would edit every venv sharing the
@@ -299,7 +300,7 @@ build_release() {
   local heads
   heads="$(in_release alembic heads | grep -c .)" || true
   [[ "$heads" == 1 ]] || die "$build has $heads Alembic heads, not 1; nothing switched"
-  chmod -R a-w "$release"
+  chmod -R a-w "$release" || die "cannot make $build read-only; nothing switched"
   sudo chown -R root:root "$release" || die "cannot hand $build to root; nothing switched"
   # REVISION last, by root: a release without one is an interrupted build (R4),
   # the chown included.

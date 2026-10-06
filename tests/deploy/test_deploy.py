@@ -1030,6 +1030,15 @@ class TestOwnership:
         (sync,) = [c for c in world.calls() if " sync " in c]
         assert "--link-mode copy" in sync
 
+    def test_a_release_directory_root_will_not_make_says_so(self, world):
+        """CR 4: set -e ended the deploy here with no word of why."""
+        build = world.build(world.main[-1])
+        result = world.run(FAKE_INSTALL_FAIL=build)
+        assert result.returncode == 1
+        assert f"cannot make releases/{build}" in result.stderr
+        assert "nothing switched" in result.stderr
+        assert world.target("dev") is None
+
     def test_a_failed_chown_switches_nothing_and_leaves_no_revision(self, world):
         result = world.run(FAKE_CHOWN_FAIL="1")
         assert result.returncode == 1

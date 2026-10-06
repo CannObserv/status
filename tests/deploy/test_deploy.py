@@ -1049,7 +1049,8 @@ class TestOwnership:
         assert world.target("dev") is None and world.target("live") is None
         release = world.root / "releases" / world.build(world.main[-1])
         assert not (release / "REVISION").exists()
-        assert "root" in result.stderr
+        assert f"cannot hand {world.build(world.main[-1])} to root" in result.stderr
+        assert "nothing switched" in result.stderr
 
     def test_a_deploy_root_root_does_not_own_is_refused_with_the_fix(self, world):
         """As on co-status before #14: exedev's, so exedev could repoint live."""

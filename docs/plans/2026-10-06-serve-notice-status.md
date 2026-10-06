@@ -1,7 +1,7 @@
 ---
 title: Serve check-in notice delivery status to the monitor's owner (#20)
 date: 2026-10-06
-status: approved
+status: done
 ---
 
 # Serve check-in notice delivery status to the monitor's owner
@@ -34,6 +34,11 @@ The check-in keeps each recovery's and report's delivery status on its `monitor_
 2. **Schema + route** (tests first, `tests/api/test_monitors_route.py`): get, list and patch serve each kind's latest status and `at`. A later delivered report replaces an earlier failed one. A later null-status report doesn't. Recovery and report are independent. `not_accepted` is served as is. Null with no events. A real check-in, end to end, shows `failed` when notifier delivers it so, and `not_accepted` for each way #19 names. Another tenant's events can't leak, because it can't see the monitor at all (`TestTenantIsolation`).
 3. **Docs:** `MonitorOut` field comments, monitors.md (§ The sweep: drop "only the operator sees it"; say what the owner sees), the `dispatch_status` docstring, the RUNBOOK if it tells owners to ask the operator.
 4. **Ship:** CI on the branch, merge on explicit OK, then `scripts/deploy.sh` (the migration runs on dev, then live).
+
+   **Done 2026-10-06.**
+   - Merged as `7408073..df5b8d3` after two review rounds (CR 1–8). CI passed on `main`.
+   - Dev at 12:51Z (`--dev origin/main`). Live at 13:47Z through the CI gate. Migration `535ffdac4d2f` ran on both.
+   - Live: `/health` names `df5b8d31601e`, `/ready` says `schema_state` `current`, and `/openapi.json` serves the four fields. The next production pass logged `undelivered_notices: {}` with no traceback, and pinged `co-status-sweep`, `notifier-reachable` and `co-status-api` successfully.
 
 ## Open questions / risks
 

@@ -144,8 +144,13 @@ async def _load_owned(session: AsyncSession, monitor_id: str, tenant_id: str) ->
 
 async def _load_out(session: AsyncSession, monitor_id: str, tenant_id: str) -> MonitorOut:
     """One owned monitor as served, with its notices; 404 if not the caller's."""
+    # populate_existing: after a commit (expire_on_commit=False) the session
+    # still holds this monitor, and its columns must be read at the same
+    # moment as its notices, as the refresh this replaced did (CR 1).
     result = await session.execute(
-        _with_notices().where(Monitor.id == monitor_id, Monitor.tenant_id == tenant_id)
+        _with_notices()
+        .where(Monitor.id == monitor_id, Monitor.tenant_id == tenant_id)
+        .execution_options(populate_existing=True)
     )
     row = result.one_or_none()
     if row is None:

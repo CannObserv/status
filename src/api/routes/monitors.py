@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import Select, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,7 +60,51 @@ router = APIRouter(prefix="/monitors", tags=["monitors"])
 AlerterDep = Annotated[Alerter | None, Depends(get_alerter)]
 
 
-def _to_out(m: Monitor) -> MonitorOut:
+def _latest_notice(kind: EventKind):
+    """Each monitor's latest *kind* event that owed a notice: its ``at`` and status.
+
+    One probe of ``ix_monitor_events_notice`` per monitor, however many
+    events of other kinds it has written. A null status owed nothing, or
+    predates #8, so it never hides a known one: the sweep's rule.
+    """
+    return (
+        select(MonitorEvent.at, MonitorEvent.dispatch_status)
+        .where(
+            MonitorEvent.monitor_id == Monitor.id,
+            MonitorEvent.kind == kind,
+            MonitorEvent.dispatch_status.is_not(None),
+        )
+        .order_by(MonitorEvent.at.desc())
+        .limit(1)
+        .lateral(f"latest_{kind}")
+    )
+
+
+def _with_notices() -> Select:
+    """Monitors, each with its latest report's and recovery's ``at`` and status (#20)."""
+    report = _latest_notice(EventKind.ALERT)
+    recovery = _latest_notice(EventKind.RECOVERED)
+    return (
+        select(
+            Monitor,
+            report.c.at,
+            report.c.dispatch_status,
+            recovery.c.at,
+            recovery.c.dispatch_status,
+        )
+        .select_from(Monitor)
+        .outerjoin(report, true())
+        .outerjoin(recovery, true())
+    )
+
+
+def _to_out(
+    m: Monitor,
+    report_at: datetime | None = None,
+    report_status: str | None = None,
+    recovery_at: datetime | None = None,
+    recovery_status: str | None = None,
+) -> MonitorOut:
     return MonitorOut(
         id=str(m.id),
         tenant_id=str(m.tenant_id),
@@ -78,6 +122,10 @@ def _to_out(m: Monitor) -> MonitorOut:
         last_variables=m.last_variables,
         last_alert_at=m.last_alert_at,
         last_alert_status=m.last_alert_status,
+        last_report_at=report_at,
+        last_report_status=report_status,
+        last_recovery_at=recovery_at,
+        last_recovery_status=recovery_status,
         next_deadline_at=deadline_for(m),
         created_at=m.created_at,
         updated_at=m.updated_at,
@@ -92,6 +140,17 @@ async def _load_owned(session: AsyncSession, monitor_id: str, tenant_id: str) ->
     if monitor is None:
         raise HTTPException(status_code=404, detail="Monitor not found")
     return monitor
+
+
+async def _load_out(session: AsyncSession, monitor_id: str, tenant_id: str) -> MonitorOut:
+    """One owned monitor as served, with its notices; 404 if not the caller's."""
+    result = await session.execute(
+        _with_notices().where(Monitor.id == monitor_id, Monitor.tenant_id == tenant_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    return _to_out(*row)
 
 
 async def _check_channels(alerter: Alerter | None, channel_ids: list[str]) -> None:
@@ -148,9 +207,9 @@ async def list_monitors(
 ) -> list[MonitorOut]:
     """List all monitors owned by the calling tenant."""
     result = await session.execute(
-        select(Monitor).where(Monitor.tenant_id == tenant_id).order_by(Monitor.created_at)
+        _with_notices().where(Monitor.tenant_id == tenant_id).order_by(Monitor.created_at)
     )
-    return [_to_out(m) for m in result.scalars().all()]
+    return [_to_out(*row) for row in result.all()]
 
 
 @router.post("", status_code=201)
@@ -187,7 +246,7 @@ async def get_monitor(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> MonitorOut:
     """Fetch a single monitor, including its last report and next deadline."""
-    return _to_out(await _load_owned(session, monitor_id, tenant_id))
+    return await _load_out(session, monitor_id, tenant_id)
 
 
 @router.patch("/{monitor_id}")
@@ -218,8 +277,7 @@ async def update_monitor(
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(status_code=409, detail="That monitor name is already taken.") from exc
-    await session.refresh(monitor)
-    return _to_out(monitor)
+    return await _load_out(session, monitor_id, tenant_id)
 
 
 @router.delete("/{monitor_id}", status_code=204)

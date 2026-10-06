@@ -636,6 +636,101 @@ class TestNotAccepted:
         assert (first.kind, first.dispatch_status) == ("first_checkin", None)
 
 
+async def _notice(db_session, monitor_id: str, kind: str, status: str | None, ago: timedelta):
+    """A check-in notice's event, *ago* in the past, as the route writes it."""
+    at = datetime.now(UTC) - ago
+    db_session.add(MonitorEvent(monitor_id=monitor_id, kind=kind, at=at, dispatch_status=status))
+    await db_session.flush()
+    return at
+
+
+def _served(body: dict, notice: str) -> tuple[datetime | None, str | None]:
+    at = body[f"last_{notice}_at"]
+    return (datetime.fromisoformat(at) if at else None, body[f"last_{notice}_status"])
+
+
+class TestNoticeStatus:
+    """The owner sees what became of its last recovery and report (#20),
+    as it sees ``last_alert_status`` for the missing alert (#6)."""
+
+    async def test_a_new_monitor_has_sent_none(self, api, headers, monitor):
+        for notice in ("report", "recovery"):
+            assert _served(monitor, notice) == (None, None)
+
+    async def test_a_report_that_failed(self, api, headers, monitor, notifier, db_session):
+        notifier.delivering("failed")
+        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        body = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
+        (alert,) = [e for e in await _events(db_session, monitor["id"]) if e.kind == "alert"]
+        assert _served(body, "report") == (alert.at, "failed")
+        assert _served(body, "recovery") == (None, None)
+
+    @pytest.mark.parametrize("fail", NOT_TAKEN)
+    async def test_a_report_notifier_never_took(self, api, headers, monitor, notifier, fail):
+        """#19's own value, served as is."""
+        fail(notifier)
+        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        body = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
+        assert _served(body, "report")[1] == "not_accepted"
+
+    async def test_a_recovery_and_a_report_each_their_own(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await _make_missing(db_session, monitor["id"])
+        notifier.delivering(recovered="partial", report="succeeded")
+        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        body = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
+        assert _served(body, "recovery")[1] == "partial"
+        assert _served(body, "report")[1] == "succeeded"
+
+    async def test_the_latest_of_each_kind(self, api, headers, monitor, db_session):
+        mid = monitor["id"]
+        await _notice(db_session, mid, "alert", "failed", timedelta(hours=2))
+        report_at = await _notice(db_session, mid, "alert", "succeeded", timedelta(hours=1))
+        recovery_at = await _notice(db_session, mid, "recovered", "failed", timedelta(hours=3))
+        await _notice(db_session, mid, "recovered", "succeeded", timedelta(hours=4))
+        body = (await api.get(f"/api/v1/monitors/{mid}", headers=headers)).json()
+        assert _served(body, "report") == (report_at, "succeeded")
+        assert _served(body, "recovery") == (recovery_at, "failed")
+
+    async def test_a_later_notice_with_no_status_does_not_hide_one(
+        self, api, headers, monitor, db_session
+    ):
+        """Null owed nothing (no channels) or predates #8: the sweep's rule."""
+        mid = monitor["id"]
+        failed_at = await _notice(db_session, mid, "alert", "failed", timedelta(hours=2))
+        await _notice(db_session, mid, "alert", None, timedelta(hours=1))
+        body = (await api.get(f"/api/v1/monitors/{mid}", headers=headers)).json()
+        assert _served(body, "report") == (failed_at, "failed")
+
+    async def test_whatever_its_age(self, api, headers, monitor, db_session):
+        """No 24-hour window: that bounds the operator's check, not the owner's view."""
+        at = await _notice(db_session, monitor["id"], "alert", "failed", timedelta(days=30))
+        body = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
+        assert _served(body, "report") == (at, "failed")
+
+    async def test_a_missing_alert_is_not_a_notice(self, api, headers, monitor, db_session):
+        """The sweep's ``missing`` events carry a status too; that is ``last_alert_status``."""
+        await _notice(db_session, monitor["id"], "missing", "failed", timedelta(hours=1))
+        body = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
+        assert _served(body, "report") == (None, None)
+        assert _served(body, "recovery") == (None, None)
+
+    async def test_listed_each_with_its_own(self, api, headers, monitor, db_session):
+        other = await _create(api, headers)
+        at = await _notice(db_session, monitor["id"], "alert", "partial", timedelta(hours=1))
+        listed = {m["id"]: m for m in (await api.get("/api/v1/monitors", headers=headers)).json()}
+        assert _served(listed[monitor["id"]], "report") == (at, "partial")
+        assert _served(listed[other["id"]], "report") == (None, None)
+
+    async def test_an_update_answers_with_them(self, api, headers, monitor, db_session):
+        at = await _notice(db_session, monitor["id"], "recovered", "failed", timedelta(hours=1))
+        response = await api.patch(
+            f"/api/v1/monitors/{monitor['id']}", headers=headers, json={"name": "renamed"}
+        )
+        assert _served(response.json(), "recovery") == (at, "failed")
+
+
 class TestTenantIsolation:
     async def test_another_tenant_cannot_see_or_check_in(self, api, monitor, db_session):
         """The check-in URL is guessable from a ULID; ownership is the guard."""

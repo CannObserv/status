@@ -86,6 +86,17 @@ class MonitorOut(BaseModel):
     #: notifier's delivery ``status`` for that alert: ``succeeded``,
     #: ``partial`` or ``failed``. Accepted is not delivered (#6).
     last_alert_status: str | None
+    #: The latest report (a check-in with ``status: alert``) that owed a
+    #: notice, and what became of it: ``succeeded``, ``partial``, ``failed``,
+    #: or ``not_accepted`` when notifier never took it (#8, #19, #20). Not
+    #: the latest check-in: that is ``last_checkin_at`` and ``last_status``.
+    #: Served at any age; its ``at`` says how old.
+    last_report_at: datetime | None = None
+    last_report_status: str | None = None
+    #: The same for the latest recovery notice, sent by the check-in that
+    #: ended an outage.
+    last_recovery_at: datetime | None = None
+    last_recovery_status: str | None = None
     #: When silence becomes an alert. Served so a consumer never has to
     #: re-derive interval + grace to know where it stands.
     next_deadline_at: datetime

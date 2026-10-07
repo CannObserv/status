@@ -190,7 +190,7 @@ release="$ROOT/releases/$build"
 
 # Unauthenticated: the repo is public, and 60 requests an hour per address
 # covers a deploy's 2 (22 waiting the full 600 s). No token, so none to store.
-github() { # <path>: GitHub's JSON answer, or a refusal naming GitHub's message
+github() { # <path>: GitHub's answer as a JSON object, or a refusal
   local out
   if out="$(curl -sS --fail-with-body --max-time 10 \
     -H 'Accept: application/vnd.github+json' "$GITHUB_API/$1")"; then

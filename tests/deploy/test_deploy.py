@@ -777,8 +777,8 @@ class TestTheCIGate:
 
     @pytest.mark.parametrize("body", ["<html>unicorn</html>", '{"total_count":0}', "", " \n"])
     def test_a_runs_answer_that_is_not_what_was_expected_refuses_the_deploy(self, world, body):
-        """#21: an empty body is no run, not a refusal, so it waits for one; no wait here
-        keeps that from taking the default 600 s."""
+        """#21: before github() refused it, an empty body read as no run and waited the
+        default 600 s; no wait here keeps a regression from hanging the suite."""
         world.ci_answers(body)
         result = world.run(STATUS_DEPLOY_CI_WAIT_SECONDS="0")
         assert result.returncode == 1

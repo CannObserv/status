@@ -91,12 +91,6 @@ def diff_counts(compare: Mapping) -> bool:
     return any(counts(path) for f in files for path in _paths(f))
 
 
-def _paths(file: Mapping) -> list[str]:
-    """A compare file's path, and a rename's old one: moving out of what runs counts (#26)."""
-    old = file.get("previous_filename")
-    return [file["filename"]] if old is None else [file["filename"], old]
-
-
 def first_look(live: str, compare: Mapping) -> Verdict | None:
     """The verdict from ``compare/<live>...main`` alone, or ``None`` if it needs the clock."""
     if live == UNSTAMPED:
@@ -257,6 +251,12 @@ async def _get(client: httpx.AsyncClient, path: str) -> Mapping:
     if not isinstance(answer, Mapping):
         raise TypeError("not an object")
     return answer
+
+
+def _paths(file: Mapping) -> list[str]:
+    """A compare file's path, and a rename's old one: moving out of what runs counts (#26)."""
+    old = file.get("previous_filename")
+    return [file["filename"]] if old is None else [file["filename"], old]
 
 
 def _ahead(live: str, compare: Mapping) -> str:

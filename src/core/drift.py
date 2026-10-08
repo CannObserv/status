@@ -82,7 +82,10 @@ def counts(path: str) -> bool:
 
 
 def diff_counts(compare: Mapping) -> bool:
-    """Whether a GitHub compare touches a path that :func:`counts`, or may."""
+    """Whether a GitHub compare touches a path that :func:`counts`, or may.
+
+    A rename counts by either name: a file moved out of what runs left the release (#26).
+    """
     files = compare.get("files")
     if files is None or len(files) >= COMPARE_FILES_LIMIT:
         return True
@@ -254,7 +257,7 @@ async def _get(client: httpx.AsyncClient, path: str) -> Mapping:
 
 
 def _paths(file: Mapping) -> list[str]:
-    """A compare file's path, and a rename's old one: moving out of what runs counts (#26)."""
+    """A compare file's path, and a rename's old one (``previous_filename``)."""
     old = file.get("previous_filename")
     return [file["filename"]] if old is None else [file["filename"], old]
 

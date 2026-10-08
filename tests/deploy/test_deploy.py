@@ -1352,12 +1352,31 @@ class TestVerification:
         assert max(polls) < start
 
     def test_a_pass_that_never_ends_fails_the_target_and_switches_back(self, world):
-        """CR 21: the wait is bounded, and running out of it is a failed verify."""
+        """CR 21: the wait is bounded, and running out of it is a failed verify.
+
+        A wait of 0 gives up at its first poll, however slow the poll. Bash's
+        SECONDS counts whole seconds, so a wait of 1 lasted 0–1 s: one busy
+        answer used or two, and the switch-back's own wait left to chance (#23).
+        """
         assert_ok(world.run(world.main[0]))
-        result = world.run(FAKE_SWEEP_BUSY="3", STATUS_DEPLOY_SWEEP_WAIT_SECONDS="1")
-        assert result.returncode == 1
-        assert "has been running" in result.stderr
+        previous = world.target("dev")
+        world.reset_log()
+        result = world.run(FAKE_SWEEP_BUSY="1", STATUS_DEPLOY_SWEEP_WAIT_SECONDS="0")
+        assert result.returncode == 1, result.stderr
+        assert result.stderr.count("has been running") == 1
         assert "switched back" in result.stderr
+        assert "which is answering" in result.stderr
+        assert world.target("dev") == previous
+        polls = [c for c in world.calls() if c.startswith("systemctl show")]
+        assert len(polls) == 2, "one busy answer forward, then the idle one switching back"
+
+    def test_a_switch_back_that_outlasts_its_own_wait_is_reported_dead(self, world):
+        """#23: the switch-back's wait is as bounded as the forward one."""
+        assert_ok(world.run(world.main[0]))
+        result = world.run(FAKE_SWEEP_BUSY="99", STATUS_DEPLOY_SWEEP_WAIT_SECONDS="0")
+        assert result.returncode == 4, result.stderr
+        assert result.stderr.count("has been running") == 2
+        assert "NOT answering" in result.stderr
 
     def test_the_busy_stub_holds_for_a_later_run_in_the_same_world(self, world):
         """CR 19: the counter was set by a world's first run and kept after."""

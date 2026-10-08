@@ -1373,10 +1373,13 @@ class TestVerification:
     def test_a_switch_back_that_outlasts_its_own_wait_is_reported_dead(self, world):
         """#23: the switch-back's wait is as bounded as the forward one."""
         assert_ok(world.run(world.main[0]))
+        previous = world.target("dev")
         result = world.run(FAKE_SWEEP_BUSY="99", STATUS_DEPLOY_SWEEP_WAIT_SECONDS="0")
         assert result.returncode == 4, result.stderr
         assert result.stderr.count("has been running") == 2
+        assert "switched back" in result.stderr
         assert "NOT answering" in result.stderr
+        assert world.target("dev") == previous
 
     def test_the_busy_stub_holds_for_a_later_run_in_the_same_world(self, world):
         """CR 19: the counter was set by a world's first run and kept after."""

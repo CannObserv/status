@@ -88,7 +88,13 @@ def diff_counts(compare: Mapping) -> bool:
         return True
     if len(compare["commits"]) < compare["total_commits"]:
         return True
-    return any(counts(f["filename"]) for f in files)
+    return any(counts(path) for f in files for path in _paths(f))
+
+
+def _paths(file: Mapping) -> list[str]:
+    """A compare file's path, and a rename's old one: moving out of what runs counts (#26)."""
+    old = file.get("previous_filename")
+    return [file["filename"]] if old is None else [file["filename"], old]
 
 
 def first_look(live: str, compare: Mapping) -> Verdict | None:

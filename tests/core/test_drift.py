@@ -135,6 +135,17 @@ class TestDiffCounts:
     def test_a_commit_list_cut_short_counts(self):
         assert diff_counts(compare(1, files=["docs/a.md"], total=300))
 
+    def test_a_file_moved_out_of_a_runtime_path_counts(self):
+        """Its old path left the release: ``previous_filename`` says where it was."""
+        answer = compare(1, files=[])
+        answer["files"] = [{"filename": "docs/old.py", "previous_filename": "src/core/x.py"}]
+        assert diff_counts(answer)
+
+    def test_a_file_moved_within_paths_that_never_run_does_not_count(self):
+        answer = compare(1, files=[])
+        answer["files"] = [{"filename": "docs/b.md", "previous_filename": "docs/a.md"}]
+        assert not diff_counts(answer)
+
 
 class TestFirstLook:
     def test_unstamped_fails(self):

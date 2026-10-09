@@ -91,6 +91,6 @@ Each layer is tested before the next is built. The work goes on branch `28-alert
 
 ## Open questions / risks
 
-- **Concurrent `alert` check-ins on one monitor** could both open the fault and both report. Accepted: each consumer checks in once per tick. A row lock (`SELECT … FOR UPDATE`) in `_load_owned` for check-ins would close it, at the cost of serialising them. Decide in step 3 if a test shows it is cheap.
+- **Concurrent `alert` check-ins on one monitor** could both open the fault and both report. Accepted: each consumer checks in once per tick. A row lock (`SELECT … FOR UPDATE`) in `_load_owned` for check-ins would close it, at the cost of serialising them. **Decided in step 3 (CR 1): no lock.** The lock would be held across the check-in's notifier calls, up to the 8 s budget. The sweep's write to the same row would then wait inside its 120 s unit, and so would every other check-in on that monitor. The race costs one duplicate report at a fault's start, and only if a consumer sends two check-ins at once. Recovery has the same race already, and its idempotency key absorbs it.
 - **A template that only a repeat's `variables` would break** answers 202 until the next report that is due (spec F5). Accepted; documented in monitors.md.
 - **A fault open at deploy re-reports once** (F10). None is open as of the 2026-10-09 audit. If one opens before the deploy, say so on its consumer's issue.

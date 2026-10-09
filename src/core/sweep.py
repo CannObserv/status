@@ -23,11 +23,13 @@ of ``undelivered`` in that pass — or notifier caps it with a 409. Only here,
 after every alert of the pass is sent, never on the check-in path: one
 redelivery can take about 8 s per failed channel.
 
-The check-in path's notices, recovery and report, have no pass of their own
-(#8). The route keeps each one's status on its ``monitor_events`` row,
-``not_accepted`` when notifier never took it (#19), and every pass here
-reports the latest of each kind that did not succeed, until a later one of
-that kind does or :data:`NOTICE_WINDOW` ends. Nothing resends them.
+The check-in path's notices, recovery, report and cleared (#28), have no
+pass of their own (#8). The route keeps each one's status on its
+``monitor_events`` row, ``not_accepted`` when notifier never took it (#19),
+and every pass here reports the latest of each kind that did not succeed,
+until a later one of that kind does or :data:`NOTICE_WINDOW` ends. The sweep
+resends none of them; a report nobody heard is resent by the fault's next
+``alert`` check-in (#28).
 """
 
 from collections.abc import Sequence
@@ -64,7 +66,7 @@ from src.core.monitors import (
 
 logger = get_logger(__name__)
 
-#: How long an undelivered recovery or report stays reported when no later one
+#: How long an undelivered recovery, report or cleared notice stays reported when no later one
 #: of its kind is delivered first. A one-off report has no later one, and
 #: nothing resends it (#7): without an end it would hold ``notifier-reachable``
 #: down for good. A working day, so somebody sees it (#8).
@@ -83,7 +85,11 @@ CAPPED = "capped"
 
 #: The check-in path's notices: the event kind each is recorded as, and its
 #: name in :attr:`SweepReport.undelivered_notices`.
-CHECKIN_NOTICES = {EventKind.RECOVERED: "recovery", EventKind.ALERT: "report"}
+CHECKIN_NOTICES = {
+    EventKind.RECOVERED: "recovery",
+    EventKind.ALERT: "report",
+    EventKind.CLEARED: "cleared",
+}
 
 
 @dataclass
@@ -103,9 +109,10 @@ class SweepReport:
     #: Missing, and notifier accepted its last alert but did not deliver it:
     #: monitor id → ``failed`` or ``partial``. Every pass, not just the one that sent.
     undelivered: dict[str, str] = field(default_factory=dict)
-    #: The latest recovery or report notifier did not deliver, or never took
-    #: (``not_accepted``, #19), within :data:`NOTICE_WINDOW`:
-    #: monitor id → ``{"recovery" | "report": status}`` (#8).
+    #: The latest recovery, report or cleared notice (#28) notifier did not
+    #: deliver, or never took (``not_accepted``, #19), within
+    #: :data:`NOTICE_WINDOW`: monitor id →
+    #: ``{"recovery" | "report" | "cleared": status}`` (#8).
     undelivered_notices: dict[str, dict[str, str]] = field(default_factory=dict)
     #: notifier's ``/health`` answered, in this environment, at the start of the pass.
     notifier_ok: bool = True

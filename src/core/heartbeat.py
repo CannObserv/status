@@ -9,8 +9,8 @@ alert over their own email and Slack channels when pings stop or fail:
 - ``notifier-reachable`` — notifier answered ``/health`` in this environment,
   accepted every alert the pass sent (nothing owed), **and** delivered the
   last alert of every missing monitor (nothing undelivered, #6) and took
-  and delivered the latest recovery and report of each monitor within the
-  sweep's ``NOTICE_WINDOW`` (#8, #19);
+  and delivered the latest recovery, report and cleared notice (#28) of
+  each monitor within the sweep's ``NOTICE_WINDOW`` (#8, #19);
 - ``co-status-api`` — the production API answered ``/ready`` (#13). The API
   is the half that records check-ins: down, it makes every consumer look
   ``missing`` when the fault is co-status.

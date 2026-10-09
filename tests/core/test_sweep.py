@@ -580,11 +580,15 @@ async def _notice(
 
 
 #: Each check-in notice's event kind, and its name in the report.
-NOTICES = [(EventKind.RECOVERED, "recovery"), (EventKind.ALERT, "report")]
+NOTICES = [
+    (EventKind.RECOVERED, "recovery"),
+    (EventKind.ALERT, "report"),
+    (EventKind.CLEARED, "cleared"),
+]
 
 
 class TestTheUndeliveredNotice:
-    """The check-in path's notices (#8): recovery and report. The latest of
+    """The check-in path's notices (#8): recovery, report and cleared (#28). The latest of
     each kind, if notifier accepted it and did not deliver it, is reported on
     every pass until a later one of that kind is delivered, or the window ends."""
 
@@ -665,6 +669,16 @@ class TestTheUndeliveredNotice:
 
         assert inside.undelivered_notices == {str(monitor.id): {"report": "failed"}}
         assert after.undelivered_notices == {}
+
+    async def test_a_delivered_report_does_not_clear_a_cleared_notice(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """'It is over' is not carried by the next fault's report (#28)."""
+        monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))
+        await _notice(db_session, monitor, EventKind.CLEARED, "failed", at=NOW - timedelta(hours=2))
+        await _notice(db_session, monitor, EventKind.ALERT, "succeeded")
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.undelivered_notices == {str(monitor.id): {"cleared": "failed"}}
 
     async def test_a_monitor_can_carry_both(self, db_session, tenant, alerter, notifier):
         monitor = await _save(db_session, tenant, last_checkin_at=NOW - timedelta(minutes=5))

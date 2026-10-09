@@ -149,6 +149,15 @@ class TestSweepCompleted:
             b"3 check-in notice(s) undelivered (1 recovery partial, 2 report failed)"
         )
 
+    async def test_a_cleared_notice_is_named_as_one(self, pings):
+        """#28's third kind, in the same body."""
+        await Heartbeat(KEY).sweep_completed(
+            _report(undelivered_notices={"01J1": {"cleared": "failed"}})
+        )
+        assert (
+            pings.calls[1].request.content == b"1 check-in notice(s) undelivered (1 cleared failed)"
+        )
+
     async def test_notices_notifier_never_took_are_counted_beside_them(self, pings):
         """Counted beside notifier's statuses, by name: the body tells a lost
         notice from a failed one."""

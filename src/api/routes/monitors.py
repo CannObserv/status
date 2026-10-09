@@ -85,9 +85,11 @@ def _latest_notice(kind: EventKind) -> Lateral:
 
 
 def _with_notices() -> Select:
-    """Monitors, each with its latest report's and recovery's ``at`` and status (#20)."""
+    """Monitors, each with its latest report's, recovery's and cleared
+    notice's ``at`` and status (#20, #28)."""
     report = _latest_notice(EventKind.ALERT)
     recovery = _latest_notice(EventKind.RECOVERED)
+    cleared = _latest_notice(EventKind.CLEARED)
     return (
         select(
             Monitor,
@@ -95,10 +97,13 @@ def _with_notices() -> Select:
             report.c.dispatch_status,
             recovery.c.at,
             recovery.c.dispatch_status,
+            cleared.c.at,
+            cleared.c.dispatch_status,
         )
         .select_from(Monitor)
         .outerjoin(report, true())
         .outerjoin(recovery, true())
+        .outerjoin(cleared, true())
     )
 
 
@@ -108,6 +113,8 @@ def _to_out(
     report_status: str | None,
     recovery_at: datetime | None,
     recovery_status: str | None,
+    cleared_at: datetime | None,
+    cleared_status: str | None,
 ) -> MonitorOut:
     """A row of :func:`_with_notices` as served. No defaults: a monitor
     without its notices would read as one that never sent any (CR 2)."""
@@ -132,6 +139,10 @@ def _to_out(
         last_report_status=report_status,
         last_recovery_at=recovery_at,
         last_recovery_status=recovery_status,
+        last_cleared_at=cleared_at,
+        last_cleared_status=cleared_status,
+        fault_since=m.fault_since,
+        fault_key=m.fault_key,
         next_deadline_at=deadline_for(m),
         created_at=m.created_at,
         updated_at=m.updated_at,
@@ -331,23 +342,29 @@ async def _send(
     return DispatchOut.from_sdk(delivery.dispatch)
 
 
-async def _fault_report(session: AsyncSession, monitor: Monitor) -> tuple[datetime, str] | None:
-    """The open fault's latest report that owed a notice: its ``at`` and status.
-
-    One probe of ``ix_monitor_events_notice``. A suppressed repeat's null
-    status owed nothing, so it never hides the report before it (#28).
-    """
-    result = await session.execute(
+def _fault_report_query(monitor_id: str, since: datetime) -> Select:
+    """The latest report since *since* that owed a notice: one probe of
+    ``ix_monitor_events_notice``, as :func:`_latest_notice` is."""
+    return (
         select(MonitorEvent.at, MonitorEvent.dispatch_status)
         .where(
-            MonitorEvent.monitor_id == monitor.id,
+            MonitorEvent.monitor_id == monitor_id,
             MonitorEvent.kind == EventKind.ALERT,
             MonitorEvent.dispatch_status.is_not(None),
-            MonitorEvent.at >= monitor.fault_since,
+            MonitorEvent.at >= since,
         )
         .order_by(MonitorEvent.at.desc())
         .limit(1)
     )
+
+
+async def _fault_report(session: AsyncSession, monitor: Monitor) -> tuple[datetime, str] | None:
+    """The open fault's latest report that owed a notice: its ``at`` and status.
+
+    A suppressed repeat's null status owed nothing, so it never hides the
+    report before it (#28).
+    """
+    result = await session.execute(_fault_report_query(monitor.id, monitor.fault_since))
     row = result.one_or_none()
     return (row.at, row.dispatch_status) if row else None
 

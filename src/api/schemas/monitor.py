@@ -73,9 +73,11 @@ class MonitorOut(BaseModel):
       check-in, whatever it sent.
     - ``last_alert_at``, ``last_alert_status``: the latest alert that this
       monitor had gone missing (#6).
-    - ``last_report_*`` and ``last_recovery_*``: the latest report (a
-      check-in with ``status: alert``) and the latest recovery notice that
-      owed a dispatch, at any age (#20).
+    - ``last_report_*``, ``last_recovery_*`` and ``last_cleared_*``: the
+      latest report (a check-in with ``status: alert``), recovery notice and
+      cleared notice (#28) that owed a dispatch, at any age (#20).
+
+    ``fault_since`` and ``fault_key`` say whether a fault is open (#28).
 
     Every ``*_status`` is what became of that notice: ``succeeded``,
     ``partial`` or ``failed`` as notifier delivered it, or, for a report or
@@ -115,6 +117,18 @@ class MonitorOut(BaseModel):
     last_recovery_at: datetime | None
     #: What became of that recovery notice, in ``last_report_status``'s terms.
     last_recovery_status: str | None
+    #: When the latest *cleared* notice was owed: the ``ok`` check-in that
+    #: ended a fault (#28). Served at any age.
+    last_cleared_at: datetime | None
+    #: What became of that cleared notice, in ``last_report_status``'s terms.
+    last_cleared_status: str | None
+    #: When the open fault's first ``alert`` check-in arrived; null while
+    #: none is open (#28). The fault reports when it opens, then once per
+    #: ``renotify_seconds``; the next ``ok`` ends it.
+    fault_since: datetime | None
+    #: The ``metadata.fault`` the open fault opened with, as sent; null when
+    #: absent or no fault is open. Never interpreted, only compared.
+    fault_key: Any
     #: When silence becomes an alert. Served so a consumer never has to
     #: re-derive interval + grace to know where it stands.
     next_deadline_at: datetime

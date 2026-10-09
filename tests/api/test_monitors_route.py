@@ -18,7 +18,7 @@ from ulid import ULID
 
 from src.api.deps import get_alerter
 from src.api.main import app
-from src.api.routes.monitors import _with_notices
+from src.api.routes.monitors import _fault_report_query, _with_notices
 from src.core import alerting
 from src.core.alerting import cleared_key, recovery_key
 from src.core.api_keys import mint
@@ -905,8 +905,36 @@ class TestNoticeStatus:
     as it sees ``last_alert_status`` for the missing alert (#6)."""
 
     async def test_a_new_monitor_has_sent_none(self, api, headers, monitor):
-        for notice in ("report", "recovery"):
+        for notice in ("report", "recovery", "cleared"):
             assert _served(monitor, notice) == (None, None)
+        assert (monitor["fault_since"], monitor["fault_key"]) == (None, None)
+
+    async def test_an_open_fault_is_served_on_every_route(self, api, headers, monitor, db_session):
+        """#28: the owner can see a fault is open, and under which key."""
+        body = (
+            await _checkin(api, headers, monitor, status="alert", metadata={"fault": ["lag", 1]})
+        ).json()
+        url = f"/api/v1/monitors/{monitor['id']}"
+        served = [
+            (await api.get(url, headers=headers)).json(),
+            (await api.get("/api/v1/monitors", headers=headers)).json()[0],
+            (await api.patch(url, headers=headers, json={"grace_seconds": 60})).json(),
+        ]
+        for one in served:
+            assert datetime.fromisoformat(one["fault_since"]) == datetime.fromisoformat(
+                body["last_checkin_at"]
+            )
+            assert one["fault_key"] == ["lag", 1]
+
+    async def test_a_cleared_notice_and_its_fate(self, api, headers, monitor, notifier, db_session):
+        await _checkin(api, headers, monitor, status="alert")
+        notifier.delivering(cleared="partial")
+        await _checkin(api, headers, monitor, status="ok")
+        body = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
+        cleared = (await _events(db_session, monitor["id"]))[-1]
+        assert _served(body, "cleared") == (cleared.at, "partial")
+        assert (body["fault_since"], body["fault_key"]) == (None, None)
+        assert _served(body, "report")[1] == "succeeded"  # each kind its own
 
     async def test_a_report_that_failed(self, api, headers, monitor, notifier, db_session):
         notifier.delivering("failed")
@@ -966,6 +994,7 @@ class TestNoticeStatus:
         body = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
         assert _served(body, "report") == (None, None)
         assert _served(body, "recovery") == (None, None)
+        assert _served(body, "cleared") == (None, None)
 
     async def test_listed_each_with_its_own(self, api, headers, monitor, db_session):
         other = await _create(api, headers)
@@ -989,7 +1018,16 @@ class TestNoticeStatus:
         sql = stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
         await db_session.execute(text("SET LOCAL enable_seqscan = off"))
         plan = "\n".join(row[0] for row in await db_session.execute(text(f"EXPLAIN {sql}")))
-        assert plan.count("Index Scan Backward using ix_monitor_events_notice") == 2, plan
+        assert plan.count("Index Scan Backward using ix_monitor_events_notice") == 3, plan
+
+    async def test_the_faults_last_report_is_one_probe_of_the_index(self, db_session):
+        """Read on every ``alert`` inside a fault (#28): a 5-minute probe in a
+        week-long fault must not walk 2,000 events per check-in."""
+        stmt = _fault_report_query("01J0000000000000000000MONI", datetime.now(UTC))
+        sql = stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+        await db_session.execute(text("SET LOCAL enable_seqscan = off"))
+        plan = "\n".join(row[0] for row in await db_session.execute(text(f"EXPLAIN {sql}")))
+        assert "Index Scan Backward using ix_monitor_events_notice" in plan, plan
 
     async def test_an_update_answers_from_one_moment(self, api, headers, monitor, db_session):
         """The monitor's columns are re-read with its notices, not left as the

@@ -20,11 +20,11 @@ from src.api.deps import get_alerter
 from src.api.main import app
 from src.api.routes.monitors import _with_notices
 from src.core import alerting
-from src.core.alerting import recovery_key
+from src.core.alerting import cleared_key, recovery_key
 from src.core.api_keys import mint
 from src.core.models import MonitorEvent, Tenant
 from src.core.models.monitor import Monitor
-from src.core.monitors import RECOVERY_TITLE
+from src.core.monitors import CLEARED_TITLE, RECOVERY_TITLE
 from tests.conftest import CHANNELS
 
 HEADER = "X-API-Key"
@@ -344,6 +344,7 @@ class TestCheckin:
         row = await _row(db_session, monitor["id"])
         assert row.state == "pending"
         assert row.last_checkin_at is None
+        assert (row.fault_since, row.fault_key) == (None, None)
         assert not notifier.dispatch.called
 
     async def test_checkin_on_an_unknown_monitor_is_404(self, api, headers):
@@ -547,6 +548,239 @@ class TestDeliveryStatus:
             report["id"],
             "failed",
         )
+
+
+async def _open_fault(
+    db_session, monitor_id: str, *, report: tuple[timedelta, str] | None, key=None
+) -> None:
+    """A fault open since a day ago, its latest report *report* = (age, status) ago."""
+    now = datetime.now(UTC)
+    row = await _row(db_session, monitor_id)
+    row.state = "ok"
+    row.last_status = "alert"
+    row.last_checkin_at = now - timedelta(minutes=5)
+    row.fault_since = now - timedelta(days=1)
+    row.fault_key = key
+    if report is not None:
+        age, status = report
+        db_session.add(
+            MonitorEvent(monitor_id=monitor_id, kind="alert", at=now - age, dispatch_status=status)
+        )
+    await db_session.flush()
+
+
+def _calls(notifier) -> int:
+    """Every request notifier received, of any kind."""
+    return len(notifier.mock.calls)
+
+
+class TestFaults:
+    """One report per fault, a reminder per renotify, a notice when it clears
+    (#28). A suppressed ``alert`` is still recorded, and costs notifier nothing."""
+
+    async def test_a_repeat_inside_a_fault_is_recorded_and_suppressed(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        before = _calls(notifier)
+
+        response = await _checkin(api, headers, monitor, status="alert", variables={"source": "y"})
+
+        assert response.status_code == 202
+        assert response.json()["dispatches"] == []
+        assert _calls(notifier) == before  # no health, preview or dispatch
+        events = await _events(db_session, monitor["id"])
+        assert [(e.kind, e.dispatch_status) for e in events] == [
+            ("first_checkin", None),
+            ("alert", "succeeded"),
+            ("alert", None),
+        ]
+        row = await _row(db_session, monitor["id"])
+        assert row.last_variables == {"source": "y"}  # recorded all the same
+
+    async def test_the_fault_opens_with_its_first_alert(self, api, headers, monitor, db_session):
+        body = (
+            await _checkin(
+                api, headers, monitor, status="alert", metadata={"fault": {"kind": "lag"}}
+            )
+        ).json()
+        row = await _row(db_session, monitor["id"])
+        assert row.fault_since == datetime.fromisoformat(body["last_checkin_at"])
+        assert row.fault_key == {"kind": "lag"}
+
+    async def test_another_fault_key_reports_at_once(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """The consumer's opt-in (F2): processor's ``lag`` → ``off_main``."""
+        await _checkin(api, headers, monitor, status="alert", metadata={"fault": "lag"})
+        first = (await _row(db_session, monitor["id"])).fault_since
+        response = await _checkin(
+            api, headers, monitor, status="alert", metadata={"fault": "off_main"}
+        )
+        assert len(response.json()["dispatches"]) == 1
+        assert [d["metadata"]["fault"] for d in notifier.dispatched()] == ["lag", "off_main"]
+        row = await _row(db_session, monitor["id"])
+        assert row.fault_key == "off_main"
+        assert row.fault_since > first
+
+    async def test_the_same_fault_key_is_the_same_fault(self, api, headers, monitor, notifier):
+        for _ in range(3):
+            await _checkin(api, headers, monitor, status="alert", metadata={"fault": "lag"})
+        assert len(notifier.dispatched()) == 1
+
+    @pytest.mark.parametrize(("ago", "sent"), [(58, True), (57, False)], ids=["due", "early"])
+    async def test_a_reminder_goes_on_the_checkin_nearest_renotify(
+        self, api, headers, notifier, db_session, ago, sent
+    ):
+        """co-observo-live: 300 s ticks, hourly renotify. Due from 3450 s."""
+        created = await _create(api, headers, interval_seconds=300, renotify_seconds=3600)
+        await _open_fault(db_session, created["id"], report=(timedelta(minutes=ago), "succeeded"))
+        response = await _checkin(api, headers, created, status="alert")
+        assert len(response.json()["dispatches"]) == int(sent)
+        assert len(notifier.dispatched()) == int(sent)
+
+    @pytest.mark.parametrize("status", ["not_accepted", "failed"])
+    async def test_a_report_nobody_heard_is_resent(
+        self, api, headers, monitor, notifier, db_session, status
+    ):
+        """Late, never lost (F4), with the variables of the check-in that sends it."""
+        await _open_fault(db_session, monitor["id"], report=(timedelta(minutes=10), status))
+        response = await _checkin(
+            api, headers, monitor, status="alert", variables={"source": "now"}
+        )
+        (sent,) = notifier.dispatched()
+        assert sent["variables"] == {"source": "now"}
+        assert len(response.json()["dispatches"]) == 1
+
+    async def test_a_partial_report_was_heard(self, api, headers, monitor, notifier, db_session):
+        await _open_fault(db_session, monitor["id"], report=(timedelta(minutes=10), "partial"))
+        await _checkin(api, headers, monitor, status="alert")
+        assert not notifier.dispatch.called
+
+    async def test_a_preview_failure_at_the_crossing_is_resent_next_tick(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        notifier.preview.mock(side_effect=httpx.ConnectError("refused"))
+        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        notifier.preview.mock(side_effect=None)
+        notifier.preview.respond(json={"title": "t", "body": "b"})
+
+        response = await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+
+        assert len(response.json()["dispatches"]) == 1
+        events = await _events(db_session, monitor["id"])
+        assert [e.dispatch_status for e in events if e.kind == "alert"] == [
+            "not_accepted",
+            "succeeded",
+        ]
+
+    async def test_an_ok_clears_the_fault_and_says_so(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
+        expected_key = cleared_key(await _row(db_session, monitor["id"]))
+
+        response = await _checkin(api, headers, monitor, status="ok")
+
+        (dispatch,) = response.json()["dispatches"]
+        sent = notifier.dispatched()[-1]
+        assert sent["title_template"] == CLEARED_TITLE
+        assert sent["variables"]["name"] == monitor["name"]
+        assert sent["idempotency_key"] == expected_key
+        assert sent["metadata"] == {"monitor_id": monitor["id"], "reason": "cleared"}
+        cleared = (await _events(db_session, monitor["id"]))[-1]
+        assert (cleared.kind, cleared.dispatch_id, cleared.dispatch_status) == (
+            "cleared",
+            dispatch["id"],
+            "succeeded",
+        )
+        row = await _row(db_session, monitor["id"])
+        assert (row.fault_since, row.fault_key) == (None, None)
+
+    async def test_the_next_alert_after_a_clear_is_a_new_fault(
+        self, api, headers, monitor, notifier
+    ):
+        for status in ("alert", "ok", "alert"):
+            await _checkin(api, headers, monitor, status=status)
+        reasons = [d["metadata"]["reason"] for d in notifier.dispatched()]
+        assert reasons == ["report", "cleared", "report"]
+
+    async def test_a_cleared_notice_notifier_refuses_is_not_accepted(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await _checkin(api, headers, monitor, status="alert")
+        notifier.refusing("cleared")
+        response = await _checkin(api, headers, monitor, status="ok")
+        assert response.json()["dispatches"] == []
+        cleared = (await _events(db_session, monitor["id"]))[-1]
+        assert (cleared.kind, cleared.dispatch_status) == ("cleared", "not_accepted")
+        assert (await _row(db_session, monitor["id"])).fault_since is None
+
+    async def test_an_ok_with_no_fault_open_sends_nothing(self, api, headers, monitor, notifier):
+        await _checkin(api, headers, monitor, status="ok")
+        await _checkin(api, headers, monitor, status="ok")
+        assert _calls(notifier) == 1  # creation's channel check only
+
+    async def test_a_monitor_with_no_channels_tracks_the_fault_and_owes_nothing(
+        self, api, headers, notifier, db_session
+    ):
+        created = await _create(api, headers, channel_ids=[])
+        await _checkin(api, headers, created, status="alert")
+        assert (await _row(db_session, created["id"])).fault_since is not None
+        await _checkin(api, headers, created, status="ok")
+        assert _calls(notifier) == 0
+        events = await _events(db_session, created["id"])
+        assert [(e.kind, e.dispatch_status) for e in events] == [
+            ("first_checkin", None),
+            ("alert", None),
+            ("cleared", None),
+        ]
+
+    async def test_a_disabled_monitor_is_suppressed_alike(self, api, headers, monitor, notifier):
+        await api.patch(
+            f"/api/v1/monitors/{monitor['id']}", headers=headers, json={"enabled": False}
+        )
+        for _ in range(2):
+            await _checkin(api, headers, monitor, status="alert")
+        assert len(notifier.dispatched()) == 1
+
+
+class TestFaultsAndOutages:
+    """Silence never ends a fault (F7): every fault reported gets its end."""
+
+    async def _alert_then_silence(self, api, headers, monitor, db_session) -> None:
+        await _checkin(api, headers, monitor, status="alert", metadata={"fault": "lag"})
+        await _make_missing(db_session, monitor["id"])
+
+    async def test_back_with_ok_is_recovered_and_cleared(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await self._alert_then_silence(api, headers, monitor, db_session)
+        response = await _checkin(api, headers, monitor, status="ok")
+        reasons = [d["metadata"]["reason"] for d in notifier.dispatched()]
+        assert reasons == ["report", "recovered", "cleared"]
+        assert len(response.json()["dispatches"]) == 2
+
+    async def test_back_in_the_same_fault_is_recovered_only(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await self._alert_then_silence(api, headers, monitor, db_session)
+        response = await _checkin(api, headers, monitor, status="alert", metadata={"fault": "lag"})
+        reasons = [d["metadata"]["reason"] for d in notifier.dispatched()]
+        assert reasons == ["report", "recovered"]
+        assert len(response.json()["dispatches"]) == 1
+        assert (await _row(db_session, monitor["id"])).fault_since is not None
+
+    async def test_back_with_another_fault_is_recovered_and_reported(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await self._alert_then_silence(api, headers, monitor, db_session)
+        response = await _checkin(
+            api, headers, monitor, status="alert", metadata={"fault": "off_main"}
+        )
+        reasons = [d["metadata"]["reason"] for d in notifier.dispatched()]
+        assert reasons == ["report", "recovered", "report"]
+        assert len(response.json()["dispatches"]) == 2
 
 
 def _unreachable(notifier) -> None:

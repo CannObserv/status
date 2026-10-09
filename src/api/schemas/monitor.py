@@ -127,8 +127,12 @@ class CheckinRequest(BaseModel):
 
     Send one **every tick, regardless of findings** — the arrival is the
     signal. ``status`` is the consumer's own judgement about the contents:
-    ``alert`` renders and dispatches the monitor's template, ``ok`` records
-    the check-in and sends nothing.
+    ``alert`` reports with the monitor's template, ``ok`` records the
+    check-in. A run of ``alert`` check-ins is one fault (#28): it reports
+    when it opens, then once per ``renotify_seconds`` (or never again), and
+    the ``ok`` that ends it sends a *cleared* notice. ``metadata.fault``,
+    any JSON value, is the consumer's opt-in: an ``alert`` carrying another
+    value opens a new fault, and reports at once.
     """
 
     status: CheckinStatusLiteral = "ok"
@@ -144,6 +148,9 @@ class CheckinResponse(BaseModel):
     state: MonitorStateLiteral
     last_checkin_at: datetime
     next_deadline_at: datetime
-    #: Zero, one, or two dispatches: a recovery notice when this check-in
-    #: ended an outage, and the rendered report when ``status`` was ``alert``.
+    #: What this check-in sent: zero, one, or two dispatches. A recovery
+    #: notice when it ended an outage; then the report, when an ``alert``
+    #: was due one, or the *cleared* notice, when an ``ok`` ended a fault
+    #: (#28). An ``alert`` with none was a repeat not due a report, or owed
+    #: nothing (no channels), or lost (its event says ``not_accepted``).
     dispatches: list[DispatchOut]

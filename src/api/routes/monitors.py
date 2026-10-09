@@ -41,6 +41,7 @@ from src.core.alerting import (
     TemplateRejected,
     within_budget,
 )
+from src.core.alerting import cleared_key as build_cleared_key
 from src.core.alerting import recovery_key as build_recovery_key
 from src.core.logging import get_logger
 from src.core.models import MonitorEvent
@@ -49,8 +50,11 @@ from src.core.monitors import (
     CheckinStatus,
     EventKind,
     MonitorState,
+    cleared_notification,
     deadline_for,
+    opens_fault,
     recovery_notification,
+    report_due,
 )
 
 logger = get_logger(__name__)
@@ -327,6 +331,27 @@ async def _send(
     return DispatchOut.from_sdk(delivery.dispatch)
 
 
+async def _fault_report(session: AsyncSession, monitor: Monitor) -> tuple[datetime, str] | None:
+    """The open fault's latest report that owed a notice: its ``at`` and status.
+
+    One probe of ``ix_monitor_events_notice``. A suppressed repeat's null
+    status owed nothing, so it never hides the report before it (#28).
+    """
+    result = await session.execute(
+        select(MonitorEvent.at, MonitorEvent.dispatch_status)
+        .where(
+            MonitorEvent.monitor_id == monitor.id,
+            MonitorEvent.kind == EventKind.ALERT,
+            MonitorEvent.dispatch_status.is_not(None),
+            MonitorEvent.at >= monitor.fault_since,
+        )
+        .order_by(MonitorEvent.at.desc())
+        .limit(1)
+    )
+    row = result.one_or_none()
+    return (row.at, row.dispatch_status) if row else None
+
+
 @router.post("/{monitor_id}/checkin", status_code=202)
 async def checkin(
     monitor_id: ULIDStr,
@@ -341,23 +366,39 @@ async def checkin(
     findings and zero traffic is what a dead probe looks like too, so the
     report's *arrival* is the part co-status cannot infer. The arrival is
     always recorded: nothing notifier does or fails to do can cost it.
+
+    A run of ``alert`` check-ins is one fault (#28): it reports when it
+    opens, then as :func:`~src.core.monitors.report_due` says, and the next
+    ``ok`` sends a *cleared* notice. A repeat that is not due is recorded,
+    and costs notifier nothing.
     """
     monitor = await _load_owned(session, monitor_id, tenant_id)
     now = datetime.now(UTC)
     previous_state = monitor.state
     is_alert = body.status == CheckinStatus.ALERT
     recovering = previous_state == MonitorState.MISSING
+    clearing = not is_alert and monitor.fault_since is not None
+    fault = body.metadata.get("fault")
+    opening = is_alert and opens_fault(monitor, fault)
     dispatches: list[DispatchOut] = []
 
-    # Taken before last_checkin_at moves: both quote the silence that is ending.
+    last_report = await _fault_report(session, monitor) if is_alert and not opening else None
+    report_owed = is_alert and report_due(monitor, now, fault, last_report)
+    cleared_owed = clearing and bool(monitor.channel_ids)
+
+    # Taken before last_checkin_at moves and the fault closes: they quote the
+    # silence that is ending, and the fault's last alert and start.
     recovery = recovery_notification(monitor, now) if recovering else None
     recovery_idempotency_key = build_recovery_key(monitor) if recovering else None
+    cleared = cleared_notification(monitor, now) if clearing else None
+    cleared_idempotency_key = build_cleared_key(monitor) if clearing else None
 
-    can_send = alerter is not None and (is_alert or recovering)
+    owed = report_owed or recovering or cleared_owed
+    can_send = alerter is not None and owed
     budget = Budget() if can_send else None
-    if alerter is None and (is_alert or recovering):
+    if alerter is None and owed:
         logger.error(
-            "check-in warrants an alert but this process has no notifier key",
+            "check-in owes a notice but this process has no notifier key",
             extra={"monitor_id": str(monitor.id)},
         )
 
@@ -370,7 +411,7 @@ async def checkin(
 
     # Render before recording anything: a report notifier cannot render is the
     # consumer's bug, and the 422 must leave the monitor exactly as it was.
-    report_sendable = can_send and is_alert
+    report_sendable = can_send and report_owed
     if report_sendable:
         try:
             await budget.run(
@@ -410,7 +451,30 @@ async def checkin(
     monitor.last_variables = body.variables
     monitor.state = MonitorState.OK
 
-    if is_alert:
+    if clearing:
+        sent = None
+        if can_send and cleared_owed:
+            sent = await _send(
+                alerter,
+                budget,
+                monitor,
+                "cleared",
+                title_template=cleared.title_template,
+                body_template=cleared.body_template,
+                variables=cleared.variables,
+                idempotency_key=cleared_idempotency_key,
+            )
+        if sent is not None:
+            dispatches.append(sent)
+        session.add(_notice_event(monitor, EventKind.CLEARED, now, sent))
+        monitor.fault_since = None
+        monitor.fault_key = None
+
+    if opening:
+        monitor.fault_since = now
+        monitor.fault_key = fault
+
+    if report_owed:
         sent = None
         if report_sendable:
             sent = await _send(
@@ -426,6 +490,8 @@ async def checkin(
         if sent is not None:
             dispatches.append(sent)
         session.add(_notice_event(monitor, EventKind.ALERT, now, sent))
+    elif is_alert:
+        session.add(_event(monitor, EventKind.ALERT, now))
 
     await session.commit()
     await session.refresh(monitor)

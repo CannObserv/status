@@ -21,12 +21,15 @@ from src.core.monitors import (
     EventKind,
     MonitorState,
     Notice,
+    cleared_notification,
     deadline_for,
     format_duration,
     is_overdue,
     missing_notification,
+    opens_fault,
     recovery_notification,
     redelivery_due,
+    report_due,
     should_alert,
     should_redeliver,
 )
@@ -167,6 +170,107 @@ class TestShouldAlert:
         assert should_alert(monitor, NOW) is True
 
 
+CHANNELS = ["01J00000000000000000000CH1"]
+
+
+class TestReportDue:
+    """Which ``alert`` check-ins send a report (#28, spec F2–F4).
+
+    One per fault, a reminder per ``renotify_seconds`` landing on the
+    check-in nearest it, and a resend while nobody has heard. Everything
+    else is recorded and suppressed.
+    """
+
+    def _open(self, **overrides) -> Monitor:
+        """A nightly backup with a fault open since a day ago."""
+        fields = {
+            "interval_seconds": 86400,
+            "grace_seconds": 7200,
+            "renotify_seconds": 86400,
+            "channel_ids": CHANNELS,
+            "state": MonitorState.OK,
+            "fault_since": NOW - timedelta(days=1),
+            "fault_key": None,
+        }
+        fields.update(overrides)
+        return _monitor(**fields)
+
+    def test_the_alert_that_opens_a_fault_reports(self):
+        monitor = self._open(fault_since=None)
+        assert opens_fault(monitor, None)
+        assert report_due(monitor, NOW, None, None)
+
+    def test_a_repeat_inside_the_renotify_period_is_suppressed(self):
+        monitor = self._open(interval_seconds=300, renotify_seconds=3600)
+        heard = (NOW - timedelta(minutes=5), "succeeded")
+        assert not opens_fault(monitor, None)
+        assert not report_due(monitor, NOW, None, heard)
+
+    def test_a_nightly_failure_23h50m_after_the_last_reports(self):
+        """The hazard: ``RandomizedDelaySec=10min`` puts two runs 23h50m
+        apart, and plain ``>= renotify`` would drop the second night."""
+        monitor = self._open()
+        assert report_due(monitor, NOW, None, (NOW - timedelta(hours=23, minutes=50), "succeeded"))
+
+    def test_the_reminder_lands_on_the_checkin_nearest_renotify(self):
+        """Due from renotify minus half the interval: 12 h for the backups."""
+        monitor = self._open()
+        assert report_due(monitor, NOW, None, (NOW - timedelta(hours=12), "succeeded"))
+        assert not report_due(
+            monitor, NOW, None, (NOW - timedelta(hours=11, minutes=59), "succeeded")
+        )
+
+    def test_an_hourly_probe_is_reminded_on_the_nearest_tick_to_a_day(self):
+        monitor = self._open(interval_seconds=3600, renotify_seconds=86400)
+        assert not report_due(monitor, NOW, None, (NOW - timedelta(hours=23), "succeeded"))
+        assert report_due(monitor, NOW, None, (NOW - timedelta(hours=23, minutes=30), "succeeded"))
+
+    def test_a_cadence_longer_than_twice_renotify_reports_every_alert(self):
+        monitor = self._open(interval_seconds=600, renotify_seconds=60)
+        assert report_due(monitor, NOW, None, (NOW - timedelta(seconds=1), "succeeded"))
+
+    def test_without_renotify_a_fault_reports_once(self):
+        monitor = self._open(interval_seconds=600, renotify_seconds=None)
+        assert not report_due(monitor, NOW, None, (NOW - timedelta(days=30), "succeeded"))
+
+    @pytest.mark.parametrize("status", ["not_accepted", "failed"])
+    def test_a_report_nobody_heard_is_resent(self, status):
+        """Late, never lost: as for the owed missing alert (F4)."""
+        monitor = self._open(renotify_seconds=None)
+        assert report_due(monitor, NOW, None, (NOW - timedelta(minutes=1), status))
+
+    def test_a_partial_report_was_heard(self):
+        """The channels are redundant: one delivered is someone told."""
+        monitor = self._open(renotify_seconds=None)
+        assert not report_due(monitor, NOW, None, (NOW - timedelta(minutes=1), "partial"))
+
+    def test_a_fault_with_no_report_yet_reports(self):
+        """Channels added mid-fault: nothing was owed before, now it is."""
+        assert report_due(self._open(), NOW, None, None)
+
+    def test_a_monitor_with_no_channels_never_owes_a_report(self):
+        monitor = self._open(fault_since=None, channel_ids=[])
+        assert opens_fault(monitor, None)
+        assert not report_due(monitor, NOW, None, None)
+
+    @pytest.mark.parametrize(
+        ("open_key", "fault"),
+        [("lag", "off_main"), (None, "lag"), ("lag", None), ({"a": [1]}, {"a": [2]}), (1, True)],
+        ids=["changed", "added", "dropped", "nested", "json-not-python"],
+    )
+    def test_another_fault_key_opens_a_new_fault(self, open_key, fault):
+        """The consumer's opt-in (F2), compared as JSON: ``True`` is not ``1``."""
+        monitor = self._open(fault_key=open_key, renotify_seconds=None)
+        heard = (NOW - timedelta(minutes=1), "succeeded")
+        assert opens_fault(monitor, fault)
+        assert report_due(monitor, NOW, fault, heard)
+
+    def test_the_same_fault_key_is_the_same_fault(self):
+        """Key order is not identity: Postgres's jsonb reorders keys."""
+        monitor = self._open(fault_key={"b": 1, "a": [1, 2]}, renotify_seconds=None)
+        assert not opens_fault(monitor, {"a": [1, 2], "b": 1})
+
+
 class TestRedeliveryDue:
     """Spaced from notifier's own attempt log, not the 60 s sweep (#10)."""
 
@@ -261,6 +365,18 @@ def _placeholders(notice: Notice) -> set[str]:
     return set(PLACEHOLDER.findall(notice.title_template + notice.body_template))
 
 
+def _cleared(monitor: Monitor, now: datetime) -> Notice:
+    return cleared_notification(_with_fault(monitor), now)
+
+
+def _with_fault(monitor: Monitor) -> Monitor:
+    monitor.fault_since = NOW - timedelta(hours=3)
+    return monitor
+
+
+BUILT_IN = [missing_notification, recovery_notification, _cleared]
+
+
 class TestBuiltInNotifications:
     """Missing and recovery wording is co-status's, not the consumer's.
 
@@ -272,21 +388,21 @@ class TestBuiltInNotifications:
     become a 422 and a lost alert.
     """
 
-    @pytest.mark.parametrize("build", [missing_notification, recovery_notification])
+    @pytest.mark.parametrize("build", BUILT_IN)
     def test_every_placeholder_has_a_variable(self, build):
         """notifier renders with StrictUndefined: one unbound name and the
         alert is a 422 instead of a notification."""
         notice = build(_monitor(last_checkin_at=NOW - timedelta(hours=1)), NOW)
         assert _placeholders(notice) <= set(notice.variables)
 
-    @pytest.mark.parametrize("build", [missing_notification, recovery_notification])
+    @pytest.mark.parametrize("build", BUILT_IN)
     def test_the_monitor_name_is_data_not_template(self, build):
         name = "evil {{ x }} {% raw %}"
         notice = build(_monitor(name=name, last_checkin_at=NOW - timedelta(hours=1)), NOW)
         assert name not in notice.title_template + notice.body_template
         assert notice.variables["name"] == name
 
-    @pytest.mark.parametrize("build", [missing_notification, recovery_notification])
+    @pytest.mark.parametrize("build", BUILT_IN)
     def test_the_title_says_who_sent_it(self, build):
         notice = build(_monitor(last_checkin_at=NOW - timedelta(hours=1)), NOW)
         assert notice.title_template.startswith("[co-status] ")
@@ -307,6 +423,23 @@ class TestBuiltInNotifications:
         monitor = _monitor(last_checkin_at=NOW - timedelta(minutes=47))
         variables = missing_notification(monitor, NOW).variables
         assert variables["deadline"] == "2026-09-09T11:43:00Z"
+
+    def test_cleared_names_the_fault_and_how_long_it_lasted(self):
+        """Built before ``last_checkin_at`` moves: the previous check-in was
+        the fault's last ``alert``."""
+        monitor = _monitor(
+            name="co-observo-live",
+            fault_since=NOW - timedelta(hours=1, minutes=5),
+            last_checkin_at=NOW - timedelta(minutes=5),
+        )
+        notice = cleared_notification(monitor, NOW)
+        assert notice.title_template == "[co-status] {{ name }} has cleared"
+        assert notice.variables == {
+            "name": "co-observo-live",
+            "duration": "1h 5m",
+            "since": "2026-09-09T10:55:00Z",
+            "last_alert": "2026-09-09T11:55:00Z",
+        }
 
     def test_recovery_names_the_silence_that_ended(self):
         monitor = _monitor(name="co-broker", last_checkin_at=NOW - timedelta(hours=2))

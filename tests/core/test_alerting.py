@@ -30,6 +30,7 @@ from src.core.alerting import (
     RedeliveryCapped,
     TemplateRejected,
     alerter_from_environment,
+    cleared_key,
     missing_key,
     read_notifier_key,
     recovery_key,
@@ -159,6 +160,11 @@ class TestIdempotencyKeys:
     def test_recovery_before_any_checkin_is_keyed_on_creation(self):
         monitor = _monitor(last_checkin_at=None, created_at=NOW - timedelta(days=1))
         assert recovery_key(monitor).endswith(":recovered:2026-09-08T12:00:00Z")
+
+    def test_cleared_is_keyed_on_the_fault_it_ends(self):
+        """One per fault, so the SDK may retry it (#28, F6)."""
+        monitor = _monitor(fault_since=NOW - timedelta(hours=3))
+        assert cleared_key(monitor) == "01J000000000000000000MONTR:cleared:2026-09-09T09:00:00Z"
 
     def test_keys_fit_notifiers_limit(self):
         """notifier caps idempotency_key at 200 characters."""

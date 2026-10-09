@@ -14,6 +14,7 @@ the database or the network. The sweep that acts on it lives in
 """
 
 import enum
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -94,6 +95,18 @@ RECOVERY_BODY = (
     "- Expected: {{ cadence }}\n"
     "- Previous check-in: {{ last_checkin }}"
 )
+CLEARED_TITLE = "[co-status] {{ name }} has cleared"
+CLEARED_BODY = (
+    "**{{ name }}** checked in `ok` after {{ duration }} reporting `alert`.\n\n"
+    "- Alerting since: {{ since }}\n"
+    "- Last alert check-in: {{ last_alert }}"
+)
+
+#: Delivery statuses that mean nobody was told: notifier never took the
+#: report (co-status's ``not_accepted``, #19), or every channel failed. A
+#: ``partial`` reached someone, so it is heard (#28, F4). Spelled here, not
+#: imported, because this module never imports ``alerting``.
+UNHEARD = frozenset({"not_accepted", "failed"})
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -148,6 +161,56 @@ def should_alert(monitor: Monitor, now: datetime) -> bool:
     if monitor.renotify_seconds is None:
         return False
     return now - _as_utc(monitor.last_alert_at) >= timedelta(seconds=monitor.renotify_seconds)
+
+
+def _canonical(value: object) -> str:
+    """A JSON value as one string: ``True`` is not ``1``, and key order,
+    which Postgres's ``jsonb`` rewrites, is not identity."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def opens_fault(monitor: Monitor, fault: object) -> bool:
+    """Whether an ``alert`` carrying ``metadata.fault`` *fault* opens a new fault.
+
+    A run of ``alert`` check-ins is one fault (#28, F1). None is open, or the
+    consumer's key differs from the one it opened with (F2), compared as
+    JSON. Without the key, every ``alert`` in the run carries null alike, so
+    a fault is told apart from the next by ``status`` and time alone.
+    """
+    if monitor.fault_since is None:
+        return True
+    return _canonical(fault) != _canonical(monitor.fault_key)
+
+
+def report_due(
+    monitor: Monitor,
+    now: datetime,
+    fault: object,
+    last_report: tuple[datetime, str] | None,
+) -> bool:
+    """Whether this ``alert`` check-in sends the monitor's report (#28, F2–F4).
+
+    *last_report* is the open fault's latest report that owed a notice, as
+    ``(at, dispatch_status)``, or ``None``. Due when the check-in opens a
+    fault, when nobody heard the last report (:data:`UNHEARD`: late, never
+    lost), or as a reminder once ``renotify_seconds`` minus half the
+    interval has passed: the check-in *nearest* the renotify point, because
+    check-ins arrive with jitter. A nightly backup whose timer runs up to 10
+    minutes early is 23h50m from its last failure, and must still report.
+    Without ``renotify_seconds``, a fault reports once. A monitor with no
+    channels owes nothing.
+    """
+    if not monitor.channel_ids:
+        return False
+    if opens_fault(monitor, fault) or last_report is None:
+        return True
+    at, status = last_report
+    if status in UNHEARD:
+        return True
+    if monitor.renotify_seconds is None:
+        return False
+    tolerance = timedelta(seconds=monitor.interval_seconds / 2)
+    return now - _as_utc(at) >= timedelta(seconds=monitor.renotify_seconds) - tolerance
 
 
 def format_duration(delta: timedelta) -> str:
@@ -216,6 +279,26 @@ def recovery_notification(monitor: Monitor, now: datetime) -> Notice:
             "silence": _silence(monitor, now),
             "cadence": _cadence(monitor),
             "last_checkin": _last_seen(monitor),
+        },
+    )
+
+
+def cleared_notification(monitor: Monitor, now: datetime) -> Notice:
+    """The notice for a fault that an ``ok`` check-in has ended (#28, F6).
+
+    Built before ``last_checkin_at`` moves: while a fault is open, the
+    previous check-in is always its last ``alert``. Without it, once repeats
+    are suppressed, the end of a fault reads as a report that got lost.
+    """
+    since = _as_utc(monitor.fault_since)
+    return Notice(
+        title_template=CLEARED_TITLE,
+        body_template=CLEARED_BODY,
+        variables={
+            "name": monitor.name,
+            "duration": format_duration(now - since),
+            "since": format_utc_iso(since),
+            "last_alert": _last_seen(monitor),
         },
     )
 

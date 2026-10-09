@@ -174,6 +174,15 @@ def recovery_key(monitor: Monitor) -> str:
     return f"{monitor.id}:recovered:{format_utc_iso(anchor)}"
 
 
+def cleared_key(monitor: Monitor) -> str:
+    """The idempotency key for a cleared notice: one per fault ended (#28).
+
+    Keyed on ``fault_since``, so it must be taken before the check-in closes
+    the fault.
+    """
+    return f"{monitor.id}:cleared:{format_utc_iso(_as_utc(monitor.fault_since))}"
+
+
 async def within_budget[T](awaitable: Awaitable[T], *, budget: float = REQUEST_BUDGET_SECONDS) -> T:
     """Await *awaitable*, or raise :class:`BudgetExceeded` once *budget* runs out."""
     try:

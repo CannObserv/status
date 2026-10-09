@@ -117,7 +117,7 @@ All three read only the HTTP status of a check-in, never its body.
 1. **Template check** (`alert` only). Call notifier's `preview` with the monitor's templates and the reported `variables`. If rendering fails, return 422 naming the failing section and leave the monitor untouched. Templates cannot be checked when a monitor is created, because rendering needs real `variables`.
 2. **Recovery.** If the monitor is `missing`, send the recovery notice and write `recovered`. This happens before `last_checkin_at` moves, so the notice can quote the length of the silence.
 3. **Record.** Set `last_checkin_at`, `last_status` and `last_variables`, and set the state to `ok`. Coming from `pending`, write `first_checkin`.
-4. **Report** (`alert` only). Send the monitor's `title_template` and `body_template` inline to `/dispatch`, together with the `variables`, and write `alert`.
+4. **Report** (`alert` only). Send the monitor's `title_template` and `body_template` inline to `/dispatch`, together with the `variables`, and write `alert`. **Amended by #28:** only when the fault is due a report; an `ok` that ends a fault sends *has cleared* ([alert faults spec](2026-10-09-alert-faults-design.md)).
 5. **Respond** with 202 and the same body as notifier's `CheckinResponse`. Its `dispatches` holds the dispatch records notifier returned for steps 2 and 4.
 
 **A disabled monitor still records check-ins and still sends reports.** `enabled` gates only the sweep, as in notifier. The cutover depends on this.
@@ -153,7 +153,8 @@ The monitor becomes `missing` whether or not the alert went out, because state d
   |---|---|
   | missing (and renotifies) | `{monitor_id}:missing:{deadline}:{n}`, where `n` is the number of whole `renotify_seconds` periods since the deadline (0 for the first alert) |
   | recovery | `{monitor_id}:recovered:{last_checkin_at before this check-in, or created_at}` |
-  | report | none: each `alert` check-in is a new report |
+  | report | none: each `alert` check-in is a new report (**amended by #28:** one per fault, a reminder per renotify, a resend while unheard; still no key) |
+  | cleared (#28) | `{monitor_id}:cleared:{fault_since}` |
 
   If a sweep dies after sending but before committing, the next pass sends the same key and notifier returns the existing record, so the alert is not duplicated. The keys also make the SDK's retries safe, because it retries `POST /dispatch` only when a key is present.
 - **Read `status` from the 202.** `failed` and `partial` are logged. They do not change state.

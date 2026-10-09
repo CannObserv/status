@@ -14,15 +14,16 @@ So a consumer checks in **every tick regardless of findings**, and co-status ale
 |---|---|
 | `interval_seconds` | The cadence the consumer promises |
 | `grace_seconds` | Slack on top of it before silence is an outage |
-| `renotify_seconds` | `null` alerts once per outage; a value repeats every N seconds while missing |
+| `renotify_seconds` | `null` alerts once per outage, and reports once per fault; a value repeats every N seconds while missing, and reminds while a fault lasts ([§ Faults](#faults)) |
 | `channel_ids` | Channels owned by co-status's own tenant **in notifier**, checked against notifier on every write |
 | `title_template` + `body_template` | The consumer's Jinja for an `alert` check-in; rendered by notifier, never here |
 | `enabled` | `false` pauses the timer for planned downtime; check-ins still land |
 | `state` | `pending` → `ok` → `missing`, and back |
+| `fault_since`, `fault_key` | The open fault: when its first `alert` arrived, and the `metadata.fault` it opened with. Null while none is open ([§ Faults](#faults)) |
 
 The deadline is `(last_checkin_at or created_at) + interval + grace`. Anchoring on `created_at` before the first check-in is deliberate: a monitor configured here but never wired up on the consumer's side is the likeliest misconfiguration of all.
 
-Every state change is recorded in `monitor_events` — `imported`, `first_checkin`, `missing`, `recovered`, `alert`, `paused`, `resumed` — never with the consumer's `variables` (spec D9). An event that sent something keeps notifier's `dispatch_id` and, beside it, the delivery `status` as `dispatch_status` ([#8](https://github.com/CannObserv/status/issues/8)). A recovery or report notifier never took has no dispatch id, and `dispatch_status` is co-status's own `not_accepted` ([#19](https://github.com/CannObserv/status/issues/19)).
+Every state change is recorded in `monitor_events` — `imported`, `first_checkin`, `missing`, `recovered`, `alert`, `cleared`, `paused`, `resumed` — never with the consumer's `variables` (spec D9). Every `alert` check-in writes its `alert` event, including one that sent no report ([§ Faults](#faults)). An event that sent something keeps notifier's `dispatch_id` and, beside it, the delivery `status` as `dispatch_status` ([#8](https://github.com/CannObserv/status/issues/8)). A recovery, report or cleared notice notifier never took has no dispatch id, and `dispatch_status` is co-status's own `not_accepted` ([#19](https://github.com/CannObserv/status/issues/19)). A null `dispatch_status` owed nothing: no channels, or an `alert` repeat not due a report.
 
 ## The API
 
@@ -41,10 +42,12 @@ printf 'X-API-Key: %s\n' "$KEY" | curl -sX POST "http://status:9000/api/v1/monit
 ```
 
 - **`variables` is opaque.** Stored verbatim and forwarded to notifier; nothing here reads inside it.
-- **`status` is the consumer's judgement.** `ok` records the check-in and sends nothing; `alert` also sends the monitor's templates to notifier with the `variables`.
+- **`status` is the consumer's judgement.** `ok` records the check-in; `alert` also reports, with the monitor's templates and the `variables`, when the fault is due one ([§ Faults](#faults)). An `ok` that ends a fault sends *has cleared*.
+- **`metadata.fault` is the one key co-status reads, and only when the consumer sends it.** Any JSON value, compared, never interpreted: an `alert` carrying another value than the open fault's is a new fault, and reports at once. `metadata` is otherwise forwarded to notifier with the report, as before.
+- **`dispatches` lists what this check-in sent**, at most two. An `alert` answered with `[]` was a repeat not due a report (its event's `dispatch_status` is null), owed nothing, or lost (`not_accepted`). The shape is notifier's, unchanged.
 - **An `ok` check-in is never checked against the template.** Rejecting a heartbeat over its payload would silence the timer to protect a notification that was never going to be sent.
-- **An `alert` notifier cannot render is a 422** naming the section, and the monitor is left untouched — notifier's `preview` is the check.
-- **The monitor says what became of its notices.** A 202 means the check-in was recorded, not that anyone heard the report. Every monitor response (list, get, create, update) serves `last_alert_status` for the missing alert ([#6](https://github.com/CannObserv/status/issues/6)), and `last_report_status` and `last_recovery_status`, each with its `_at`, for the latest report and recovery that owed a notice ([#20](https://github.com/CannObserv/status/issues/20)): `succeeded`, `partial`, `failed` or `not_accepted` ([§ The sweep](#the-sweep)). Each is served at any age. `last_report_*` is the latest *report*; the latest check-in is `last_checkin_at` and `last_status`.
+- **An `alert` notifier cannot render is a 422** naming the section, and the monitor is left untouched — notifier's `preview` is the check. Only a report that is due is checked: a repeat inside a fault makes no notifier call, so a template that its `variables` would break answers 202 until the next report that is due.
+- **The monitor says what became of its notices.** A 202 means the check-in was recorded, not that anyone heard the report. Every monitor response (list, get, create, update) serves `last_alert_status` for the missing alert ([#6](https://github.com/CannObserv/status/issues/6)), and `last_report_status`, `last_recovery_status` and `last_cleared_status`, each with its `_at`, for the latest report, recovery and cleared notice that owed one ([#20](https://github.com/CannObserv/status/issues/20), [#28](https://github.com/CannObserv/status/issues/28)), beside `fault_since` and `fault_key`: `succeeded`, `partial`, `failed` or `not_accepted` ([§ The sweep](#the-sweep)). Each is served at any age. `last_report_*` is the latest *report*; the latest check-in is `last_checkin_at` and `last_status`.
 
 `tests/api/test_contract.py` holds the request, the 202 and the path parameter to a snapshot of notifier's OpenAPI at `notifier@2c02dbf`.
 
@@ -52,11 +55,26 @@ printf 'X-API-Key: %s\n' "$KEY" | curl -sX POST "http://status:9000/api/v1/monit
 
 | Event | Notification |
 |---|---|
-| `status: "alert"` check-in | The monitor's own templates, rendered by notifier against `variables` |
+| `status: "alert"` check-in that opens a fault, or is due a reminder or a resend ([§ Faults](#faults)) | The monitor's own templates, rendered by notifier against `variables` |
+| `status: "alert"` check-in inside a fault, not due | Nothing; its `alert` event is recorded |
+| `status: "ok"` check-in that ends a fault | Built in: *"[co-status] {name} has cleared"* |
 | Deadline passes | Built in: *"[co-status] {name} has stopped reporting"* |
 | First check-in after an outage | Built in: *"[co-status] {name} has recovered"* |
 
 The built-in wording is a fixed template with the facts passed as `variables`, so a monitor name containing `{{` is data, never template syntax.
+
+### Faults
+
+**A run of `alert` check-ins is one fault** ([#28](https://github.com/CannObserv/status/issues/28), [spec](../specs/2026-10-09-alert-faults-design.md)). Before it, every `alert` sent its own report: a 5-minute probe sent 12 an hour while a fault lasted, and the `ok` that ended it sent nothing.
+
+- **It reports when it opens**: an `alert` with no fault open, or with a `metadata.fault` other than the open fault's.
+- **Then once per `renotify_seconds`**, on the check-in nearest it: due from `renotify − interval / 2` after the last report. Check-ins arrive with jitter: a nightly backup's timer can run 10 minutes early, and its second failed night, 23h50m later, must still report. With `renotify_seconds` null, a fault reports once.
+- **A report nobody heard is resent** by the next `alert`: `not_accepted` or `failed`. `partial` reached someone. Late, never lost, as for the missing alert.
+- **Every other `alert` is suppressed**: recorded, with an `alert` event whose `dispatch_status` is null, and no notifier call at all.
+- **The next `ok` ends it** with *has cleared*: how long it lasted, since when, and its last `alert`. Keyed `{monitor_id}:cleared:{fault_since}`.
+- **Silence doesn't end a fault.** Back from `missing` with `ok`: *recovered* and *cleared*. With an `alert` in the same fault: *recovered*, plus a report only if one is due. With another `metadata.fault`: *recovered* and a report.
+- **Without `metadata.fault`, a change of fault waits for the next reminder**, or for the clear when `renotify_seconds` is null: observo's `degraded` → `disk_low`, processor's `lag` → `off_main`, a new broker finding. A consumer that sends the stable part of its finding as `metadata.fault` hears each change at once.
+- A disabled monitor reports and suppresses alike. A monitor with no channels tracks its faults and owes nothing.
 
 ## Alerts go through notifier
 
@@ -64,7 +82,7 @@ co-status delivers nothing itself (spec D5). Every alert is a `POST /api/v1/disp
 
 - **Which notifier is derived, not configured:** production sends to `notifier:9000`, development to `notifier:9001`, and `/health`'s `environment` is checked before sending. A co-status pointed at the wrong notifier refuses rather than inverting.
 - **A 202 is not a delivery** (notifier#70). `status` is logged when it is `failed` or `partial`. The sweep keeps it as `last_alert_status`, and the check-in on its event as `dispatch_status`, or `not_accepted` when notifier took nothing (see below).
-- **Missing and recovery alerts carry deterministic idempotency keys**, so a pass that dies between sending and committing does not send twice.
+- **Missing, recovery and cleared notices carry deterministic idempotency keys**, so a pass that dies between sending and committing does not send twice. Reports carry none: a resend after `failed` must be a new dispatch.
 - **A check-in is always recorded and answered**, whatever notifier does, inside an 8-second budget below the consumers' 10-second timeout.
 
 ## The sweep
@@ -83,7 +101,7 @@ co-status delivers nothing itself (spec D5). Every alert is a `POST /api/v1/disp
 - **At least once.** A channel that reported a failure may still have delivered (a read timeout after the server took it), so a redelivery can arrive twice.
 - The journal line's `redelivered` gives `{monitor id: status}` for each one this pass, or `capped`. The `co-status-sweep` ping body carries its count.
 
-**The check-in's notices too** ([#8](https://github.com/CannObserv/status/issues/8)). A recovery or report has no pass of its own: the check-in sends it once and answers. Its `recovered` or `alert` event keeps the delivery `status` as `dispatch_status`. When notifier never took it, it is `not_accepted` ([#19](https://github.com/CannObserv/status/issues/19)): unreachable, out of the budget, refused (revoked key, 422, every channel deleted), the endpoint check or the report's preview failed, or the API has no notifier key. A monitor with no channels owed nothing and keeps null, as the sweep's `undeliverable` does. Every pass lists, per monitor, the latest recovery and the latest report of the last 24 hours, if it came back `failed`, `partial` or `not_accepted`, as `undelivered_notices` (`{monitor id: {"recovery" | "report": status}}`). It clears when a later one of the same kind is delivered: a consumer reporting `alert` every tick clears on its next delivered report. A delivered recovery does not clear a report. A later notice notifier never took is reported in an earlier failure's place, as `not_accepted`. Otherwise it clears 24 hours after it was sent: a one-off report has no later one, and nothing resends it, accepted or not. A resend would need the report's `variables`, which events never keep (D9). Disabled monitors are not reported, as above. The owner sees the latest of each kind, at any age, on the monitor itself ([§ The API](#the-api), [#20](https://github.com/CannObserv/status/issues/20)): the 24 hours bound the operator's check, not what the owner is told.
+**The check-in's notices too** ([#8](https://github.com/CannObserv/status/issues/8)). A recovery, report or cleared notice has no pass of its own: the check-in sends it once and answers. Its `recovered`, `alert` or `cleared` event keeps the delivery `status` as `dispatch_status`. When notifier never took it, it is `not_accepted` ([#19](https://github.com/CannObserv/status/issues/19)): unreachable, out of the budget, refused (revoked key, 422, every channel deleted), the endpoint check or the report's preview failed, or the API has no notifier key. A monitor with no channels owed nothing and keeps null, as the sweep's `undeliverable` does. Every pass lists, per monitor, the latest recovery, report and cleared notice of the last 24 hours, if it came back `failed`, `partial` or `not_accepted`, as `undelivered_notices` (`{monitor id: {"recovery" | "report" | "cleared": status}}`). It clears when a later one of the same kind is delivered: a fault whose report nobody heard resends it on its next `alert` ([§ Faults](#faults)), and clears on the first delivered. A delivered recovery does not clear a report, nor a report a cleared notice. A later notice notifier never took is reported in an earlier failure's place, as `not_accepted`. Otherwise it clears 24 hours after it was sent: a one-off report has no later one, and the sweep resends nothing, accepted or not. A resend from here would need the report's `variables`, which events never keep (D9). Disabled monitors are not reported, as above. The owner sees the latest of each kind, at any age, on the monitor itself ([§ The API](#the-api), [#20](https://github.com/CannObserv/status/issues/20)): the 24 hours bound the operator's check, not what the owner is told.
 
 **A timer, not a task in the API process**, and **`TimeoutStartSec` is not decoration**: both for notifier's reasons (its monitors.md § The sweep).
 
@@ -105,7 +123,7 @@ healthchecks alerts over its own email and Slack, **never through notifier**.
 - **What `co-status-api` cannot see.** The probe runs on the API's own host, so it never crosses the tailnet ACL. A consumer that the ACL blocks still goes `missing` while the check stays green.
 - **No `OnFailure=`.** Under `Restart=` it fires on every crash, even one the restart fixes, because systemd's default `RestartMode=normal` passes through `failed`. With `RestartMode=direct` it fires only once the unit gives up. It never fires for an API that is up but not ready, and a check fed only `/fail` never comes back up by itself. A failed unit cannot answer `/ready`, so the probe reports it one pass later ([plan](../plans/2026-10-01-watch-the-api.md)).
 - **Dev is deliberately unwatched.** The dev sweep pings nothing and asks nothing, and no dev unit has `OnFailure=`. `scripts/deploy.sh` verifies `:9001` on every deploy, and dev's callers see their own failures.
-- **`notifier-reachable` is broader than its name.** It also goes `/fail` when notifier *refuses* an alert: a revoked key (401), a monitor whose channels were all deleted, a 422. It stays down until that is fixed, and healthchecks alerts once per change of state, so a real outage starting meanwhile raises no new alert. A refused alert is still an alert that reaches no one, which is why it counts. The same goes for an alert, recovery or report notifier accepted and could not deliver, and for a recovery or report it never took: either holds the check down for up to 24 hours, including after a short outage ends.
+- **`notifier-reachable` is broader than its name.** It also goes `/fail` when notifier *refuses* an alert: a revoked key (401), a monitor whose channels were all deleted, a 422. It stays down until that is fixed, and healthchecks alerts once per change of state, so a real outage starting meanwhile raises no new alert. A refused alert is still an alert that reaches no one, which is why it counts. The same goes for an alert, recovery, report or cleared notice notifier accepted and could not deliver, and for a recovery, report or cleared notice it never took: either holds the check down for up to 24 hours, including after a short outage ends.
 
 **A fourth check watches what is deployed, not what runs: `co-status-drift`** ([#12](https://github.com/CannObserv/status/issues/12), `src/core/drift.py`). Since #9, pushed is not deployed. Every hour `status-drift.timer` asks GitHub how far the live release's `REVISION` is behind `origin/main`:
 
@@ -114,7 +132,7 @@ healthchecks alerts over its own email and Slack, **never through notifier**.
 - **`/log`** when GitHub cannot answer (unauthenticated, 60 requests an hour per address; a run costs 1 in sync or behind in docs, 2 behind in code, at most 10 past the grace). The check's state does not change; an outage longer than its 2-hour grace goes silent, and that alerts.
 - Production only, own unit, no database and no notifier key: GitHub never joins the sweep's failure modes. Dev is not checked; it is often ahead of `main` on purpose.
 
-**What is still open:** notifier being down is now *announced*, not closed. Missing alerts still wait for notifier. Recovery and report notices sent during the outage are surfaced for 24 hours ([#19](https://github.com/CannObserv/status/issues/19)) but never resent, and neither is one notifier accepted and failed to deliver ([#8](https://github.com/CannObserv/status/issues/8)). Only missing alerts are redelivered ([#10](https://github.com/CannObserv/status/issues/10)). A healthchecks.io outage produces false alarms, never silence.
+**What is still open:** notifier being down is now *announced*, not closed. Missing alerts still wait for notifier. Recovery and cleared notices sent during the outage are surfaced for 24 hours ([#19](https://github.com/CannObserv/status/issues/19)) but never resent, and neither is one notifier accepted and failed to deliver ([#8](https://github.com/CannObserv/status/issues/8)). A report is resent by the fault's next `alert`, if one comes ([#28](https://github.com/CannObserv/status/issues/28)). Only missing alerts are redelivered ([#10](https://github.com/CannObserv/status/issues/10)). A healthchecks.io outage produces false alarms, never silence.
 
 ## Check the endpoint before the timer
 

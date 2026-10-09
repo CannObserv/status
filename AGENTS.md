@@ -28,15 +28,15 @@ Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 
 | Module | Role |
 |---|---|
-| `src/core/monitors.py` | Pure: deadlines, `should_alert` (incl. the owed-alert rule), `should_redeliver` and its schedule, built-in wording as `Notice` |
-| `src/core/alerting.py` | **The only module that talks to notifier.** Endpoint check, idempotency keys, `send()`, `redeliver()`, request `Budget` |
+| `src/core/monitors.py` | Pure: deadlines, `should_alert` (incl. the owed-alert rule), `should_redeliver` and its schedule, `report_due` (one report per fault, #28), built-in wording as `Notice` (missing, recovered, cleared) |
+| `src/core/alerting.py` | **The only module that talks to notifier.** Endpoint check, idempotency keys (missing, recovered, cleared), `send()`, `redeliver()`, request `Budget` |
 | `src/core/sweep.py` | The pass that marks missing monitors and sends/owes their alerts; redelivers undelivered ones, spaced, until delivered or capped (#10); reports undelivered ones, the check-in's notices too, never-accepted ones included (#6, #8, #19) |
 | `src/core/heartbeat.py` | healthchecks.io pings after each production pass (#1), and the API's `/ready` (#13); never fails the sweep. `ping()` for any check |
 | `src/core/drift.py` | Does live lag `origin/main` in code that runs? GitHub, unauthenticated; hourly `status-drift.timer` → `co-status-drift` (#12) |
 | `src/core/importer.py` | One monitor in from notifier's export, disabled |
 | `src/core/schema_state.py` | Database vs the code's Alembic head; `behind` fails a pass and `/ready`, never a start (#9) |
 | `src/core/build.py` | Build id = the release's `REVISION`, else `dev` |
-| `src/api/routes/monitors.py` | CRUD and the check-in |
+| `src/api/routes/monitors.py` | CRUD and the check-in: records every one; opens, reports, suppresses and clears faults (#28) |
 | `tests/fixtures/notifier-checkin-contract.json` | notifier's check-in contract, compared by `tests/api/test_contract.py` |
 
 Tests reach notifier through the real `notifier-client` intercepted by `respx` — the `notifier` and `alerter` fixtures in `tests/conftest.py`.
@@ -126,7 +126,7 @@ Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `noti
 ## API Boundary Principles
 
 - **The check-in contract is frozen** (D6): `POST /api/v1/monitors/{id}/checkin`, request and response identical to notifier's at CannObserv/notifier@2c02dbf. Consumers switch by base URL and key alone.
-- **`variables` is opaque.** Stored and forwarded, never read. `status` is the consumer's own judgement.
+- **`variables` is opaque.** Stored and forwarded, never read. `status` is the consumer's own judgement. The one key read from a check-in is the opt-in `metadata.fault`, compared, never interpreted (#28).
 - **Never deliver directly.** Alerts go through notifier's `/dispatch`; a new delivery path here is a design change, not a fix.
 - **Nothing public on 9000/9001; nothing private on 8000.**
 - **A check-in is always recorded and answered.** Nothing notifier does or fails to do may cost a consumer its heartbeat.

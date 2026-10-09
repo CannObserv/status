@@ -1,7 +1,7 @@
 ---
 title: One report per alert fault, a reminder per renotify, a cleared notice (#28)
 date: 2026-10-09
-status: draft
+status: done
 ---
 
 # One report per alert fault, a reminder per renotify, a cleared notice
@@ -88,6 +88,14 @@ Each layer is tested before the next is built. The work goes on branch `28-alert
    - every monitor's `fault_since` is null, as no fault is open (read-only, authorized).
 
    Then post the deploy time on #24, #27 and #28, and close #28.
+
+   **Done 2026-10-09.**
+   - Merged as `c36a2fe..c050407` after one review round (CR 1–5: two fixed, one filed as #31, two stet). CI passed on `main` (run 37965125378).
+   - Consumers were told before the merge: #24, #27, broker#84, index#10, watcher#359, usa-wa#487.
+   - `scripts/deploy.sh` at 17:20Z ran migration `83d7ac98f78d` on dev, then live, through the CI gate.
+   - Live and dev: `/health` names `c050407b6cda`, `/ready` says `schema_state` `current`, and `/openapi.json` serves the four new fields.
+   - Production passes from 17:20:28Z: `undelivered_notices: {}`, no traceback, all three pings 200. Check-ins from broker, index and observo-live answered 202.
+   - All 7 monitors `ok`, every `fault_since` null (read-only, authorized), so nothing re-reported at the deploy.
 
 ## Open questions / risks
 

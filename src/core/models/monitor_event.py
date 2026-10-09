@@ -1,9 +1,9 @@
 """MonitorEvent model — what happened to a monitor, and when (spec D9).
 
 State changes only: the first check-in, going missing, recovering, an
-``alert`` check-in, being paused or resumed, and the import that began the
-record. Not every check-in — that would be ~290 rows a day that nothing
-planned reads.
+``alert`` check-in, the ``ok`` that clears a fault, being paused or resumed,
+and the import that began the record. Not every check-in — that would be
+~290 rows a day that nothing planned reads.
 
 These rows are what future uptime figures and incident lists are built from,
 and a history not recorded now cannot be rebuilt later. They never carry a
@@ -28,6 +28,7 @@ EVENT_KINDS = (
     "alert",
     "paused",
     "resumed",
+    "cleared",
 )
 
 
@@ -67,8 +68,10 @@ class MonitorEvent(Base):
     #: check-in owed a notice and notifier never took it, so there is no
     #: dispatch id (#19). ``None`` means, by kind:
     #:
-    #: - ``recovered``, ``alert``: nothing was owed (no channels), or the row
-    #:   predates #19 (a lost notice was null then) or #8 (no status at all);
+    #: - ``recovered``, ``alert``, ``cleared``: nothing was owed (no
+    #:   channels, or an ``alert`` repeat inside a fault that was not due a
+    #:   report, #28), or the row predates #19 (a lost notice was null then)
+    #:   or #8 (no status at all);
     #: - ``missing``: notifier did not take the first alert. It is still
     #:   owed, and the monitor row, not this event, says so (#7);
     #: - every other kind: nothing is ever sent.

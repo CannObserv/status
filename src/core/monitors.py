@@ -61,6 +61,8 @@ class EventKind(enum.StrEnum):
     PAUSED = "paused"
     #: ``enabled`` set back to ``true``.
     RESUMED = "resumed"
+    #: An ``ok`` check-in ended an open fault (#28).
+    CLEARED = "cleared"
 
 
 @dataclass(frozen=True)

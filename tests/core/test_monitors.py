@@ -334,4 +334,5 @@ class TestCheckinStatus:
             "alert",
             "paused",
             "resumed",
+            "cleared",
         ]

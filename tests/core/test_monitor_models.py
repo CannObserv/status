@@ -56,6 +56,20 @@ class TestMonitor:
         assert monitor.last_alert_dispatch_id == "01J0000000000000000000DISP"
         assert monitor.last_alert_redeliver_at == due
 
+    @pytest.mark.parametrize("key", ["lag", {"checks": ["disk:/"]}, 3, None], ids=repr)
+    async def test_keeps_an_open_fault(self, db_session, tenant, key):
+        """#28: when the open fault began, and the ``metadata.fault`` it
+        opened with, which may be any JSON value or absent."""
+        since = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
+        monitor = await _monitor(db_session, tenant, fault_since=since, fault_key=key)
+        await db_session.refresh(monitor)
+        assert (monitor.fault_since, monitor.fault_key) == (since, key)
+
+    async def test_starts_with_no_open_fault(self, db_session, tenant):
+        monitor = await _monitor(db_session, tenant)
+        await db_session.refresh(monitor)
+        assert (monitor.fault_since, monitor.fault_key) == (None, None)
+
     async def test_has_no_template_id(self):
         """co-status stores no templates (spec D5); a template_id would name
         a row in a database it cannot read."""

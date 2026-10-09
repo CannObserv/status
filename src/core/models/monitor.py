@@ -126,3 +126,12 @@ class Monitor(Base, TimestampMixin):
     last_alert_redeliver_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: When the open fault's first ``alert`` check-in arrived; null while no
+    #: fault is open (#28). A run of ``alert`` check-ins is one fault: it
+    #: reports once, then at most once per ``renotify_seconds``, and the next
+    #: ``ok`` closes it with a *cleared* notice. Silence never closes it.
+    fault_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: The ``metadata.fault`` the open fault opened with, any JSON value, or
+    #: null when absent. The consumer's opt-in: an ``alert`` carrying another
+    #: value is a new fault. Compared for equality, never interpreted.
+    fault_key: Mapped[object | None] = mapped_column(JSONB(none_as_null=True), nullable=True)

@@ -1,9 +1,9 @@
 # Alert faults: one report per fault, a reminder per renotify, a notice when it clears
 
-**Status:** draft (2026-10-09), for review
+**Status:** accepted (2026-10-09)
 **Issue:** [#28](https://github.com/CannObserv/status/issues/28). Asked for on [#24](https://github.com/CannObserv/status/issues/24) (Processor: "alert once at the crossing") and [#27](https://github.com/CannObserv/status/issues/27) (Observo: 12 reports an hour).
 **Amends:** [MVP spec](2026-09-26-co-status-mvp-design.md) § The check-in (step 4) and § `alerting.py` (the key table's *report* row). D6 holds: the check-in request and response keep their shape.
-**Plan:** to follow, in `docs/plans/`.
+**Plan:** [2026-10-09-alert-faults](../plans/2026-10-09-alert-faults.md)
 
 ## Problem
 
@@ -31,7 +31,7 @@ The other half is the end of a fault. *Has recovered* is sent only when a monito
 | **F8** | **`CheckinResponse` keeps its shape.** `dispatches` lists what this check-in sent: a recovery, a report, a cleared notice, at most two. On an `alert` check-in an empty list means suppressed or nothing owed, not lost. **`MonitorOut` gains `fault_since`, `fault_key`, `last_cleared_at` and `last_cleared_status`**, the last two from the same lateral as `last_report_*` (#20). | D6 covers the check-in only; #20 already extended `MonitorOut`. The owner can see that a fault is open and what became of its end. No consumer reads `dispatches` today (§ Audit). |
 | **F9** | **The sweep's `undelivered_notices` covers `cleared`** (`{monitor id: {"cleared": status}}`), with the same 24 h window and clearing rule as recovery and report. | A *cleared* that nobody heard leaves the last word on a fault as a report, so it counts towards `notifier-reachable` like the others. |
 | **F10** | **Expand-only migration, no backfill.** Add `monitors.fault_since timestamptz NULL` and `monitors.fault_key jsonb NULL`, and widen `ck_monitor_events_kind` with `cleared`. A fault already open at deploy has `fault_since` null, so its next `alert` opens a fault and reports once. | The previous release ignores both columns and never writes `cleared` (deploy spec R7). One extra report per open fault at deploy is cheaper than inferring faults from events that can't see `ok` (F1). |
-| **F11** | **Consumers are told before the deploy.** Processor and Observo get comments on #24 and #27. Broker and index get suggested issues in their own repos. The backups are covered by the #27 comment (observo-backup), a watcher issue, and a usa-wa note handed to the operator (co-status has no usa-wa token). | It changes what every consumer receives. Docs in processor and observo become wrong, and processor#39's reason for never sending `alert` goes away. |
+| **F11** | **Consumers are told before the deploy.** Processor and Observo get comments on #24 and #27. Broker and index get suggested issues in their own repos. The backups are covered by the #27 comment (observo-backup), and suggested issues in watcher and usa-wa (usa-wa's referencing usa-wa#458). | It changes what every consumer receives. Docs in processor and observo become wrong, and processor#39's reason for never sending `alert` goes away. |
 
 **Unchanged:**
 - A disabled monitor still records check-ins and still reports, de-duplicated the same way (MVP spec § The check-in). broker `deploy/README.md:682-688` and watcher `RECOVERY.md:181-183` rely on the first `alert` dispatching.

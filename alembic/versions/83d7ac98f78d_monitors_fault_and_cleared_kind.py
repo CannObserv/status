@@ -33,6 +33,10 @@ def upgrade() -> None:
     # backfill, so a fault open at deploy reports once more (spec F10).
     op.add_column('monitors', sa.Column('fault_since', sa.DateTime(timezone=True), nullable=True))
     op.add_column('monitors', sa.Column('fault_key', postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True))
+    # Replacing the check takes an ACCESS EXCLUSIVE lock and validates every
+    # row. The table is small, a row per state change or `alert` check-in,
+    # never per `ok` (D9), so the lock is brief; a large table would want
+    # NOT VALID, then VALIDATE.
     op.drop_constraint('ck_monitor_events_kind', 'monitor_events', type_='check')
     op.create_check_constraint('ck_monitor_events_kind', 'monitor_events', _kind_check(_KINDS + ('cleared',)))
 

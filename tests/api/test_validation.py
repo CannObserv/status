@@ -3,6 +3,9 @@
 import json
 import math
 
+from fastapi.exceptions import RequestValidationError
+
+from src.api import validation
 from src.api.validation import json_safe
 
 
@@ -18,3 +21,22 @@ def test_its_output_is_strict_json():
 def test_leaves_everything_else_alone():
     value = {"a": [1, "NaN", True, None, {"b": 2.5}]}
     assert json_safe(value) == value
+
+
+async def test_an_input_too_deep_to_encode_is_left_out(monkeypatch):
+    """The fallback, without depending on where the recursion limits fall."""
+    exc = RequestValidationError(
+        [{"type": "value_error", "loc": ("body", "variables"), "msg": "m", "input": {"x": 1}}]
+    )
+
+    def too_deep(value):
+        if any("input" in error for error in value):
+            raise RecursionError
+        return value
+
+    monkeypatch.setattr(validation, "jsonable_encoder", too_deep)
+    response = await validation.request_validation_error(None, exc)
+    assert response.status_code == 422
+    assert json.loads(response.body) == {
+        "detail": [{"type": "value_error", "loc": ["body", "variables"], "msg": "m"}]
+    }

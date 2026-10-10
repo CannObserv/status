@@ -927,7 +927,13 @@ class TestNonFiniteNumbers:
         self, api, headers, monitor, notifier, db_session, variables
     ):
         """Nested deeper than FastAPI's encoder can recurse from a handler, the
-        422 leaves the input out rather than become a 500."""
+        422 leaves the input out rather than become a 500.
+
+        990 sits in a window: under the C recursion limit ``json.loads`` parses
+        within (about 10,000 on CPython 3.12), over the Python one
+        ``jsonable_encoder`` recurses within (1,000). Should a Python upgrade
+        move either, ``tests/api/test_validation.py`` still holds the fallback.
+        """
         response = await _post_raw(
             api,
             headers,

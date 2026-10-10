@@ -17,7 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.api.schemas.dispatch import DispatchOut
-from src.api.schemas.types import ULIDStr
+from src.api.schemas.types import FiniteJSONObject, ULIDStr
 
 # Literal rather than the MonitorState/CheckinStatus StrEnums, for the same
 # reason DispatchOut.status is a Literal: Pydantic emits a $ref schema for an
@@ -147,11 +147,14 @@ class CheckinRequest(BaseModel):
     the ``ok`` that ends it sends a *cleared* notice. ``metadata.fault``,
     any JSON value, is the consumer's opt-in: an ``alert`` carrying another
     value opens a new fault, and reports at once.
+
+    ``NaN``, ``Infinity`` and ``-Infinity`` are not JSON, and anywhere in
+    ``variables`` or ``metadata`` are a 422 naming where (#31).
     """
 
     status: CheckinStatusLiteral = "ok"
-    variables: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    variables: FiniteJSONObject = Field(default_factory=dict)
+    metadata: FiniteJSONObject = Field(default_factory=dict)
 
 
 class CheckinResponse(BaseModel):

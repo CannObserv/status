@@ -783,6 +783,159 @@ class TestFaultsAndOutages:
         assert len(response.json()["dispatches"]) == 2
 
 
+def _post_raw(api, headers, url: str, body: str, method: str = "POST"):
+    """Send *body* as written: httpx's own encoder refuses ``NaN``, a client's may not."""
+    return api.request(
+        method, url, headers={**headers, "Content-Type": "application/json"}, content=body
+    )
+
+
+class TestNonFiniteNumbers:
+    """``NaN``, ``Infinity`` and ``-Infinity`` are not JSON (RFC 8259 § 6), but
+    Python's parser takes them. Each is a 422 naming the field, before anything
+    is written or sent (#31): Postgres ``jsonb`` and httpx's encoder both refuse
+    them, which was a 500 and a check-in never recorded."""
+
+    async def _assert_untouched(self, db_session, monitor, notifier) -> None:
+        row = await _row(db_session, monitor["id"])
+        assert (row.state, row.last_checkin_at, row.last_status) == ("pending", None, None)
+        assert row.last_variables == {}
+        assert (row.fault_since, row.fault_key) == (None, None)
+        assert await _events(db_session, monitor["id"]) == []
+        assert not notifier.preview.called
+        assert not notifier.dispatch.called
+
+    async def test_a_nan_fault_key_is_422_and_records_nothing(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """The issue's first body: was httpx's ValueError on the way to preview."""
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            '{"status":"alert","metadata":{"fault":NaN}}',
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "metadata"]
+        assert "metadata.fault" in error["msg"]
+        await self._assert_untouched(db_session, monitor, notifier)
+
+    async def test_a_nan_variable_is_422_and_records_nothing(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """The issue's second body: was Postgres refusing ``last_variables``."""
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            '{"status":"ok","variables":{"x":NaN}}',
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "variables"]
+        assert "variables.x" in error["msg"]
+        await self._assert_untouched(db_session, monitor, notifier)
+
+    @pytest.mark.parametrize(
+        ("body", "field", "path"),
+        [
+            # An alert on a new monitor reaches every sink: preview and dispatch
+            # (variables, metadata), the row (last_variables, fault_key) and the
+            # first_checkin and alert events.
+            ('{"status":"alert","variables":{"source":NaN}}', "variables", "variables.source"),
+            (
+                '{"status":"alert","variables":{"findings":[{"depth":Infinity}]}}',
+                "variables",
+                "variables.findings[0].depth",
+            ),
+            ('{"status":"alert","metadata":{"run":-Infinity}}', "metadata", "metadata.run"),
+            ('{"status":"alert","metadata":{"fault":[1,NaN]}}', "metadata", "metadata.fault[1]"),
+            # Valid JSON, but past a double's range: Python reads it as inf.
+            ('{"status":"alert","variables":{"big":1e400}}', "variables", "variables.big"),
+        ],
+    )
+    async def test_reaches_no_sink(
+        self, api, headers, monitor, notifier, db_session, body, field, path
+    ):
+        response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        assert path in error["msg"]
+        await self._assert_untouched(db_session, monitor, notifier)
+
+    async def test_a_monitor_keeps_its_last_good_report(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await _checkin(api, headers, monitor, status="alert", variables={"n": 1})
+        before = _calls(notifier)
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            '{"status":"ok","variables":{"n":NaN}}',
+        )
+        assert response.status_code == 422
+        assert _calls(notifier) == before
+        row = await _row(db_session, monitor["id"])
+        assert (row.last_status, row.last_variables) == ("alert", {"n": 1})
+        assert row.fault_since is not None  # the 422 cleared nothing
+
+    async def test_a_finite_float_is_recorded(self, api, headers, monitor, db_session):
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            '{"variables":{"a":1.5,"b":-0.0,"c":1e308}}',
+        )
+        assert response.status_code == 202, response.text
+        row = await _row(db_session, monitor["id"])
+        # jsonb keeps numbers as numeric: 1e308 comes back an int of equal value.
+        assert {k: float(v) for k, v in row.last_variables.items()} == {
+            "a": 1.5,
+            "b": -0.0,
+            "c": 1e308,
+        }
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            '{"status":NaN}',
+            "NaN",
+            '{"variables":Infinity}',
+        ],
+    )
+    async def test_a_non_finite_input_still_gets_its_422(
+        self, api, headers, monitor, notifier, db_session, body
+    ):
+        """FastAPI's 422 echoes the input, and its JSON response refuses ``NaN``:
+        rejected anywhere else in the body, it was a 500 too."""
+        response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
+        assert response.status_code == 422, response.text
+        await self._assert_untouched(db_session, monitor, notifier)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            '{"name":"m","interval_seconds":NaN,"title_template":"T","body_template":"B"}',
+            '{"name":"m","interval_seconds":60,"title_template":"T","body_template":"B",'
+            '"extra":Infinity}',
+        ],
+    )
+    async def test_create_refuses_one(self, api, headers, body):
+        """No create field takes free-form JSON; a ``NaN`` is a 422 all the same."""
+        response = await _post_raw(api, headers, "/api/v1/monitors", body)
+        assert response.status_code == 422, response.text
+
+    @pytest.mark.parametrize("body", ['{"grace_seconds":-Infinity}', '{"enabled":NaN}'])
+    async def test_update_refuses_one(self, api, headers, monitor, body):
+        response = await _post_raw(
+            api, headers, f"/api/v1/monitors/{monitor['id']}", body, method="PATCH"
+        )
+        assert response.status_code == 422, response.text
+
+
 def _unreachable(notifier) -> None:
     notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
 

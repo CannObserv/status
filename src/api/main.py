@@ -3,11 +3,13 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI
+from fastapi.exceptions import RequestValidationError
 
 from src.api.deps import require_api_key
 from src.api.routes.health import router as health_router
 from src.api.routes.monitors import router as monitors_router
 from src.api.schemas.errors import AuthErrorDetail
+from src.api.validation import request_validation_error
 from src.core.logging import configure_audit_logging, configure_logging, get_logger
 
 configure_logging()
@@ -21,6 +23,7 @@ logger = get_logger(__name__)
 
 
 app = FastAPI(title="co-status", version="0.1.0")
+app.add_exception_handler(RequestValidationError, request_validation_error)
 
 # Every /api/v1 route inherits require_api_key, so every one of them can fail
 # these two ways. Declared here so both appear in the OpenAPI spec with a

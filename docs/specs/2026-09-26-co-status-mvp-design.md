@@ -120,6 +120,8 @@ All three read only the HTTP status of a check-in, never its body.
 4. **Report** (`alert` only). Send the monitor's `title_template` and `body_template` inline to `/dispatch`, together with the `variables`, and write `alert`. **Amended by #28:** only when the fault is due a report; an `ok` that ends a fault sends *has cleared* ([alert faults spec](2026-10-09-alert-faults-design.md)).
 5. **Respond** with 202 and the same body as notifier's `CheckinResponse`. Its `dispatches` holds the dispatch records notifier returned for steps 2 and 4.
 
+**Amended by #31:** before step 1, a body holding `NaN`, `Infinity` or `-Infinity` (or a number past a double's range) in `variables` or `metadata` is a 422 naming where, and nothing is recorded. They are not JSON (RFC 8259 § 6); `jsonb` and httpx refuse them, which was a 500. The OpenAPI document is unchanged (D6).
+
 **A disabled monitor still records check-ins and still sends reports.** `enabled` gates only the sweep, as in notifier. The cutover depends on this.
 
 ### The sweep

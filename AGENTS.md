@@ -126,7 +126,7 @@ Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `noti
 ## API Boundary Principles
 
 - **The check-in contract is frozen** (D6): `POST /api/v1/monitors/{id}/checkin`, request and response identical to notifier's at CannObserv/notifier@2c02dbf. Consumers switch by base URL and key alone.
-- **`variables` is opaque.** Stored and forwarded, never read. `status` is the consumer's own judgement. The one key read from a check-in is the opt-in `metadata.fault`, compared, never interpreted (#28).
+- **`variables` is opaque.** Stored and forwarded, never read; only refused when not JSON (`NaN`, `Infinity`: a 422, #31). `status` is the consumer's own judgement. The one key read from a check-in is the opt-in `metadata.fault`, compared, never interpreted (#28).
 - **Never deliver directly.** Alerts go through notifier's `/dispatch`; a new delivery path here is a design change, not a fix.
 - **Nothing public on 9000/9001; nothing private on 8000.**
 - **A check-in is always recorded and answered.** Nothing notifier does or fails to do may cost a consumer its heartbeat.

@@ -148,8 +148,9 @@ class CheckinRequest(BaseModel):
     any JSON value, is the consumer's opt-in: an ``alert`` carrying another
     value opens a new fault, and reports at once.
 
-    ``NaN``, ``Infinity`` and ``-Infinity`` are not JSON, and anywhere in
-    ``variables`` or ``metadata`` are a 422 naming where (#31).
+    ``NaN``, ``Infinity`` and ``-Infinity`` are not JSON. One anywhere in
+    ``variables`` or ``metadata``, or a number past a double's range, is a
+    422 naming where (#31).
     """
 
     status: CheckinStatusLiteral = "ok"

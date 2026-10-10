@@ -78,7 +78,7 @@ def non_finite_path(value: object, root: str) -> str | None:
 
 def _refuse_non_finite(value: dict[str, Any], info: ValidationInfo) -> dict[str, Any]:
     """Reject a non-finite number anywhere in *value*, naming where (#31)."""
-    path = non_finite_path(value, info.field_name or "body")
+    path = non_finite_path(value, info.field_name or "value")
     if path is not None:
         raise ValueError(
             f"{path} is not a finite number: NaN, Infinity and -Infinity are not JSON "

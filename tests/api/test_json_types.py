@@ -3,7 +3,7 @@
 import math
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from src.api.schemas.types import FiniteJSONObject, non_finite_path
 
@@ -54,3 +54,9 @@ def test_a_body_nested_past_the_recursion_limit_is_walked():
     for _ in range(5000):
         value = [value]
     assert non_finite_path({"x": value}, "v") == "v.x" + "[0]" * 5000
+
+
+def test_outside_a_model_the_value_is_called_value():
+    with pytest.raises(ValidationError) as caught:
+        TypeAdapter(FiniteJSONObject).validate_python({"x": math.nan})
+    assert "value.x is not a finite number" in caught.value.errors()[0]["msg"]

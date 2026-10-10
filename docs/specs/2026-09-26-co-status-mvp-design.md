@@ -122,6 +122,8 @@ All three read only the HTTP status of a check-in, never its body.
 
 **Amended by #31:** before step 1, a body holding `NaN`, `Infinity` or `-Infinity` (or a number past a double's range) in `variables` or `metadata` is a 422 naming where, and nothing is recorded. They are not JSON (RFC 8259 § 6); `jsonb` and httpx refuse them, which was a 500. The OpenAPI document is unchanged (D6).
 
+**Amended by #33:** a 422 the same way for valid JSON that a sink cannot take: `\u0000` or a lone surrogate in a string or key (Postgres, UTF-8), nesting deeper than 128 levels (pydantic cannot serve past about 255), more than 32 MiB of JSON per field (`jsonb`'s 256 MiB). Each was a 500, or a monitor no read could serve. Refused rather than stored escaped, so `variables` stays verbatim. Monitor `name` and templates refuse `\u0000` too. The OpenAPI document is unchanged (D6).
+
 **A disabled monitor still records check-ins and still sends reports.** `enabled` gates only the sweep, as in notifier. The cutover depends on this.
 
 ### The sweep

@@ -40,3 +40,16 @@ async def test_an_input_too_deep_to_encode_is_left_out(monkeypatch):
     assert json.loads(response.body) == {
         "detail": [{"type": "value_error", "loc": ["body", "variables"], "msg": "m"}]
     }
+
+
+def test_spells_a_lone_surrogate_by_its_escape():
+    """Starlette's JSONResponse encodes UTF-8, which refuses a lone surrogate (#33)."""
+    value = {"input": {"k\ud800": ["a\udfffb", "😀"]}, "loc": ["body", "\udc00"]}
+    assert json_safe(value) == {
+        "input": {"k\\ud800": ["a\\udfffb", "😀"]},
+        "loc": ["body", "\\udc00"],
+    }
+
+
+def test_its_output_encodes_as_utf8():
+    json.dumps(json_safe({"\ud800": "\udc00", "x": "\x00"}), ensure_ascii=False).encode("utf-8")

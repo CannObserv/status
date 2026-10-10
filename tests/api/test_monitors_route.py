@@ -7,18 +7,21 @@ leaves a ``monitor_events`` row.
 """
 
 import asyncio
+import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects import postgresql
 from ulid import ULID
 
 from src.api.deps import get_alerter
 from src.api.main import app
 from src.api.routes.monitors import _fault_report_query, _with_notices
+from src.api.schemas import types
+from src.api.schemas.types import MAX_DEPTH
 from src.core import alerting
 from src.core.alerting import cleared_key, recovery_key
 from src.core.api_keys import mint
@@ -783,11 +786,23 @@ class TestFaultsAndOutages:
         assert len(response.json()["dispatches"]) == 2
 
 
-def _post_raw(api, headers, url: str, body: str, method: str = "POST"):
-    """Send *body* as written: httpx's own encoder refuses ``NaN``, a client's may not."""
+def _post_raw(api, headers, url: str, body: str | bytes, method: str = "POST"):
+    """Send *body* as written: httpx's own encoder refuses ``NaN`` and a lone
+    surrogate, a client's may not."""
     return api.request(
         method, url, headers={**headers, "Content-Type": "application/json"}, content=body
     )
+
+
+async def _assert_untouched(db_session, monitor, notifier) -> None:
+    """Nothing written and nothing sent: not the row, an event, preview or dispatch."""
+    row = await _row(db_session, monitor["id"])
+    assert (row.state, row.last_checkin_at, row.last_status) == ("pending", None, None)
+    assert row.last_variables == {}
+    assert (row.fault_since, row.fault_key) == (None, None)
+    assert await _events(db_session, monitor["id"]) == []
+    assert not notifier.preview.called
+    assert not notifier.dispatch.called
 
 
 class TestNonFiniteNumbers:
@@ -795,15 +810,6 @@ class TestNonFiniteNumbers:
     Python's parser takes them. Each is a 422 naming the field, before anything
     is written or sent (#31): Postgres ``jsonb`` and httpx's encoder both refuse
     them, which was a 500 and a check-in never recorded."""
-
-    async def _assert_untouched(self, db_session, monitor, notifier) -> None:
-        row = await _row(db_session, monitor["id"])
-        assert (row.state, row.last_checkin_at, row.last_status) == ("pending", None, None)
-        assert row.last_variables == {}
-        assert (row.fault_since, row.fault_key) == (None, None)
-        assert await _events(db_session, monitor["id"]) == []
-        assert not notifier.preview.called
-        assert not notifier.dispatch.called
 
     async def test_a_nan_fault_key_is_422_and_records_nothing(
         self, api, headers, monitor, notifier, db_session
@@ -819,7 +825,7 @@ class TestNonFiniteNumbers:
         (error,) = response.json()["detail"]
         assert error["loc"] == ["body", "metadata"]
         assert "metadata.fault" in error["msg"]
-        await self._assert_untouched(db_session, monitor, notifier)
+        await _assert_untouched(db_session, monitor, notifier)
 
     async def test_a_nan_variable_is_422_and_records_nothing(
         self, api, headers, monitor, notifier, db_session
@@ -835,7 +841,7 @@ class TestNonFiniteNumbers:
         (error,) = response.json()["detail"]
         assert error["loc"] == ["body", "variables"]
         assert "variables.x" in error["msg"]
-        await self._assert_untouched(db_session, monitor, notifier)
+        await _assert_untouched(db_session, monitor, notifier)
 
     @pytest.mark.parametrize(
         ("body", "field", "path"),
@@ -863,7 +869,7 @@ class TestNonFiniteNumbers:
         (error,) = response.json()["detail"]
         assert error["loc"] == ["body", field]
         assert path in error["msg"]
-        await self._assert_untouched(db_session, monitor, notifier)
+        await _assert_untouched(db_session, monitor, notifier)
 
     async def test_a_monitor_keeps_its_last_good_report(
         self, api, headers, monitor, notifier, db_session
@@ -913,7 +919,7 @@ class TestNonFiniteNumbers:
         rejected anywhere else in the body, it was a 500 too."""
         response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
         assert response.status_code == 422, response.text
-        await self._assert_untouched(db_session, monitor, notifier)
+        await _assert_untouched(db_session, monitor, notifier)
 
     async def test_the_422_echoes_one_as_a_string(self, api, headers, monitor):
         response = await _post_raw(
@@ -951,7 +957,7 @@ class TestNonFiniteNumbers:
         (error,) = response.json()["detail"]
         assert error["loc"] == ["body", "variables"]
         assert "input" not in error
-        await self._assert_untouched(db_session, monitor, notifier)
+        await _assert_untouched(db_session, monitor, notifier)
 
     @pytest.mark.parametrize(
         "body",
@@ -971,6 +977,326 @@ class TestNonFiniteNumbers:
         response = await _post_raw(
             api, headers, f"/api/v1/monitors/{monitor['id']}", body, method="PATCH"
         )
+        assert response.status_code == 422, response.text
+
+
+def _nested(depth: int, leaf: str = "1") -> str:
+    """*leaf* inside *depth* JSON arrays, as text."""
+    return "[" * depth + leaf + "]" * depth
+
+
+def _sent(route) -> dict:
+    """The JSON body of the last request a fake notifier route received."""
+    return json.loads(route.calls.last.request.content)
+
+
+class TestUnstorableValues:
+    """Valid JSON that a sink refuses (#33): Postgres cannot store ``\\u0000``
+    in text or ``jsonb``, a lone surrogate is not Unicode text (Postgres and
+    httpx's UTF-8 encoding refuse it), and nesting past MAX_DEPTH cannot be
+    served back. Each was a 500, or a check-in recorded and every read of the
+    monitor a 500. Now a 422 naming where, before anything is written or sent."""
+
+    async def test_a_nul_variable_is_422_and_records_nothing(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """The issue's first body: was Postgres refusing ``last_variables``."""
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            r'{"variables":{"x":"a\u0000b"}}',
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "variables"]
+        assert error["msg"] == (
+            r"Value error, variables.x contains \u0000: valid JSON, but Postgres cannot store it"
+        )
+        assert error["input"] == {"x": "a\x00b"}
+        await _assert_untouched(db_session, monitor, notifier)
+
+    async def test_a_nul_fault_key_is_422_and_records_nothing(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """The issue's second body: was Postgres refusing ``fault_key``."""
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            r'{"status":"alert","metadata":{"fault":"\u0000"}}',
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "metadata"]
+        assert error["msg"].startswith(r"Value error, metadata.fault contains \u0000")
+        await _assert_untouched(db_session, monitor, notifier)
+
+    async def test_a_lone_surrogate_variable_is_422_and_records_nothing(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """The issue's third body: was Postgres refusing ``last_variables``.
+        The 422 echoes the surrogate as its escape: UTF-8 cannot encode it."""
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            r'{"variables":{"x":"\ud800"}}',
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "variables"]
+        assert error["msg"].startswith(
+            r"Value error, variables.x contains \ud800, a lone surrogate"
+        )
+        assert error["input"] == {"x": r"\ud800"}
+        await _assert_untouched(db_session, monitor, notifier)
+
+    async def test_a_lone_surrogate_in_an_alert_is_422_and_sends_nothing(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """The issue's fourth body: was httpx's UnicodeEncodeError on the way to preview."""
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            r'{"status":"alert","variables":{"x":"\ud800"}}',
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "variables"]
+        assert r"variables.x contains \ud800" in error["msg"]
+        await _assert_untouched(db_session, monitor, notifier)
+
+    @pytest.mark.parametrize(
+        ("body", "field", "path"),
+        [
+            # An alert on a new monitor reaches every sink: preview and dispatch
+            # (variables, metadata), the row (last_variables, fault_key) and the
+            # first_checkin and alert events.
+            (r'{"status":"alert","variables":{"a\u0000":1}}', "variables", r'variables["a\u0000"]'),
+            (r'{"status":"alert","variables":{"\udc00":1}}', "variables", r'variables["\udc00"]'),
+            (r'{"status":"alert","variables":{"x":"\udfff"}}', "variables", "variables.x"),
+            (
+                r'{"status":"alert","variables":{"findings":[{"name":"\ude00\ud83d"}]}}',
+                "variables",
+                "variables.findings[0].name",
+            ),
+            # Never stored here, but sent to notifier, whose jsonb refuses it too.
+            (r'{"status":"alert","metadata":{"run":"\u0000"}}', "metadata", "metadata.run"),
+            (r'{"status":"alert","metadata":{"run":"\ud800"}}', "metadata", "metadata.run"),
+            (
+                r'{"status":"alert","metadata":{"fault":{"\u0000":1}}}',
+                "metadata",
+                r'metadata.fault["\u0000"]',
+            ),
+            # Not valid UTF-8, so not JSON, but Python's parser reads it as \ud800.
+            (b'{"status":"alert","variables":{"x":"\xed\xa0\x80"}}', "variables", "variables.x"),
+        ],
+    )
+    async def test_reaches_no_sink(
+        self, api, headers, monitor, notifier, db_session, body, field, path
+    ):
+        response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        assert error["msg"].startswith(f"Value error, {path} ")
+        await _assert_untouched(db_session, monitor, notifier)
+
+    async def test_a_monitor_keeps_its_last_good_report(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        await _checkin(api, headers, monitor, status="alert", variables={"n": 1})
+        before = _calls(notifier)
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            r'{"status":"ok","variables":{"n":"\u0000"}}',
+        )
+        assert response.status_code == 422
+        assert _calls(notifier) == before
+        row = await _row(db_session, monitor["id"])
+        assert (row.last_status, row.last_variables) == ("alert", {"n": 1})
+        assert row.fault_since is not None  # the 422 cleared nothing
+
+    async def test_text_postgres_takes_is_recorded_sent_and_served_verbatim(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """A pair, noncharacters, the last code point and control characters are
+        all Unicode text: refused, they would be a tightening for nothing."""
+        body = (
+            r'{"status":"alert","variables":{"pair":"😀","nonchar":"￿￾",'
+            r'"last":"􏿿","ctrl":"\u0001\u001f\u007f ","":"empty key"},'
+            r'"metadata":{"fault":"﷐"}}'
+        )
+        expected = {
+            "pair": "\U0001f600",
+            "nonchar": "￿￾",
+            "last": "\U0010ffff",
+            "ctrl": "\x01\x1f\x7f ",
+            "": "empty key",
+        }
+        response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
+        assert response.status_code == 202, response.text
+        assert _sent(notifier.preview)["variables"] == expected
+        assert _sent(notifier.dispatch)["variables"] == expected
+        assert _sent(notifier.dispatch)["metadata"]["fault"] == "﷐"
+        row = await _row(db_session, monitor["id"])
+        assert (row.last_variables, row.fault_key) == (expected, "﷐")
+        served = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
+        assert (served["last_variables"], served["fault_key"]) == (expected, "﷐")
+
+    async def test_nesting_to_the_limit_reaches_every_sink_and_serves_back(
+        self, api, headers, monitor, notifier, db_session
+    ):
+        """The value itself is level 1. Past about 255 levels pydantic cannot
+        serialize it, and a monitor holding one was a 500 to every read of
+        it, the tenant's list included."""
+        deep = _nested(MAX_DEPTH - 1)
+        body = (
+            f'{{"status":"alert","variables":{{"x":{deep}}},'
+            f'"metadata":{{"fault":{_nested(MAX_DEPTH - 1)}}}}}'
+        )
+        response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
+        assert response.status_code == 202, response.text
+        expected = json.loads(deep)
+        assert _sent(notifier.preview)["variables"] == {"x": expected}
+        assert _sent(notifier.dispatch)["variables"] == {"x": expected}
+        row = await _row(db_session, monitor["id"])
+        assert row.last_variables == {"x": expected}
+        one = await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)
+        assert one.status_code == 200, one.text
+        assert one.json()["last_variables"] == {"x": expected}
+        listed = await api.get("/api/v1/monitors", headers=headers)
+        assert listed.status_code == 200, listed.text
+
+    @pytest.mark.parametrize(
+        ("body", "field", "path"),
+        [
+            (
+                f'{{"variables":{{"x":{_nested(MAX_DEPTH)}}}}}',
+                "variables",
+                "variables.x" + "[0]" * (MAX_DEPTH - 1),
+            ),
+            (
+                f'{{"status":"alert","metadata":{{"fault":{_nested(MAX_DEPTH)}}}}}',
+                "metadata",
+                "metadata.fault" + "[0]" * (MAX_DEPTH - 1),
+            ),
+            # Deeper than a 422 can echo: still a 422, without its input.
+            (f'{{"variables":{{"x":{_nested(3000)}}}}}', "variables", "variables.x"),
+        ],
+        ids=["variables", "fault", "too-deep-to-echo"],
+    )
+    async def test_nesting_past_the_limit_reaches_no_sink(
+        self, api, headers, monitor, notifier, db_session, body, field, path
+    ):
+        response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        assert error["msg"].startswith(f"Value error, {path}")
+        assert f"nested more than {MAX_DEPTH} levels deep" in error["msg"]
+        await _assert_untouched(db_session, monitor, notifier)
+
+    async def test_a_value_past_the_size_limit_reaches_no_sink(
+        self, api, headers, monitor, notifier, db_session, monkeypatch
+    ):
+        """Lowered: 32 MiB is the real limit, sent by tests/api/test_json_types.py."""
+        monkeypatch.setattr(types, "MAX_JSON_BYTES", 17)
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            '{"status":"alert","variables":{"x":"0123456789"}}',
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["msg"] == (
+            "Value error, variables is 18 bytes as JSON, more than the 17 co-status stores"
+        )
+        await _assert_untouched(db_session, monitor, notifier)
+
+    @pytest.mark.parametrize(
+        ("body", "loc", "echoed"),
+        [
+            (r'{"status":"\ud800"}', ["body", "status"], r"\ud800"),
+            (r'{"status":"\u0000"}', ["body", "status"], "\x00"),
+        ],
+    )
+    async def test_any_422_echoes_a_lone_surrogate_as_its_escape(
+        self, api, headers, monitor, notifier, db_session, body, loc, echoed
+    ):
+        """Starlette encodes the 422 as UTF-8: a surrogate echoed as it came was a 500."""
+        response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert (error["loc"], error["input"]) == (loc, echoed)
+        await _assert_untouched(db_session, monitor, notifier)
+
+    async def test_a_lone_surrogate_in_a_path_is_a_422(self, api, headers):
+        response = await api.get("/api/v1/monitors/%ED%A0%80", headers=headers)
+        assert response.status_code == 422, response.text
+
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("name", r"a\u0000", r"Value error, name contains \u0000"),
+            ("title_template", r"T\u0000", r"Value error, title_template contains \u0000"),
+            # pydantic's own str refuses a lone surrogate; rendering its 422 was the 500.
+            ("name", r"a\ud800", "Input should be a valid string, unable to parse raw data"),
+            ("body_template", r"B\udc00", "Input should be a valid string, unable to parse"),
+        ],
+    )
+    async def test_create_refuses_text_postgres_refuses(
+        self, api, headers, db_session, field, value, message
+    ):
+        """name and the templates are ``text``: ``\\u0000`` and lone surrogates were a 500."""
+        fields = {"name": "m", "title_template": "T", "body_template": "B"}
+        body = json.dumps(fields | {"interval_seconds": 60}).replace(
+            json.dumps(fields[field]), f'"{value}"', 1
+        )
+        response = await _post_raw(api, headers, "/api/v1/monitors", body)
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        assert error["msg"].startswith(message)
+        assert (await db_session.scalar(select(func.count()).select_from(Monitor))) == 0
+
+    @pytest.mark.parametrize(
+        ("body", "field"),
+        [
+            (r'{"name":"\u0000"}', "name"),
+            (r'{"title_template":"\ud800"}', "title_template"),
+            (r'{"body_template":"\u0000"}', "body_template"),
+        ],
+    )
+    async def test_update_refuses_text_postgres_refuses(
+        self, api, headers, monitor, db_session, body, field
+    ):
+        response = await _post_raw(
+            api, headers, f"/api/v1/monitors/{monitor['id']}", body, method="PATCH"
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        row = await _row(db_session, monitor["id"])
+        assert getattr(row, field) == monitor[field]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            r'{"name":"m","interval_seconds":60,"title_template":"T","body_template":"B",'
+            r'"\ud800":1}',
+            r'{"name":"m","interval_seconds":60,"title_template":"T","body_template":"B",'
+            r'"channel_ids":["\udc00"]}',
+        ],
+        ids=["unknown-field", "channel-id"],
+    )
+    async def test_create_echoes_one_it_refuses_for_another_reason(self, api, headers, body):
+        response = await _post_raw(api, headers, "/api/v1/monitors", body)
         assert response.status_code == 422, response.text
 
 

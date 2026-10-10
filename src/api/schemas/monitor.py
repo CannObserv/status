@@ -17,7 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.api.schemas.dispatch import DispatchOut
-from src.api.schemas.types import FiniteJSONObject, ULIDStr
+from src.api.schemas.types import StorableJSONObject, StorableText, ULIDStr
 
 # Literal rather than the MonitorState/CheckinStatus StrEnums, for the same
 # reason DispatchOut.status is a Literal: Pydantic emits a $ref schema for an
@@ -39,13 +39,13 @@ class MonitorCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=200)
+    name: StorableText = Field(min_length=1, max_length=200)
     interval_seconds: int = Field(gt=0)
     grace_seconds: int = Field(default=0, ge=0)
     renotify_seconds: int | None = Field(default=None, gt=0)
     channel_ids: list[ULIDStr] = Field(default_factory=list)
-    title_template: str = Field(min_length=1)
-    body_template: str = Field(min_length=1)
+    title_template: StorableText = Field(min_length=1)
+    body_template: StorableText = Field(min_length=1)
     enabled: bool = True
 
 
@@ -54,13 +54,13 @@ class MonitorUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = Field(default=None, min_length=1, max_length=200)
+    name: StorableText | None = Field(default=None, min_length=1, max_length=200)
     interval_seconds: int | None = Field(default=None, gt=0)
     grace_seconds: int | None = Field(default=None, ge=0)
     renotify_seconds: int | None = Field(default=None, gt=0)
     channel_ids: list[ULIDStr] | None = None
-    title_template: str | None = Field(default=None, min_length=1)
-    body_template: str | None = Field(default=None, min_length=1)
+    title_template: StorableText | None = Field(default=None, min_length=1)
+    body_template: StorableText | None = Field(default=None, min_length=1)
     enabled: bool | None = None
 
 
@@ -150,12 +150,14 @@ class CheckinRequest(BaseModel):
 
     ``NaN``, ``Infinity`` and ``-Infinity`` are not JSON. One anywhere in
     ``variables`` or ``metadata``, or a number past a double's range, is a
-    422 naming where (#31).
+    422 naming where (#31). So is valid JSON that Postgres, UTF-8 or the
+    response cannot take: ``\\u0000`` or a lone surrogate in a string or a
+    key, nesting past 128 levels, more than 32 MiB (#33).
     """
 
     status: CheckinStatusLiteral = "ok"
-    variables: FiniteJSONObject = Field(default_factory=dict)
-    metadata: FiniteJSONObject = Field(default_factory=dict)
+    variables: StorableJSONObject = Field(default_factory=dict)
+    metadata: StorableJSONObject = Field(default_factory=dict)
 
 
 class CheckinResponse(BaseModel):

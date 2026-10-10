@@ -1,10 +1,12 @@
 """The 422 for a request that fails validation, renderable whatever it carried.
 
 FastAPI's own handler echoes each error's ``input``, and its ``JSONResponse``
-refuses ``NaN`` and the infinities. Python's ``json.loads`` accepts them, so a
-body holding one that failed validation anywhere was a 500 instead of its 422
-(#31). This handler is FastAPI's, with those numbers spelled as strings, and
-without the input when it is nested too deep to echo.
+refuses ``NaN`` and the infinities, and encodes as UTF-8, which refuses a lone
+surrogate. Python's ``json.loads`` accepts all of them, so a body holding one
+that failed validation anywhere was a 500 instead of its 422 (#31, #33). This
+handler is FastAPI's, with those numbers spelled as strings, a lone surrogate
+spelled as its escape, and without the input when it is nested too deep to
+echo.
 """
 
 import math
@@ -17,16 +19,24 @@ from fastapi.responses import JSONResponse
 _SPELLED = {math.inf: "Infinity", -math.inf: "-Infinity"}
 
 
-def json_safe(value: object) -> object:
-    """*value* with every non-finite float replaced by its JavaScript spelling.
+def _spell_surrogates(text: str) -> str:
+    """*text* with each lone surrogate written as its escape: ``\\ud800``."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
 
-    Recursive, as ``jsonable_encoder`` before it is: the handler catches the
-    ``RecursionError`` either raises.
+
+def json_safe(value: object) -> object:
+    """*value* as strict JSON that UTF-8 encodes.
+
+    A non-finite float becomes its JavaScript spelling, and a lone surrogate,
+    in a string or a key, its escape. Recursive, as ``jsonable_encoder``
+    before it is: the handler catches the ``RecursionError`` either raises.
     """
     if isinstance(value, float) and not math.isfinite(value):
         return "NaN" if math.isnan(value) else _SPELLED[value]
+    if isinstance(value, str):
+        return _spell_surrogates(value)
     if isinstance(value, dict):
-        return {k: json_safe(v) for k, v in value.items()}
+        return {_spell_surrogates(k): json_safe(v) for k, v in value.items()}
     if isinstance(value, list):
         return [json_safe(v) for v in value]
     return value
@@ -46,4 +56,4 @@ async def request_validation_error(request: Request, exc: RequestValidationError
         )
     except RecursionError:
         bare = [{k: v for k, v in error.items() if k != "input"} for error in errors]
-        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(bare)})
+        return JSONResponse(status_code=422, content={"detail": json_safe(jsonable_encoder(bare))})

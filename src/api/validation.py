@@ -3,7 +3,8 @@
 FastAPI's own handler echoes each error's ``input``, and its ``JSONResponse``
 refuses ``NaN`` and the infinities. Python's ``json.loads`` accepts them, so a
 body holding one that failed validation anywhere was a 500 instead of its 422
-(#31). This handler is FastAPI's, with those numbers spelled as strings.
+(#31). This handler is FastAPI's, with those numbers spelled as strings, and
+without the input when it is nested too deep to echo.
 """
 
 import math
@@ -19,8 +20,8 @@ _SPELLED = {math.inf: "Infinity", -math.inf: "-Infinity"}
 def json_safe(value: object) -> object:
     """*value* with every non-finite float replaced by its JavaScript spelling.
 
-    Recursive: it runs on ``jsonable_encoder``'s output, which has already
-    recursed as deep.
+    Recursive, as ``jsonable_encoder`` before it is: the handler catches the
+    ``RecursionError`` either raises.
     """
     if isinstance(value, float) and not math.isfinite(value):
         return "NaN" if math.isnan(value) else _SPELLED[value]
@@ -32,7 +33,17 @@ def json_safe(value: object) -> object:
 
 
 async def request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """FastAPI's 422, made strict JSON."""
-    return JSONResponse(
-        status_code=422, content={"detail": json_safe(jsonable_encoder(exc.errors()))}
-    )
+    """FastAPI's 422, made strict JSON.
+
+    ``json.loads`` takes nesting deeper than the encoders can recurse from
+    here. Rather than let such an input make the 422 a 500, it answers the
+    same errors without their ``input``.
+    """
+    errors = exc.errors()
+    try:
+        return JSONResponse(
+            status_code=422, content={"detail": json_safe(jsonable_encoder(errors))}
+        )
+    except RecursionError:
+        bare = [{k: v for k, v in error.items() if k != "input"} for error in errors]
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(bare)})

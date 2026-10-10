@@ -916,6 +916,31 @@ class TestNonFiniteNumbers:
         await self._assert_untouched(db_session, monitor, notifier)
 
     @pytest.mark.parametrize(
+        "variables",
+        [
+            '{"x":' + "[" * 990 + "NaN" + "]" * 990 + "}",
+            "[" * 990 + '"not an object"' + "]" * 990,
+        ],
+        ids=["nan", "wrong-type"],
+    )
+    async def test_a_422_too_deep_to_echo_is_still_a_422(
+        self, api, headers, monitor, notifier, db_session, variables
+    ):
+        """Nested deeper than FastAPI's encoder can recurse from a handler, the
+        422 leaves the input out rather than become a 500."""
+        response = await _post_raw(
+            api,
+            headers,
+            f"/api/v1/monitors/{monitor['id']}/checkin",
+            '{"variables":' + variables + "}",
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "variables"]
+        assert "input" not in error
+        await self._assert_untouched(db_session, monitor, notifier)
+
+    @pytest.mark.parametrize(
         "body",
         [
             '{"name":"m","interval_seconds":NaN,"title_template":"T","body_template":"B"}',

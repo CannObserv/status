@@ -915,6 +915,13 @@ class TestNonFiniteNumbers:
         assert response.status_code == 422, response.text
         await self._assert_untouched(db_session, monitor, notifier)
 
+    async def test_the_422_echoes_one_as_a_string(self, api, headers, monitor):
+        response = await _post_raw(
+            api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", '{"status":-Infinity}'
+        )
+        (error,) = response.json()["detail"]
+        assert (error["loc"], error["input"]) == (["body", "status"], "-Infinity")
+
     @pytest.mark.parametrize(
         "variables",
         [

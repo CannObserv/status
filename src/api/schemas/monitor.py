@@ -12,12 +12,12 @@ caller still sending one hears about it (spec D5).
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from src.api.schemas.dispatch import DispatchOut
-from src.api.schemas.types import StorableJSONObject, StorableText, ULIDStr
+from src.api.schemas.types import StorableJSONObject, ULIDStr, refuse_unstorable
 
 # Literal rather than the MonitorState/CheckinStatus StrEnums, for the same
 # reason DispatchOut.status is a Literal: Pydantic emits a $ref schema for an
@@ -32,6 +32,15 @@ CheckinStatusLiteral = Literal["ok", "alert"]
 #: takes 2 x 2^31 seconds (136 years) whole.
 INT4_MAX = 2**31 - 1
 
+# Lengths first, as pydantic's own str checks, then what Postgres cannot
+# store (#33). Constraints inside the Annotated, not on Field: on an
+# Optional field, Field's run after the validator, as generic checks
+# ("Value should have at least 1 item after validation").
+MonitorName = Annotated[
+    str, StringConstraints(min_length=1, max_length=200), AfterValidator(refuse_unstorable)
+]
+Template = Annotated[str, StringConstraints(min_length=1), AfterValidator(refuse_unstorable)]
+
 
 class MonitorCreate(BaseModel):
     """Request body for POST /monitors.
@@ -44,13 +53,13 @@ class MonitorCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: StorableText = Field(min_length=1, max_length=200)
+    name: MonitorName
     interval_seconds: int = Field(gt=0, le=INT4_MAX)
     grace_seconds: int = Field(default=0, ge=0, le=INT4_MAX)
     renotify_seconds: int | None = Field(default=None, gt=0, le=INT4_MAX)
     channel_ids: list[ULIDStr] = Field(default_factory=list)
-    title_template: StorableText = Field(min_length=1)
-    body_template: StorableText = Field(min_length=1)
+    title_template: Template
+    body_template: Template
     enabled: bool = True
 
 
@@ -59,13 +68,13 @@ class MonitorUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: StorableText | None = Field(default=None, min_length=1, max_length=200)
+    name: MonitorName | None = None
     interval_seconds: int | None = Field(default=None, gt=0, le=INT4_MAX)
     grace_seconds: int | None = Field(default=None, ge=0, le=INT4_MAX)
     renotify_seconds: int | None = Field(default=None, gt=0, le=INT4_MAX)
     channel_ids: list[ULIDStr] | None = None
-    title_template: StorableText | None = Field(default=None, min_length=1)
-    body_template: StorableText | None = Field(default=None, min_length=1)
+    title_template: Template | None = None
+    body_template: Template | None = None
     enabled: bool | None = None
 
 

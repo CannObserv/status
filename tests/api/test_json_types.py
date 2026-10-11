@@ -1,11 +1,12 @@
-"""Unit tests for StorableJSONObject and StorableText (#31, #33)."""
+"""Unit tests for StorableJSONObject and refuse_unstorable (#31, #33)."""
 
 import json
 import math
 import tracemalloc
+from typing import Annotated
 
 import pytest
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import AfterValidator, BaseModel, TypeAdapter, ValidationError
 from sqlalchemy import text
 
 from src.api.schemas import types
@@ -13,9 +14,9 @@ from src.api.schemas.types import (
     MAX_DEPTH,
     MAX_JSON_BYTES,
     StorableJSONObject,
-    StorableText,
     TooLarge,
     first_unstorable,
+    refuse_unstorable,
 )
 
 #: The most a ``jsonb`` container may hold: Postgres's ``JENTRY_OFFLENMASK``.
@@ -28,7 +29,7 @@ class _Body(BaseModel):
 
 
 class _Text(BaseModel):
-    name: StorableText
+    name: Annotated[str, AfterValidator(refuse_unstorable)]
 
 
 def _path(value: object) -> str | None:

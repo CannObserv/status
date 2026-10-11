@@ -1287,6 +1287,42 @@ class TestUnstorableValues:
         row = await _row(db_session, monitor["id"])
         assert getattr(row, field) == monitor[field]
 
+    @pytest.mark.parametrize(
+        ("value", "kind"),
+        [
+            ("", "string_too_short"),
+            ("x" * 201, "string_too_long"),
+            ("\x00" * 201, "string_too_long"),
+        ],
+        ids=["empty", "long", "long-and-nul"],
+    )
+    @pytest.mark.parametrize("method", ["POST", "PATCH"])
+    async def test_name_length_is_checked_first_and_alike(
+        self, api, headers, monitor, value, kind, method
+    ):
+        """Create and update word a length error as pydantic's ``str`` does, and
+        check it before what Postgres cannot store."""
+        if method == "POST":
+            fields = {"interval_seconds": 60, "title_template": "T", "body_template": "B"}
+            response = await api.post(
+                "/api/v1/monitors", headers=headers, json=fields | {"name": value}
+            )
+        else:
+            response = await api.patch(
+                f"/api/v1/monitors/{monitor['id']}", headers=headers, json={"name": value}
+            )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert (error["loc"], error["type"]) == (["body", "name"], kind)
+
+    @pytest.mark.parametrize("field", ["title_template", "body_template"])
+    async def test_an_empty_template_is_too_short_on_update(self, api, headers, monitor, field):
+        response = await api.patch(
+            f"/api/v1/monitors/{monitor['id']}", headers=headers, json={field: ""}
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"][0]["type"] == "string_too_short"
+
     @pytest.mark.parametrize("field", ["interval_seconds", "grace_seconds", "renotify_seconds"])
     async def test_seconds_past_int4_are_a_422(self, api, headers, monitor, db_session, field):
         """The columns are ``integer``: 2^31 was asyncpg's DataError, a 500."""

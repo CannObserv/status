@@ -188,8 +188,11 @@ def _json_bytes(value: object) -> int | None:
     return len(encoded.encode("utf-8", "surrogatepass"))
 
 
-def _refuse_unstorable[T](value: T, info: ValidationInfo) -> T:
+def refuse_unstorable[T](value: T, info: ValidationInfo) -> T:
     """Reject *value* if a sink would refuse it, naming where (#31, #33).
+
+    An ``AfterValidator`` for any JSON value: on a ``str`` field, text Postgres
+    can store in ``text`` (pydantic's own ``str`` refuses a lone surrogate first).
 
     Size first, in C: it bounds the walk, which is Python. A value too deep
     for ``json.dumps`` is refused by the walk, for its depth.
@@ -206,7 +209,7 @@ def _refuse_unstorable[T](value: T, info: ValidationInfo) -> T:
     return value
 
 
-StorableJSONObject = Annotated[dict[str, Any], AfterValidator(_refuse_unstorable)]
+StorableJSONObject = Annotated[dict[str, Any], AfterValidator(refuse_unstorable)]
 """A free-form JSON object that every sink here takes (#31, #33).
 
 Python's ``json.loads`` accepts more than Postgres, httpx and pydantic will
@@ -224,7 +227,3 @@ Refused here, each is a 422 naming the field and the path inside it, before
 anything is written or sent; kept, the value is verbatim. The JSON schema
 stays a plain ``object``: the check-in contract (D6) is unchanged.
 """
-
-StorableText = Annotated[str, AfterValidator(_refuse_unstorable)]
-"""A string Postgres can store in ``text``: no ``\\u0000``, no lone surrogate,
-at most :data:`MAX_JSON_BYTES` (#33). The JSON schema stays a plain string."""

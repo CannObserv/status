@@ -6,7 +6,7 @@ surrogate. Python's ``json.loads`` accepts all of them, so a body holding one
 that failed validation anywhere was a 500 instead of its 422 (#31, #33). This
 handler is FastAPI's, with those numbers spelled as strings, a lone surrogate
 spelled as its escape, and without the input when it is nested too deep to
-echo.
+echo, or when a value was refused for its size.
 """
 
 import math
@@ -51,9 +51,9 @@ def _without_input(error: dict) -> dict:
 async def request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     """FastAPI's 422, made strict JSON.
 
-    ``json.loads`` takes nesting deeper than the encoders can recurse from
-    here. Rather than let such an input make the 422 a 500, it answers the
-    same errors without their ``input``.
+    Answers the same errors without their ``input`` when one was refused for
+    its size (#33), or when ``json.loads`` took nesting deeper than the
+    encoders can recurse from here, rather than let it make the 422 a 500.
     """
     # Refused for its size, an input echoed back would be as large again (#33),
     # and not only its own: a missing field's error carries the whole body.

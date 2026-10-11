@@ -15,12 +15,13 @@ import httpx
 import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi
 from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from src.api.deps import get_alerter
 from src.api.main import app
-from src.api.routes.monitors import _fault_report_query, _with_notices
+from src.api.routes.monitors import _fault_report_query, _name_taken, _with_notices
 from src.api.schemas import types
 from src.api.schemas.types import MAX_DEPTH
 from src.core import alerting
@@ -1779,6 +1780,13 @@ class TestNullsAndBooleans:
         )
         with pytest.raises(IntegrityError, match="ck_test_34"):
             await _create(api, headers, name="refused")
+
+    def test_an_error_without_its_driver_exception_is_no_name_conflict(self):
+        """SQLAlchemy's adapter error may carry no asyncpg exception: its
+        ``driver_exception`` then raises ValueError, which hid the
+        IntegrityError (CR 1)."""
+        adapted = AsyncAdapt_asyncpg_dbapi.IntegrityError("duplicate key")
+        assert not _name_taken(IntegrityError("INSERT", None, adapted))
 
     async def test_a_taken_name_still_says_so(self, api, headers, monitor):
         other = await _create(api, headers)

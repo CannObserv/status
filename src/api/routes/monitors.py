@@ -205,8 +205,12 @@ def _name_taken(exc: IntegrityError) -> bool:
 
     Anything else is not a name conflict, and propagates: a 500 that says
     what broke, not a 409 that names the wrong problem (#34).
+
+    ``exc.orig`` is SQLAlchemy's adapter error (2.1); its ``orig`` is
+    asyncpg's, which names the constraint. Not ``driver_exception``: that
+    raises when there is none, and would hide *exc* (CR 1).
     """
-    driver = getattr(exc.orig, "driver_exception", None)
+    driver = getattr(exc.orig, "orig", None)
     return getattr(driver, "constraint_name", None) == NAME_UNIQUE
 
 

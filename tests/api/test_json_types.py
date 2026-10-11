@@ -265,7 +265,7 @@ class TestSize:
         assert isinstance(error["ctx"]["error"], TooLarge)
         assert error["msg"] == (
             f"Value error, variables is {MAX_JSON_BYTES + 1} bytes as JSON, more than the "
-            f"{MAX_JSON_BYTES} co-status stores"
+            f"{MAX_JSON_BYTES} co-status accepts"
         )
 
     def test_text_past_the_limit_is_refused(self):

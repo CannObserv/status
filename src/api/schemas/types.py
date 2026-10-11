@@ -209,7 +209,7 @@ def refuse_unstorable[T](value: T, info: ValidationInfo) -> T:
     size = _json_bytes(value)
     if size is not None and size > MAX_JSON_BYTES:
         raise TooLarge(
-            f"{root} is {size} bytes as JSON, more than the {MAX_JSON_BYTES} co-status stores"
+            f"{root} is {size} bytes as JSON, more than the {MAX_JSON_BYTES} co-status accepts"
         )
     found = first_unstorable(value, root)
     if found is not None:

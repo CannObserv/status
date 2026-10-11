@@ -1216,7 +1216,7 @@ class TestUnstorableValues:
         (error,) = response.json()["detail"]
         assert error["loc"] == ["body", "variables"]
         assert error["msg"] == (
-            "Value error, variables is 18 bytes as JSON, more than the 17 co-status stores"
+            "Value error, variables is 18 bytes as JSON, more than the 17 co-status accepts"
         )
         assert "input" not in error  # a body too large to keep is too large to echo
         await _assert_untouched(db_session, monitor, notifier)

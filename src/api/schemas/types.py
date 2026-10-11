@@ -131,7 +131,10 @@ def first_unstorable(value: object, root: str) -> tuple[str, str] | None:
     Iterative, so a body nested as deep as ``json.loads`` allows is walked
     rather than failing with ``RecursionError``. It runs on the event loop
     over bodies of up to :data:`MAX_JSON_BYTES`: only containers, and what is
-    refused, are put on its stack, and a path is built only for what is.
+    refused, are put on its stack, and a path is built only for what is. Its
+    cost is still a Python step per container and string: at 32 MiB, about
+    4 s for strings and 12 s for small objects, beside the 1.6 s
+    ``json.loads`` and 1.5 s ``json.dumps`` any body that size costs.
 
     Refused: ``NaN`` and the infinities (#31); ``\\u0000`` and lone surrogates,
     in strings and keys; nesting past :data:`MAX_DEPTH` (#33).

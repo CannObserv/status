@@ -31,6 +31,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.models.base import Base, TimestampMixin, ULIDType, generate_ulid
 
+#: A tenant's monitor names are unique: the only conflict a write is a 409 for.
+NAME_UNIQUE = "uq_monitors_tenant_name"
+
 
 class Monitor(Base, TimestampMixin):
     """One reporting source, its expected cadence, and where to alert.
@@ -50,7 +53,7 @@ class Monitor(Base, TimestampMixin):
 
     __tablename__ = "monitors"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_monitors_tenant_name"),
+        UniqueConstraint("tenant_id", "name", name=NAME_UNIQUE),
         CheckConstraint(
             "state IN ('pending', 'ok', 'missing')",
             name="ck_monitors_state",

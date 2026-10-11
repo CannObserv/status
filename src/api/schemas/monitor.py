@@ -14,7 +14,16 @@ caller still sending one hears about it (spec D5).
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+)
 
 from src.api.schemas.dispatch import DispatchOut
 from src.api.schemas.types import StorableJSONObject, ULIDStr, refuse_unstorable
@@ -42,6 +51,24 @@ MonitorName = Annotated[
 Template = Annotated[str, StringConstraints(min_length=1), AfterValidator(refuse_unstorable)]
 
 
+def refuse_bool(value: Any, info: ValidationInfo) -> Any:
+    """Reject a boolean where seconds are due (#34).
+
+    Pydantic's lax ``int`` takes ``true`` as 1 and ``false`` as 0. Only
+    booleans: JSON Schema's ``integer`` takes ``600.0``, which strict mode
+    would refuse.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"{info.field_name} is a number of seconds, not a boolean")
+    return value
+
+
+# Outermost, so pydantic still emits Field's bounds as JSON Schema keywords;
+# inside the Optional, renotify's were its raw ``gt`` and ``le``.
+Seconds = Annotated[int, BeforeValidator(refuse_bool)]
+NullableSeconds = Annotated[int | None, BeforeValidator(refuse_bool)]
+
+
 class MonitorCreate(BaseModel):
     """Request body for POST /monitors.
 
@@ -54,9 +81,9 @@ class MonitorCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: MonitorName
-    interval_seconds: int = Field(gt=0, le=INT4_MAX)
-    grace_seconds: int = Field(default=0, ge=0, le=INT4_MAX)
-    renotify_seconds: int | None = Field(default=None, gt=0, le=INT4_MAX)
+    interval_seconds: Seconds = Field(gt=0, le=INT4_MAX)
+    grace_seconds: Seconds = Field(default=0, ge=0, le=INT4_MAX)
+    renotify_seconds: NullableSeconds = Field(default=None, gt=0, le=INT4_MAX)
     channel_ids: list[ULIDStr] = Field(default_factory=list)
     title_template: Template
     body_template: Template
@@ -64,18 +91,44 @@ class MonitorCreate(BaseModel):
 
 
 class MonitorUpdate(BaseModel):
-    """Request body for PATCH /monitors/{id}. Every field optional."""
+    """Request body for PATCH /monitors/{id}. Every field optional.
+
+    A field left out is unchanged. Only ``renotify_seconds`` takes ``null``,
+    to report once; for any other field, ``null`` is a 422 naming it (#34).
+    That includes the templates: ``MonitorCreate`` requires both, and an
+    imported monitor that arrived without one can be given one, never have
+    it taken away.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    name: MonitorName | None = None
-    interval_seconds: int | None = Field(default=None, gt=0, le=INT4_MAX)
-    grace_seconds: int | None = Field(default=None, ge=0, le=INT4_MAX)
-    renotify_seconds: int | None = Field(default=None, gt=0, le=INT4_MAX)
-    channel_ids: list[ULIDStr] | None = None
-    title_template: Template | None = None
-    body_template: Template | None = None
-    enabled: bool | None = None
+    # The ``None`` defaults stand for "left out": route reads exclude_unset.
+    name: MonitorName = None
+    interval_seconds: Seconds = Field(default=None, gt=0, le=INT4_MAX)
+    grace_seconds: Seconds = Field(default=None, ge=0, le=INT4_MAX)
+    renotify_seconds: NullableSeconds = Field(default=None, gt=0, le=INT4_MAX)
+    channel_ids: list[ULIDStr] = None
+    title_template: Template = None
+    body_template: Template = None
+    enabled: bool = None
+
+    @field_validator(
+        "name",
+        "interval_seconds",
+        "grace_seconds",
+        "channel_ids",
+        "title_template",
+        "body_template",
+        "enabled",
+        mode="before",
+    )
+    @classmethod
+    def _refuse_null(cls, value: Any, info: ValidationInfo) -> Any:
+        """Name the field: pydantic's own ``Input should be a valid string``
+        reads as if the value were wrong, not the null."""
+        if value is None:
+            raise ValueError(f"{info.field_name} cannot be null; leave it out to keep it")
+        return value
 
 
 class MonitorOut(BaseModel):

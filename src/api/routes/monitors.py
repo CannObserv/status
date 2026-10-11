@@ -45,7 +45,7 @@ from src.core.alerting import cleared_key as build_cleared_key
 from src.core.alerting import recovery_key as build_recovery_key
 from src.core.logging import get_logger
 from src.core.models import MonitorEvent
-from src.core.models.monitor import Monitor
+from src.core.models.monitor import NAME_UNIQUE, Monitor
 from src.core.monitors import (
     CheckinStatus,
     EventKind,
@@ -200,6 +200,16 @@ async def _check_channels(alerter: Alerter | None, channel_ids: list[str]) -> No
         )
 
 
+def _name_taken(exc: IntegrityError) -> bool:
+    """Whether *exc* broke the tenant's unique name, and no other constraint.
+
+    Anything else is not a name conflict, and propagates: a 500 that says
+    what broke, not a 409 that names the wrong problem (#34).
+    """
+    driver = getattr(exc.orig, "driver_exception", None)
+    return getattr(driver, "constraint_name", None) == NAME_UNIQUE
+
+
 def _event(monitor: Monitor, kind: EventKind, at: datetime):
     """A ``monitor_events`` row that sent nothing."""
     return MonitorEvent(monitor_id=monitor.id, kind=kind, at=at)
@@ -254,6 +264,8 @@ async def create_monitor(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
+        if not _name_taken(exc):
+            raise
         raise HTTPException(
             status_code=409, detail=f"A monitor named '{body.name}' already exists."
         ) from exc
@@ -287,16 +299,17 @@ async def update_monitor(
     payload = body.model_dump(exclude_unset=True)
     if payload.get("channel_ids"):
         await _check_channels(alerter, payload["channel_ids"])
-    if "enabled" in payload and payload["enabled"] is not None:
-        if payload["enabled"] != monitor.enabled:
-            kind = EventKind.RESUMED if payload["enabled"] else EventKind.PAUSED
-            session.add(_event(monitor, kind, datetime.now(UTC)))
+    if "enabled" in payload and payload["enabled"] != monitor.enabled:
+        kind = EventKind.RESUMED if payload["enabled"] else EventKind.PAUSED
+        session.add(_event(monitor, kind, datetime.now(UTC)))
     for field, value in payload.items():
         setattr(monitor, field, value)
     try:
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
+        if not _name_taken(exc):
+            raise
         raise HTTPException(status_code=409, detail="That monitor name is already taken.") from exc
     return await _load_out(session, monitor_id, tenant_id)
 

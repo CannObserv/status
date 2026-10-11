@@ -15,6 +15,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from src.api.deps import get_alerter
@@ -1636,6 +1637,175 @@ class TestNoticeStatus:
             f"/api/v1/monitors/{monitor['id']}", headers=headers, json={"name": "renamed"}
         )
         assert _served(response.json(), "recovery") == (at, "failed")
+
+
+#: Every field a PATCH may not null (#34): a ``NOT NULL`` column, or a
+#: template, which ``MonitorCreate`` requires.
+NOT_NULL = (
+    "name",
+    "interval_seconds",
+    "grace_seconds",
+    "channel_ids",
+    "title_template",
+    "body_template",
+    "enabled",
+)
+SECONDS = ("interval_seconds", "grace_seconds", "renotify_seconds")
+
+
+class TestNullsAndBooleans:
+    """``MonitorUpdate`` typed every field ``X | None`` so it could be left
+    out, which let an explicit ``null`` through too (#34). A ``NOT NULL``
+    column then broke, and the route took every ``IntegrityError`` for a
+    taken name: a 409 naming the wrong problem. Pydantic's lax ``int`` took
+    ``true`` as 1."""
+
+    async def _patch(self, api, headers, monitor, body):
+        return await api.patch(f"/api/v1/monitors/{monitor['id']}", headers=headers, json=body)
+
+    async def _assert_unchanged(self, api, headers, monitor):
+        served = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
+        assert {k: served[k] for k in NOT_NULL} == {k: monitor[k] for k in NOT_NULL}
+
+    async def test_a_null_name_is_422_naming_it(self, api, headers, monitor):
+        """The issue's first body: was a 409, ``That monitor name is already taken.``"""
+        response = await self._patch(api, headers, monitor, {"name": None})
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "name"]
+        assert error["msg"] == "Value error, name cannot be null; leave it out to keep it"
+        await self._assert_unchanged(api, headers, monitor)
+
+    async def test_a_null_interval_is_422_naming_it(self, api, headers, monitor):
+        """The issue's second body: was the same false 409."""
+        response = await self._patch(api, headers, monitor, {"interval_seconds": None})
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "interval_seconds"]
+        assert error["msg"] == (
+            "Value error, interval_seconds cannot be null; leave it out to keep it"
+        )
+        await self._assert_unchanged(api, headers, monitor)
+
+    async def test_a_null_template_is_422_and_keeps_it(self, api, headers, monitor):
+        """The issue's third body: was a 200 that cleared the template, leaving
+        a monitor whose next report renders nothing. Imported monitors arrive
+        without one; a PATCH can give them one, never take it away."""
+        response = await self._patch(api, headers, monitor, {"title_template": None})
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "title_template"]
+        await self._assert_unchanged(api, headers, monitor)
+
+    async def test_a_boolean_interval_is_422(self, api, headers, monitor):
+        """The issue's fourth body: was a 200, stored as 1 second."""
+        response = await self._patch(api, headers, monitor, {"interval_seconds": True})
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "interval_seconds"]
+        assert error["msg"] == (
+            "Value error, interval_seconds is a number of seconds, not a boolean"
+        )
+        await self._assert_unchanged(api, headers, monitor)
+
+    @pytest.mark.parametrize("field", NOT_NULL)
+    async def test_no_field_that_cannot_be_null_takes_one(self, api, headers, monitor, field):
+        response = await self._patch(api, headers, monitor, {field: None})
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        assert error["msg"] == f"Value error, {field} cannot be null; leave it out to keep it"
+        await self._assert_unchanged(api, headers, monitor)
+
+    async def test_a_null_renotify_still_clears_it(self, api, headers):
+        """``renotify_seconds: null`` means alert once, report once: a setting."""
+        monitor = await _create(api, headers, renotify_seconds=3600)
+        response = await self._patch(api, headers, monitor, {"renotify_seconds": None})
+        assert response.status_code == 200, response.text
+        assert response.json()["renotify_seconds"] is None
+
+    async def test_leaving_a_field_out_keeps_it(self, api, headers, monitor):
+        response = await self._patch(api, headers, monitor, {})
+        assert response.status_code == 200, response.text
+        await self._assert_unchanged(api, headers, monitor)
+
+    @pytest.mark.parametrize("value", [True, False])
+    @pytest.mark.parametrize("field", SECONDS)
+    async def test_an_update_takes_no_boolean_for_seconds(
+        self, api, headers, monitor, field, value
+    ):
+        response = await self._patch(api, headers, monitor, {field: value})
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        assert error["msg"] == f"Value error, {field} is a number of seconds, not a boolean"
+
+    @pytest.mark.parametrize("value", [True, False])
+    @pytest.mark.parametrize("field", SECONDS)
+    async def test_a_create_takes_no_boolean_for_seconds(self, api, headers, field, value):
+        response = await api.post(
+            "/api/v1/monitors",
+            headers=headers,
+            json={
+                "name": "m",
+                "interval_seconds": 600,
+                "title_template": "T",
+                "body_template": "B",
+                field: value,
+            },
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        assert error["msg"] == f"Value error, {field} is a number of seconds, not a boolean"
+
+    async def test_an_integral_float_is_still_seconds(self, api, headers, monitor):
+        """Only booleans are refused: JSON Schema's ``integer`` takes ``600.0``."""
+        response = await self._patch(api, headers, monitor, {"interval_seconds": 900.0})
+        assert response.status_code == 200, response.text
+        assert response.json()["interval_seconds"] == 900
+
+    async def test_only_a_taken_name_is_409_on_update(self, api, headers, monitor, db_session):
+        """Any other constraint is not a name conflict: it surfaces, a 500."""
+        await db_session.execute(
+            text("ALTER TABLE monitors ADD CONSTRAINT ck_test_34 CHECK (name <> 'refused')")
+        )
+        with pytest.raises(IntegrityError, match="ck_test_34"):
+            await self._patch(api, headers, monitor, {"name": "refused"})
+
+    async def test_only_a_taken_name_is_409_on_create(self, api, headers, db_session):
+        await db_session.execute(
+            text("ALTER TABLE monitors ADD CONSTRAINT ck_test_34 CHECK (name <> 'refused')")
+        )
+        with pytest.raises(IntegrityError, match="ck_test_34"):
+            await _create(api, headers, name="refused")
+
+    async def test_a_taken_name_still_says_so(self, api, headers, monitor):
+        other = await _create(api, headers)
+        response = await self._patch(api, headers, other, {"name": monitor["name"]})
+        assert response.status_code == 409
+        assert response.json()["detail"] == "That monitor name is already taken."
+
+    def test_the_update_schema_admits_null_only_for_renotify(self):
+        """The OpenAPI document says what the route takes: a generated client
+        offers ``None`` for ``renotify_seconds`` alone."""
+        properties = app.openapi()["components"]["schemas"]["MonitorUpdate"]["properties"]
+        nullable = {
+            name
+            for name, schema in properties.items()
+            if {"type": "null"} in schema.get("anyOf", []) or "default" in schema
+        }
+        assert nullable == {"renotify_seconds"}
+
+    @pytest.mark.parametrize("model", ["MonitorCreate", "MonitorUpdate"])
+    def test_the_seconds_bounds_stay_json_schema(self, model):
+        """With the boolean check inside the Optional, pydantic published
+        renotify's bounds as its own ``gt`` and ``le``, which no client reads."""
+        properties = app.openapi()["components"]["schemas"][model]["properties"]
+        for field in SECONDS:
+            text_ = json.dumps(properties[field])
+            assert '"gt"' not in text_ and '"le"' not in text_, text_
+            assert "exclusiveMinimum" in text_ or '"minimum"' in text_, text_
 
 
 class TestTenantIsolation:

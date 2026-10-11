@@ -203,8 +203,9 @@ async def _check_channels(alerter: Alerter | None, channel_ids: list[str]) -> No
 def _name_taken(exc: IntegrityError) -> bool:
     """Whether *exc* broke the tenant's unique name, and no other constraint.
 
-    Anything else is not a name conflict, and propagates: a 500 that says
-    what broke, not a 409 that names the wrong problem (#34).
+    Anything else is not a name conflict, and propagates: a 500, whose
+    traceback in the journal names the constraint, not a 409 that names the
+    wrong problem (#34).
 
     ``exc.orig`` is SQLAlchemy's adapter error (2.1); its ``orig`` is
     asyncpg's, which names the constraint. Not ``driver_exception``: that

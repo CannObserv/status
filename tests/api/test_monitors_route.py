@@ -1238,7 +1238,10 @@ class TestUnstorableValues:
         assert (error["loc"], error["input"]) == (loc, echoed)
         await _assert_untouched(db_session, monitor, notifier)
 
-    async def test_a_lone_surrogate_in_a_path_is_a_422(self, api, headers):
+    async def test_a_surrogate_encoded_in_a_path_never_reaches_a_handler(self, api, headers):
+        """A guard, not a regression: Starlette decodes ``%ED%A0%80``, not UTF-8,
+        to U+FFFD, so no lone surrogate reaches a path parameter. Should that
+        change, the 422 must still render."""
         response = await api.get("/api/v1/monitors/%ED%A0%80", headers=headers)
         assert response.status_code == 422, response.text
 

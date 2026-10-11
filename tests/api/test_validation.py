@@ -56,8 +56,9 @@ def test_its_output_encodes_as_utf8():
     json.dumps(json_safe({"\ud800": "\udc00", "x": "\x00"}), ensure_ascii=False).encode("utf-8")
 
 
-async def test_leaves_out_the_input_of_a_value_too_large():
-    """Refused for its size, an input echoed back would be as large again (#33)."""
+async def test_leaves_out_every_input_beside_a_value_too_large():
+    """Refused for its size, an input echoed back would be as large again (#33),
+    and another error's input may hold it: a missing field's holds the body."""
     large = {"type": "value_error", "loc": ("body", "variables"), "msg": "m", "input": {"x": 1}}
     other = {"type": "value_error", "loc": ("body", "metadata"), "msg": "m", "input": {"y": 2}}
     errors = [
@@ -65,6 +66,11 @@ async def test_leaves_out_the_input_of_a_value_too_large():
         other | {"ctx": {"error": ValueError("m")}},
     ]
     response = await request_validation_error(None, RequestValidationError(errors))
-    detail = json.loads(response.body)["detail"]
-    assert "input" not in detail[0]
-    assert detail[1]["input"] == {"y": 2}
+    assert all("input" not in error for error in json.loads(response.body)["detail"])
+
+
+async def test_keeps_the_input_when_nothing_is_too_large():
+    error = {"type": "value_error", "loc": ("body", "metadata"), "msg": "m", "input": {"y": 2}}
+    errors = [error | {"ctx": {"error": ValueError("m")}}]
+    response = await request_validation_error(None, RequestValidationError(errors))
+    assert json.loads(response.body)["detail"][0]["input"] == {"y": 2}

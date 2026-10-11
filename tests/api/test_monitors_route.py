@@ -1221,6 +1221,17 @@ class TestUnstorableValues:
         assert "input" not in error  # a body too large to keep is too large to echo
         await _assert_untouched(db_session, monitor, notifier)
 
+    async def test_no_error_echoes_a_value_too_large(self, api, headers, monkeypatch):
+        """A missing field's error carries the whole body as its input: with a
+        value refused for its size beside it, no error echoes anything."""
+        monkeypatch.setattr(types, "MAX_JSON_BYTES", 17)
+        body = {"interval_seconds": 60, "title_template": "T" * 32, "body_template": "B"}
+        response = await api.post("/api/v1/monitors", headers=headers, json=body)
+        assert response.status_code == 422, response.text
+        errors = response.json()["detail"]
+        assert {e["type"] for e in errors} == {"missing", "value_error"}
+        assert all("input" not in e for e in errors)
+
     @pytest.mark.parametrize(
         ("body", "loc", "echoed"),
         [

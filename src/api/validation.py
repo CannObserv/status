@@ -55,11 +55,11 @@ async def request_validation_error(request: Request, exc: RequestValidationError
     here. Rather than let such an input make the 422 a 500, it answers the
     same errors without their ``input``.
     """
-    # Refused for its size, an input echoed back would be as large again (#33).
-    errors = [
-        _without_input(error) if isinstance(error.get("ctx", {}).get("error"), TooLarge) else error
-        for error in exc.errors()
-    ]
+    # Refused for its size, an input echoed back would be as large again (#33),
+    # and not only its own: a missing field's error carries the whole body.
+    errors = exc.errors()
+    if any(isinstance(error.get("ctx", {}).get("error"), TooLarge) for error in errors):
+        errors = [_without_input(error) for error in errors]
     try:
         return JSONResponse(
             status_code=422, content={"detail": json_safe(jsonable_encoder(errors))}

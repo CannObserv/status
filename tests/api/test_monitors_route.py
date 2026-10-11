@@ -1204,7 +1204,7 @@ class TestUnstorableValues:
     async def test_a_value_past_the_size_limit_reaches_no_sink(
         self, api, headers, monitor, notifier, db_session, monkeypatch
     ):
-        """Lowered: 32 MiB is the real limit, sent by tests/api/test_json_types.py."""
+        """Lowered: 1 MiB is the real limit, sent by tests/api/test_json_types.py."""
         monkeypatch.setattr(types, "MAX_JSON_BYTES", 17)
         response = await _post_raw(
             api,

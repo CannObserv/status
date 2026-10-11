@@ -59,10 +59,12 @@ Every use site is an annotation, so the two forms are interchangeable there.
 #: it with pydantic too.
 MAX_DEPTH = 128
 
-#: The largest a free-form value may be, as compact UTF-8 JSON (#33). A
-#: ``jsonb`` value holds at most 2^28 - 1 bytes, and takes up to 6 bytes per
-#: byte of JSON (``[0,0,…]``): 32 MiB always fits. Read when validating.
-MAX_JSON_BYTES = 32 * 1024 * 1024
+#: The largest a free-form value may be, as compact UTF-8 JSON (#33). Set by
+#: what checking it costs on the event loop: at 1 MiB, the walk, json.loads
+#: and json.dumps take at most about 0.4 s together, where 32 MiB took 14 s.
+#: ``jsonb`` holds 2^28 - 1 bytes, at most 6 per byte of JSON (``[0,0,…]``),
+#: so anything under 40 MiB is storable. Read when validating.
+MAX_JSON_BYTES = 1024 * 1024
 
 
 class TooLarge(ValueError):
@@ -133,9 +135,8 @@ def first_unstorable(value: object, root: str) -> tuple[str, str] | None:
     rather than failing with ``RecursionError``. It runs on the event loop
     over bodies of up to :data:`MAX_JSON_BYTES`: only containers, and what is
     refused, are put on its stack, and a path is built only for what is. Its
-    cost is still a Python step per container and string: at 32 MiB, about
-    4 s for strings and 12 s for small objects, beside the 1.6 s
-    ``json.loads`` and 1.5 s ``json.dumps`` any body that size costs.
+    cost is still a Python step per container and string, which is why
+    :data:`MAX_JSON_BYTES` is 1 MiB: about 0.3 s for small objects.
 
     Refused: ``NaN`` and the infinities (#31); ``\\u0000`` and lone surrogates,
     in strings and keys; nesting past :data:`MAX_DEPTH` (#33).

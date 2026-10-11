@@ -246,6 +246,11 @@ class TestSize:
         overhead = len('{"x":""}') + len("é".encode())
         return {"x": "é" + "a" * (size - overhead)}
 
+    def test_the_limit_is_one_mib(self):
+        """The operator's choice (#33): what the walk, json.loads and json.dumps
+        cost on the event loop, under a second, not what jsonb could hold."""
+        assert MAX_JSON_BYTES == 1024 * 1024
+
     def test_at_the_limit_is_kept(self):
         value = self._of_size(MAX_JSON_BYTES)
         assert len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()) == (
@@ -268,7 +273,7 @@ class TestSize:
             _Text.model_validate({"name": "a" * MAX_JSON_BYTES})
 
     def test_the_limit_is_read_when_validating(self, monkeypatch):
-        """The route tests lower it rather than send 32 MiB."""
+        """The route tests lower it rather than send 1 MiB."""
         monkeypatch.setattr(types, "MAX_JSON_BYTES", 8)
         with pytest.raises(ValidationError):
             _Body.model_validate({"variables": {"x": "abcd"}})

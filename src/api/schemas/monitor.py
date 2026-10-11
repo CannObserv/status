@@ -166,7 +166,7 @@ class CheckinRequest(BaseModel):
     ``variables`` or ``metadata``, or a number past a double's range, is a
     422 naming where (#31). So is valid JSON that Postgres, UTF-8 or the
     response cannot take: ``\\u0000`` or a lone surrogate in a string or a
-    key, nesting past 128 levels, more than 32 MiB (#33).
+    key, nesting past 128 levels, more than 1 MiB (#33).
     """
 
     status: CheckinStatusLiteral = "ok"

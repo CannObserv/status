@@ -45,9 +45,9 @@ async def test_an_input_too_deep_to_encode_is_left_out(monkeypatch):
 
 def test_spells_a_lone_surrogate_by_its_escape():
     """Starlette's JSONResponse encodes UTF-8, which refuses a lone surrogate (#33)."""
-    value = {"input": {"k\ud800": ["a\udfffb", "😀"]}, "loc": ["body", "\udc00"]}
+    value = {"input": {"k\ud800": ["a\udfffb", "\U0001f600"]}, "loc": ["body", "\udc00"]}
     assert json_safe(value) == {
-        "input": {"k\\ud800": ["a\\udfffb", "😀"]},
+        "input": {"k\\ud800": ["a\\udfffb", "\U0001f600"]},
         "loc": ["body", "\\udc00"],
     }
 

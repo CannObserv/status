@@ -87,10 +87,10 @@ def test_names_a_key_postgres_refuses_by_its_escape(key, spelled):
 @pytest.mark.parametrize(
     "value",
     [
-        "😀",  # a surrogate pair, as json.loads joins it: one code point
+        "\U0001f600",  # a surrogate pair, as json.loads joins it: one code point
         "\U0010ffff",
-        "￿￾﷐",  # noncharacters are still Unicode scalar values
-        "\x01\x1f\x7f\x80 ",
+        "\uffff\ufffe\ufdd0",  # noncharacters are still Unicode scalar values
+        "\x01\x1f\x7f\x80\u2028",
         "",
     ],
 )
@@ -205,7 +205,7 @@ def test_the_message_is_ascii(key):
 
 
 def test_the_model_keeps_storable_json_verbatim():
-    body = {"x": [1, 2.5, {"y": None, "z": "😀￿"}]}
+    body = {"x": [1, 2.5, {"y": None, "z": "\U0001f600\uffff"}]}
     assert _Body.model_validate({"variables": body}).variables == body
 
 

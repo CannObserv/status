@@ -1127,26 +1127,26 @@ class TestUnstorableValues:
         """A pair, noncharacters, the last code point and control characters are
         all Unicode text: refused, they would be a tightening for nothing."""
         body = (
-            r'{"status":"alert","variables":{"pair":"😀","nonchar":"￿￾",'
-            r'"last":"􏿿","ctrl":"\u0001\u001f\u007f ","":"empty key"},'
-            r'"metadata":{"fault":"﷐"}}'
+            r'{"status":"alert","variables":{"pair":"\ud83d\ude00","nonchar":"\uffff\ufffe",'
+            r'"last":"\udbff\udfff","ctrl":"\u0001\u001f\u007f\u2028","":"empty key"},'
+            r'"metadata":{"fault":"\ufdd0"}}'
         )
         expected = {
             "pair": "\U0001f600",
-            "nonchar": "￿￾",
+            "nonchar": "\uffff\ufffe",
             "last": "\U0010ffff",
-            "ctrl": "\x01\x1f\x7f ",
+            "ctrl": "\x01\x1f\x7f\u2028",
             "": "empty key",
         }
         response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
         assert response.status_code == 202, response.text
         assert _sent(notifier.preview)["variables"] == expected
         assert _sent(notifier.dispatch)["variables"] == expected
-        assert _sent(notifier.dispatch)["metadata"]["fault"] == "﷐"
+        assert _sent(notifier.dispatch)["metadata"]["fault"] == "\ufdd0"
         row = await _row(db_session, monitor["id"])
-        assert (row.last_variables, row.fault_key) == (expected, "﷐")
+        assert (row.last_variables, row.fault_key) == (expected, "\ufdd0")
         served = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
-        assert (served["last_variables"], served["fault_key"]) == (expected, "﷐")
+        assert (served["last_variables"], served["fault_key"]) == (expected, "\ufdd0")
 
     async def test_nesting_to_the_limit_reaches_every_sink_and_serves_back(
         self, api, headers, monitor, notifier, db_session

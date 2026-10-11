@@ -197,7 +197,8 @@ def refuse_unstorable[T](value: T, info: ValidationInfo) -> T:
     """Reject *value* if a sink would refuse it, naming where (#31, #33).
 
     An ``AfterValidator`` for any JSON value: on a ``str`` field, text Postgres
-    can store in ``text`` (pydantic's own ``str`` refuses a lone surrogate first).
+    can store in ``text``. A length-constrained ``str`` refuses a lone
+    surrogate before it, to count characters; a plain ``str`` takes one.
 
     Size first, in C: it bounds the walk, which is Python. A value too deep
     for ``json.dumps`` is refused by the walk, for its depth.

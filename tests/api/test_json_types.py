@@ -14,6 +14,7 @@ from src.api.schemas.types import (
     MAX_JSON_BYTES,
     StorableJSONObject,
     StorableText,
+    TooLarge,
     first_unstorable,
 )
 
@@ -255,6 +256,7 @@ class TestSize:
         with pytest.raises(ValidationError) as caught:
             _Body.model_validate({"variables": self._of_size(MAX_JSON_BYTES + 1)})
         (error,) = caught.value.errors()
+        assert isinstance(error["ctx"]["error"], TooLarge)
         assert error["msg"] == (
             f"Value error, variables is {MAX_JSON_BYTES + 1} bytes as JSON, more than the "
             f"{MAX_JSON_BYTES} co-status stores"

@@ -16,6 +16,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from src.api.schemas.types import TooLarge
+
 _SPELLED = {math.inf: "Infinity", -math.inf: "-Infinity"}
 
 
@@ -42,6 +44,10 @@ def json_safe(value: object) -> object:
     return value
 
 
+def _without_input(error: dict) -> dict:
+    return {k: v for k, v in error.items() if k != "input"}
+
+
 async def request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     """FastAPI's 422, made strict JSON.
 
@@ -49,11 +55,15 @@ async def request_validation_error(request: Request, exc: RequestValidationError
     here. Rather than let such an input make the 422 a 500, it answers the
     same errors without their ``input``.
     """
-    errors = exc.errors()
+    # Refused for its size, an input echoed back would be as large again (#33).
+    errors = [
+        _without_input(error) if isinstance(error.get("ctx", {}).get("error"), TooLarge) else error
+        for error in exc.errors()
+    ]
     try:
         return JSONResponse(
             status_code=422, content={"detail": json_safe(jsonable_encoder(errors))}
         )
     except RecursionError:
-        bare = [{k: v for k, v in error.items() if k != "input"} for error in errors]
+        bare = [_without_input(error) for error in errors]
         return JSONResponse(status_code=422, content={"detail": json_safe(jsonable_encoder(bare))})

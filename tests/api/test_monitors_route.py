@@ -1214,9 +1214,11 @@ class TestUnstorableValues:
         )
         assert response.status_code == 422, response.text
         (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "variables"]
         assert error["msg"] == (
             "Value error, variables is 18 bytes as JSON, more than the 17 co-status stores"
         )
+        assert "input" not in error  # a body too large to keep is too large to echo
         await _assert_untouched(db_session, monitor, notifier)
 
     @pytest.mark.parametrize(

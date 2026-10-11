@@ -6,7 +6,8 @@ import math
 from fastapi.exceptions import RequestValidationError
 
 from src.api import validation
-from src.api.validation import json_safe
+from src.api.schemas.types import TooLarge
+from src.api.validation import json_safe, request_validation_error
 
 
 def test_spells_non_finite_numbers_as_strings():
@@ -53,3 +54,17 @@ def test_spells_a_lone_surrogate_by_its_escape():
 
 def test_its_output_encodes_as_utf8():
     json.dumps(json_safe({"\ud800": "\udc00", "x": "\x00"}), ensure_ascii=False).encode("utf-8")
+
+
+async def test_leaves_out_the_input_of_a_value_too_large():
+    """Refused for its size, an input echoed back would be as large again (#33)."""
+    large = {"type": "value_error", "loc": ("body", "variables"), "msg": "m", "input": {"x": 1}}
+    other = {"type": "value_error", "loc": ("body", "metadata"), "msg": "m", "input": {"y": 2}}
+    errors = [
+        large | {"ctx": {"error": TooLarge("m")}},
+        other | {"ctx": {"error": ValueError("m")}},
+    ]
+    response = await request_validation_error(None, RequestValidationError(errors))
+    detail = json.loads(response.body)["detail"]
+    assert "input" not in detail[0]
+    assert detail[1]["input"] == {"y": 2}

@@ -62,6 +62,12 @@ MAX_DEPTH = 128
 #: byte of JSON (``[0,0,…]``): 32 MiB always fits. Read when validating.
 MAX_JSON_BYTES = 32 * 1024 * 1024
 
+
+class TooLarge(ValueError):
+    """A value refused for its size. Its 422 leaves out the ``input``, which
+    would be as large again; pydantic keeps the exception as ``ctx["error"]``."""
+
+
 # Postgres stores neither NUL nor a lone surrogate in text or jsonb, and a
 # lone surrogate is not Unicode text, so UTF-8 cannot encode it either.
 _UNSTORABLE_CHAR = re.compile("[\x00\ud800-\udfff]")
@@ -191,7 +197,7 @@ def _refuse_unstorable[T](value: T, info: ValidationInfo) -> T:
     root = info.field_name or "value"
     size = _json_bytes(value)
     if size is not None and size > MAX_JSON_BYTES:
-        raise ValueError(
+        raise TooLarge(
             f"{root} is {size} bytes as JSON, more than the {MAX_JSON_BYTES} co-status stores"
         )
     found = first_unstorable(value, root)

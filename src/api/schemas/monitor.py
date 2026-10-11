@@ -27,6 +27,11 @@ from src.api.schemas.types import StorableJSONObject, StorableText, ULIDStr
 MonitorStateLiteral = Literal["pending", "ok", "missing"]
 CheckinStatusLiteral = Literal["ok", "alert"]
 
+#: The most an ``integer`` column holds. Past it, asyncpg's DataError was a
+#: 500 (#33); every use of these seconds is Python ``timedelta``, which
+#: takes 2 x 2^31 seconds (136 years) whole.
+INT4_MAX = 2**31 - 1
+
 
 class MonitorCreate(BaseModel):
     """Request body for POST /monitors.
@@ -40,9 +45,9 @@ class MonitorCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: StorableText = Field(min_length=1, max_length=200)
-    interval_seconds: int = Field(gt=0)
-    grace_seconds: int = Field(default=0, ge=0)
-    renotify_seconds: int | None = Field(default=None, gt=0)
+    interval_seconds: int = Field(gt=0, le=INT4_MAX)
+    grace_seconds: int = Field(default=0, ge=0, le=INT4_MAX)
+    renotify_seconds: int | None = Field(default=None, gt=0, le=INT4_MAX)
     channel_ids: list[ULIDStr] = Field(default_factory=list)
     title_template: StorableText = Field(min_length=1)
     body_template: StorableText = Field(min_length=1)
@@ -55,9 +60,9 @@ class MonitorUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: StorableText | None = Field(default=None, min_length=1, max_length=200)
-    interval_seconds: int | None = Field(default=None, gt=0)
-    grace_seconds: int | None = Field(default=None, ge=0)
-    renotify_seconds: int | None = Field(default=None, gt=0)
+    interval_seconds: int | None = Field(default=None, gt=0, le=INT4_MAX)
+    grace_seconds: int | None = Field(default=None, ge=0, le=INT4_MAX)
+    renotify_seconds: int | None = Field(default=None, gt=0, le=INT4_MAX)
     channel_ids: list[ULIDStr] | None = None
     title_template: StorableText | None = Field(default=None, min_length=1)
     body_template: StorableText | None = Field(default=None, min_length=1)

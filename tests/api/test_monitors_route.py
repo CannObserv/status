@@ -1287,6 +1287,25 @@ class TestUnstorableValues:
         row = await _row(db_session, monitor["id"])
         assert getattr(row, field) == monitor[field]
 
+    @pytest.mark.parametrize("field", ["interval_seconds", "grace_seconds", "renotify_seconds"])
+    async def test_seconds_past_int4_are_a_422(self, api, headers, monitor, db_session, field):
+        """The columns are ``integer``: 2^31 was asyncpg's DataError, a 500."""
+        fields = {"name": "m", "interval_seconds": 60, "title_template": "T", "body_template": "B"}
+        response = await api.post("/api/v1/monitors", headers=headers, json=fields | {field: 2**31})
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"][0]["loc"] == ["body", field]
+        patched = await api.patch(
+            f"/api/v1/monitors/{monitor['id']}", headers=headers, json={field: 2**31}
+        )
+        assert patched.status_code == 422, patched.text
+        row = await _row(db_session, monitor["id"])
+        assert getattr(row, field) == monitor[field]
+
+    @pytest.mark.parametrize("field", ["interval_seconds", "grace_seconds", "renotify_seconds"])
+    async def test_seconds_at_int4_max_are_kept(self, api, headers, field):
+        created = await _create(api, headers, **{field: 2**31 - 1})
+        assert created[field] == 2**31 - 1
+
     @pytest.mark.parametrize(
         "body",
         [

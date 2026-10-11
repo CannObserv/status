@@ -1781,10 +1781,10 @@ class TestNullsAndBooleans:
         with pytest.raises(IntegrityError, match="ck_test_34"):
             await _create(api, headers, name="refused")
 
-    def test_an_error_without_its_driver_exception_is_no_name_conflict(self):
-        """SQLAlchemy's adapter error may carry no asyncpg exception: its
-        ``driver_exception`` then raises ValueError, which hid the
-        IntegrityError (CR 1)."""
+    def test_an_adapter_error_without_a_driver_error_is_no_name_conflict(self):
+        """SQLAlchemy's adapter error may carry no asyncpg exception. Then
+        nothing names the constraint, and the IntegrityError must propagate,
+        not be hidden: ``driver_exception`` raises ValueError there (CR 1)."""
         adapted = AsyncAdapt_asyncpg_dbapi.IntegrityError("duplicate key")
         assert not _name_taken(IntegrityError("INSERT", None, adapted))
 

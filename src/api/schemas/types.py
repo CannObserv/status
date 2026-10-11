@@ -123,7 +123,8 @@ def _refused(node: object) -> bool:
 def first_unstorable(value: object, root: str) -> tuple[str, str] | None:
     """Where the first thing in *value* that a sink refuses is, and what, or None.
 
-    *root* names *value* itself. Keys that are ASCII identifiers join with a
+    *value* is JSON as ``json.loads`` gives it: its keys are ``str``. *root*
+    names *value* itself. Keys that are ASCII identifiers join with a
     dot, others are quoted as JSON, indices are bracketed:
     ``variables.findings[0]["a b"]``. The path is ASCII whatever *value*
     held, and the problem fixed text. In document order, a key before its value.

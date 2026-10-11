@@ -2,6 +2,7 @@
 
 import json
 import math
+import tracemalloc
 
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -101,6 +102,11 @@ def test_the_first_in_document_order_wins():
     assert _path({"a\x00": {"b": math.nan}}) == 'v["a\\u0000"]'
 
 
+@pytest.mark.parametrize("value", [1.5, 0, None, True, "ok"])
+def test_a_storable_scalar_root_is_storable(value):
+    assert first_unstorable(value, "v") is None
+
+
 def test_a_bare_string_is_named_by_its_root():
     assert first_unstorable("x\x00", "name") == (
         "name",
@@ -127,6 +133,33 @@ def test_a_body_nested_past_the_recursion_limit_is_walked():
     """json.loads takes nesting deeper than a recursive walk could follow from
     inside a request: the walk must not be the thing that fails."""
     assert _path({"x": _nested(5000)}) == "v.x" + "[0]" * (MAX_DEPTH - 1)
+
+
+def _peak_bytes(value: object) -> int:
+    tracemalloc.start()
+    try:
+        first_unstorable(value, "v")
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+def test_the_walk_holds_no_entry_per_scalar():
+    """A million numbers pass without a path, or a stack entry, built for any:
+    the walk runs on the event loop, and a body at the size limit holds millions."""
+    assert _peak_bytes({"a": [0] * 1_000_000}) < 1_000_000
+
+
+def test_a_long_key_is_not_copied_into_every_path_below_it():
+    """Built eagerly, ``{"k"*10_000: [0]*10_000}``, 40 KB of JSON, held 96 MB."""
+    assert _peak_bytes({"k" * 10_000: [0] * 10_000}) < 1_000_000
+
+
+def test_a_value_too_deep_to_measure_is_refused_for_its_depth():
+    """``json.dumps``, which measures the size, recurses; the walk does not."""
+    with pytest.raises(ValidationError) as caught:
+        _Body.model_validate({"variables": {"x": _nested(50_000)}})
+    assert f"nested more than {MAX_DEPTH} levels deep" in caught.value.errors()[0]["msg"]
 
 
 def test_the_model_refuses_a_non_finite_number_naming_its_path():
@@ -160,10 +193,12 @@ def test_the_model_refuses_a_string_postgres_refuses(value, message):
     assert error["msg"] == f"Value error, {message}"
 
 
-def test_the_message_is_ascii():
-    """It is echoed in the 422 and logged: it must encode whatever was refused."""
+@pytest.mark.parametrize("key", ["\ud800\x00é", "é"])
+def test_the_message_is_ascii(key):
+    """It is echoed in the 422 and logged: it must encode whatever was refused.
+    A key quotes as JSON unless it is an ASCII identifier: ``é`` is one, not ASCII."""
     with pytest.raises(ValidationError) as caught:
-        _Body.model_validate({"variables": {"\ud800\x00é": "\ud800"}})
+        _Body.model_validate({"variables": {key: "\ud800"}})
     assert caught.value.errors()[0]["msg"].isascii()
 
 

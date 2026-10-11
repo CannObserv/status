@@ -79,72 +79,124 @@ def _why_not(char: str) -> str:
     return "valid JSON, but not Unicode text, so Postgres cannot store it nor UTF-8 encode it"
 
 
+#: Where a node sits: its parent's ``_Where`` and its key or index, or None
+#: for the root. Built per container, and a path only for what is refused.
+type _Where = tuple[_Where | None, str | int] | None
+
+
+def _path(root: str, where: _Where) -> str:
+    """*where* as a path from *root*: ``variables.findings[0]["a b"]``."""
+    steps: list[str | int] = []
+    while where is not None:
+        where, step = where
+        steps.append(step)
+    path = root
+    for step in reversed(steps):
+        if isinstance(step, int):
+            path += f"[{step}]"
+        elif step.isascii() and step.isidentifier():
+            path += f".{step}"
+        else:
+            path += f"[{json.dumps(step)}]"
+    return path
+
+
+#: Scalars no sink refuses: a container holding only these needs no loop.
+_CANNOT_FAIL = {int, bool, type(None)}
+
+
+def _refused(node: object) -> bool:
+    """Whether *node*, a scalar or a key, is itself what a sink refuses."""
+    if isinstance(node, str):
+        return _UNSTORABLE_CHAR.search(node) is not None
+    return isinstance(node, float) and not math.isfinite(node)
+
+
 def first_unstorable(value: object, root: str) -> tuple[str, str] | None:
     """Where the first thing in *value* that a sink refuses is, and what, or None.
 
-    *root* names *value* itself. Keys that are identifiers join with a dot,
-    others are quoted as JSON, indices are bracketed:
-    ``variables.findings[0]["a b"]``. The problem reads after the path, and
-    both are ASCII whatever *value* held. In document order, a key before its
-    value. Iterative, so a body nested as deep as ``json.loads`` allows is
-    walked rather than failing with ``RecursionError``.
+    *root* names *value* itself. Keys that are ASCII identifiers join with a
+    dot, others are quoted as JSON, indices are bracketed:
+    ``variables.findings[0]["a b"]``. The path is ASCII whatever *value*
+    held, and the problem fixed text. In document order, a key before its value.
+
+    Iterative, so a body nested as deep as ``json.loads`` allows is walked
+    rather than failing with ``RecursionError``. It runs on the event loop
+    over bodies of up to :data:`MAX_JSON_BYTES`: only containers, and what is
+    refused, are put on its stack, and a path is built only for what is.
 
     Refused: ``NaN`` and the infinities (#31); ``\\u0000`` and lone surrogates,
     in strings and keys; nesting past :data:`MAX_DEPTH` (#33).
     """
-    # (node, path, depth), or (key, path, None) for a key still to check.
-    stack: list[tuple[object, str, int | None]] = [(value, root, 1)]
+    # (node, where, depth); depth None for a key, which is what is refused.
+    stack: list[tuple[object, _Where, int | None]] = [(value, None, 1)]
     while stack:
-        node, path, depth = stack.pop()
-        if depth is None:
-            char = _unstorable_char(node)
-            if char is not None:
-                return path, f"has {char} in its key: {_why_not(char)}"
-            continue
-        if isinstance(node, float) and not math.isfinite(node):
-            return path, (
+        node, where, depth = stack.pop()
+        if isinstance(node, dict | list):
+            if depth > MAX_DEPTH:
+                return _path(root, where), (
+                    f"is nested more than {MAX_DEPTH} levels deep: valid JSON, but deeper "
+                    "than co-status can serve back"
+                )
+            values = node.values() if isinstance(node, dict) else node
+            keys = node if isinstance(node, dict) else ()
+            if set(map(type, values)) <= _CANNOT_FAIL and not any(map(_refused, keys)):
+                continue  # nothing to push, found in C: a million numbers are not a loop
+            # Reversed onto the stack: document order, so the first one wins.
+            if isinstance(node, dict):
+                for k, v in reversed(node.items()):
+                    if isinstance(v, dict | list) or _refused(v):
+                        stack.append((v, (where, k), depth + 1))
+                    if _refused(k):
+                        stack.append((k, (where, k), None))
+            else:
+                for i in range(len(node) - 1, -1, -1):
+                    v = node[i]
+                    if isinstance(v, dict | list) or _refused(v):
+                        stack.append((v, (where, i), depth + 1))
+        elif isinstance(node, float) and not math.isfinite(node):
+            return _path(root, where), (
                 "is not a finite number: NaN, Infinity and -Infinity are not JSON "
                 "(RFC 8259 § 6), and numbers must be within a double's range"
             )
-        if isinstance(node, str):
+        elif isinstance(node, str):
             char = _unstorable_char(node)
-            if char is not None:
-                kind = "" if char == "\\u0000" else ", a lone surrogate"
-                return path, f"contains {char}{kind}: {_why_not(char)}"
-            continue
-        if not isinstance(node, (dict, list)):
-            continue
-        if depth > MAX_DEPTH:
-            return path, (
-                f"is nested more than {MAX_DEPTH} levels deep: valid JSON, but deeper "
-                "than co-status can serve back"
-            )
-        children: list[tuple[object, str, int | None]] = []
-        if isinstance(node, dict):
-            for k, v in node.items():
-                member = f"{path}.{k}" if k.isidentifier() else f"{path}[{json.dumps(k)}]"
-                children += [(k, member, None), (v, member, depth + 1)]
-        else:
-            children = [(v, f"{path}[{i}]", depth + 1) for i, v in enumerate(node)]
-        stack.extend(reversed(children))  # document order: the first one wins
+            if char is None:
+                continue  # a bare str root that is fine
+            if depth is None:
+                return _path(root, where), f"has {char} in its key: {_why_not(char)}"
+            kind = "" if char == "\\u0000" else ", a lone surrogate"
+            return _path(root, where), f"contains {char}{kind}: {_why_not(char)}"
     return None
+
+
+def _json_bytes(value: object) -> int | None:
+    """*value*'s size as compact UTF-8 JSON, or None when too deep to encode.
+
+    A lone surrogate counts as the 3 bytes UTF-8 would give it, were it allowed.
+    """
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except RecursionError:
+        return None
+    return len(encoded.encode("utf-8", "surrogatepass"))
 
 
 def _refuse_unstorable[T](value: T, info: ValidationInfo) -> T:
     """Reject *value* if a sink would refuse it, naming where (#31, #33).
 
-    The walk first: it stops at :data:`MAX_DEPTH`, and ``json.dumps``, which
-    measures the size, recurses.
+    Size first, in C: it bounds the walk, which is Python. A value too deep
+    for ``json.dumps`` is refused by the walk, for its depth.
     """
     root = info.field_name or "value"
-    found = first_unstorable(value, root)
-    if found is not None:
-        raise ValueError(" ".join(found))
-    size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
-    if size > MAX_JSON_BYTES:
+    size = _json_bytes(value)
+    if size is not None and size > MAX_JSON_BYTES:
         raise ValueError(
             f"{root} is {size} bytes as JSON, more than the {MAX_JSON_BYTES} co-status stores"
         )
+    found = first_unstorable(value, root)
+    if found is not None:
+        raise ValueError(" ".join(found))
     return value
 
 

@@ -52,9 +52,11 @@ Every use site is an annotation, so the two forms are interchangeable there.
 
 
 #: The deepest a free-form value may nest, itself being level 1 (#33). Past
-#: about 255 levels pydantic cannot serialize a value, so a monitor holding
-#: one could not be read, nor listed with its tenant's others. Half that:
-#: notifier wraps what it is sent, and serves it back, the same way.
+#: 255 levels pydantic cannot serialize a value, so a monitor holding one
+#: could not be read, nor listed with its tenant's others. Half that: the
+#: 202 serves ``metadata`` back three levels down, in
+#: ``dispatches[].metadata``, and notifier's own ``DispatchOut`` serializes
+#: it with pydantic too.
 MAX_DEPTH = 128
 
 #: The largest a free-form value may be, as compact UTF-8 JSON (#33). A

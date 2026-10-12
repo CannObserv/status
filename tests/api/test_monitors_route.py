@@ -1524,7 +1524,7 @@ async def _a_long_history(db_session, tenant: Tenant) -> str:
         for i in range(HISTORY)
     ]
     for i, kind in enumerate(("alert", "recovered", "cleared")):
-        rows[i * 100].update(kind=kind, dispatch_status="sent")
+        rows[i * 100].update(kind=kind, dispatch_status=alerting.DELIVERED)
     await db_session.execute(insert(MonitorEvent), rows)
     await db_session.execute(text("ANALYZE monitor_events"))
     return str(monitor.id)

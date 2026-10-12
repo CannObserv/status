@@ -1503,28 +1503,28 @@ async def _notice(db_session, monitor_id: str, kind: str, status: str | None, ag
 HISTORY = 2000
 
 
-async def _a_long_history(db_session, tenant: Tenant) -> str:
-    """A week-long fault: a 5-minute probe's ``alert`` check-ins, each a
-    suppressed repeat with a null status (#28), and one notice of each kind
-    among them. ``ANALYZE`` then tells the planner so: on an empty or
+async def _a_week_long_fault(db_session, tenant: Tenant) -> Monitor:
+    """A monitor a week into a fault on a 5-minute probe: the fault's one
+    report, then every ``alert`` since a suppressed repeat with a null
+    status (#28). ``ANALYZE`` then tells the planner so: on an empty or
     never-analyzed ``monitor_events`` both indexes cost the same and either
     may win (#38). Its row count outlives the test's rollback (``ANALYZE``
     writes ``pg_class`` in place), so a later test in the session plans for
     rows that are gone: a plan test seeds and analyzes for itself.
     """
-    monitor = Monitor(tenant_id=tenant.id, name="long history", interval_seconds=300)
+    now = datetime.now(UTC)
+    at = [now - timedelta(minutes=5 * i) for i in reversed(range(HISTORY))]
+    monitor = Monitor(
+        tenant_id=tenant.id, name="a week in fault", interval_seconds=300, fault_since=at[0]
+    )
     db_session.add(monitor)
     await db_session.flush()
-    now = datetime.now(UTC)
-    rows = [
-        {"monitor_id": monitor.id, "kind": "alert", "at": now - timedelta(minutes=5 * i)}
-        for i in range(HISTORY)
-    ]
-    for i, kind in enumerate(("alert", "recovered", "cleared")):
-        rows[i * 100].update(kind=kind, dispatch_status=alerting.DELIVERED)
+    report = {"monitor_id": monitor.id, "kind": "alert", "dispatch_status": alerting.DELIVERED}
+    repeats = [{"monitor_id": monitor.id, "kind": "alert", "dispatch_status": None}] * (HISTORY - 1)
+    rows = [{**row, "at": when} for row, when in zip([report, *repeats], at, strict=True)]
     await db_session.execute(insert(MonitorEvent), rows)
     await db_session.execute(text("ANALYZE monitor_events"))
-    return str(monitor.id)
+    return monitor
 
 
 async def _plan(db_session, stmt) -> str:
@@ -1658,15 +1658,15 @@ class TestNoticeStatus:
         """The query must match ``ix_monitor_events_notice``'s predicate, or
         Postgres falls back to walking each monitor's history and every
         other test here still passes (CR 4)."""
-        await _a_long_history(db_session, tenant)
+        await _a_week_long_fault(db_session, tenant)
         plan = await _plan(db_session, _with_notices().where(Monitor.tenant_id == tenant.id))
         assert plan.count("Index Scan Backward using ix_monitor_events_notice") == 3, plan
 
     async def test_the_faults_last_report_is_one_probe_of_the_index(self, db_session, tenant):
         """Read on every ``alert`` inside a fault (#28): a 5-minute probe in a
         week-long fault must not walk 2,000 events per check-in."""
-        monitor_id = await _a_long_history(db_session, tenant)
-        stmt = _fault_report_query(monitor_id, datetime.now(UTC) - timedelta(days=7))
+        monitor = await _a_week_long_fault(db_session, tenant)
+        stmt = _fault_report_query(monitor.id, monitor.fault_since)
         plan = await _plan(db_session, stmt)
         assert "Index Scan Backward using ix_monitor_events_notice" in plan, plan
 

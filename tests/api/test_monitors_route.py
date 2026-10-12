@@ -239,6 +239,19 @@ class TestReadUpdateDelete:
         kinds = [e.kind for e in await _events(db_session, monitor["id"])]
         assert kinds == ["paused", "resumed"]
 
+    async def test_enabling_a_pending_monitor_keeps_its_creation_deadline(
+        self, api, headers, db_session
+    ):
+        """A monitor enabled before its first check-in is judged from
+        ``created_at``, not from the PATCH (#37)."""
+        created = await _create(api, headers, enabled=False)
+        url = f"/api/v1/monitors/{created['id']}"
+        enabled = (await api.patch(url, headers=headers, json={"enabled": True})).json()
+        assert (enabled["enabled"], enabled["state"]) == (True, "pending")
+        assert enabled["created_at"] == created["created_at"]
+        assert enabled["next_deadline_at"] == created["next_deadline_at"]
+        assert [e.kind for e in await _events(db_session, created["id"])] == ["resumed"]
+
     async def test_update_rejects_a_channel_notifier_does_not_have(self, api, headers, monitor):
         response = await api.patch(
             f"/api/v1/monitors/{monitor['id']}",

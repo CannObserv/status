@@ -121,6 +121,41 @@ class TestSweepMonitors:
         assert report.checked == 0
         assert not notifier.dispatch.called
 
+    async def test_a_monitor_that_never_checked_in_is_alerted_past_its_creation_deadline(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """An enabled ``pending`` monitor is watched like any other (#37): a
+        timer that never fires is the alert, measured from ``created_at``."""
+        monitor = await _save(
+            db_session,
+            tenant,
+            state=MonitorState.PENDING,
+            last_checkin_at=None,
+            created_at=NOW - timedelta(seconds=1801),
+        )
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.alerted == [str(monitor.id)]
+        (sent,) = notifier.dispatched()
+        assert sent["variables"]["name"] == monitor.name
+        assert monitor.state == MonitorState.MISSING
+
+    async def test_a_monitor_that_never_checked_in_is_left_alone_until_then(
+        self, db_session, tenant, alerter, notifier
+    ):
+        """Enabling a monitor before its first run pages nobody early (#37)."""
+        monitor = await _save(
+            db_session,
+            tenant,
+            state=MonitorState.PENDING,
+            last_checkin_at=None,
+            created_at=NOW - timedelta(seconds=1800),
+        )
+        report = await sweep_monitors(db_session, alerter, NOW)
+        assert report.checked == 1
+        assert report.alerted == []
+        assert monitor.state == MonitorState.PENDING
+        assert not notifier.dispatch.called
+
     async def test_an_already_missing_monitor_is_not_re_alerted(
         self, db_session, tenant, alerter, notifier
     ):

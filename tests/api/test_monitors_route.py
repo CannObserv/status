@@ -1843,7 +1843,7 @@ class TestJsonTypes:
         assert served["enabled"] is True
         assert await _events(db_session, monitor["id"]) == []
 
-    @pytest.mark.parametrize("value", NOT_BOOLEANS)
+    @pytest.mark.parametrize("value", NOT_BOOLEANS, ids=repr)
     async def test_an_update_takes_only_a_boolean_for_enabled(self, api, headers, monitor, value):
         response = await self._patch(api, headers, monitor, {"enabled": value})
         assert response.status_code == 422, response.text
@@ -1851,7 +1851,7 @@ class TestJsonTypes:
         assert error["loc"] == ["body", "enabled"]
         assert error["msg"] == f"Value error, enabled is true or false, not {_what(value)}"
 
-    @pytest.mark.parametrize("value", NOT_BOOLEANS)
+    @pytest.mark.parametrize("value", NOT_BOOLEANS, ids=repr)
     async def test_a_create_takes_only_a_boolean_for_enabled(self, api, headers, value):
         response = await api.post(
             "/api/v1/monitors",

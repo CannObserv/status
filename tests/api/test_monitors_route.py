@@ -1816,6 +1816,95 @@ class TestNullsAndBooleans:
             assert "exclusiveMinimum" in text_ or '"minimum"' in text_, text_
 
 
+#: The issue's table (#35): every one was taken as a boolean.
+NOT_BOOLEANS = (0, 1, "yes", "on", "true", "1", "no", "off", "false", "0", 0.0, 1.0)
+
+
+def _what(value) -> str:
+    return "a string" if isinstance(value, str) else "a number"
+
+
+class TestJsonTypes:
+    """Pydantic's lax ``bool`` took ``0``, ``1``, ``"yes"`` and ``"off"`` for
+    ``enabled``, so ``{"enabled": 0}`` paused a monitor (#35); its lax ``int``
+    took ``"600"`` for seconds. Each field takes its own JSON type only."""
+
+    async def _patch(self, api, headers, monitor, body):
+        return await api.patch(f"/api/v1/monitors/{monitor['id']}", headers=headers, json=body)
+
+    async def test_enabled_0_is_422_and_pauses_nothing(self, api, headers, monitor, db_session):
+        """The issue's first row: was a 200 and a ``paused`` event."""
+        response = await self._patch(api, headers, monitor, {"enabled": 0})
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "enabled"]
+        assert error["msg"] == "Value error, enabled is true or false, not a number"
+        served = (await api.get(f"/api/v1/monitors/{monitor['id']}", headers=headers)).json()
+        assert served["enabled"] is True
+        assert await _events(db_session, monitor["id"]) == []
+
+    @pytest.mark.parametrize("value", NOT_BOOLEANS)
+    async def test_an_update_takes_only_a_boolean_for_enabled(self, api, headers, monitor, value):
+        response = await self._patch(api, headers, monitor, {"enabled": value})
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "enabled"]
+        assert error["msg"] == f"Value error, enabled is true or false, not {_what(value)}"
+
+    @pytest.mark.parametrize("value", NOT_BOOLEANS)
+    async def test_a_create_takes_only_a_boolean_for_enabled(self, api, headers, value):
+        response = await api.post(
+            "/api/v1/monitors",
+            headers=headers,
+            json={
+                "name": "m",
+                "interval_seconds": 600,
+                "title_template": "T",
+                "body_template": "B",
+                "enabled": value,
+            },
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "enabled"]
+        assert error["msg"] == f"Value error, enabled is true or false, not {_what(value)}"
+
+    @pytest.mark.parametrize("value", [False, True])
+    async def test_a_boolean_still_pauses_and_resumes(self, api, headers, value):
+        monitor = await _create(api, headers, enabled=not value)
+        response = await self._patch(api, headers, monitor, {"enabled": value})
+        assert response.status_code == 200, response.text
+        assert response.json()["enabled"] is value
+
+    @pytest.mark.parametrize("value", ["600", " 600 ", "600.0", "1e3"])
+    @pytest.mark.parametrize("field", SECONDS)
+    async def test_an_update_takes_no_string_for_seconds(self, api, headers, monitor, field, value):
+        """Was stored as 600: lax ``int`` parses a string of digits."""
+        response = await self._patch(api, headers, monitor, {field: value})
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        assert error["msg"] == f"Value error, {field} is a number of seconds, not a string"
+
+    @pytest.mark.parametrize("field", SECONDS)
+    async def test_a_create_takes_no_string_for_seconds(self, api, headers, field):
+        response = await api.post(
+            "/api/v1/monitors",
+            headers=headers,
+            json={
+                "name": "m",
+                "interval_seconds": 600,
+                "title_template": "T",
+                "body_template": "B",
+                field: "600",
+            },
+        )
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", field]
+        assert error["msg"] == f"Value error, {field} is a number of seconds, not a string"
+
+
 class TestTenantIsolation:
     async def test_another_tenant_cannot_see_or_check_in(self, api, monitor, db_session):
         """The check-in URL is guessable from a ULID; ownership is the guard."""

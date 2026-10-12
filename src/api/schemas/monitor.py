@@ -9,6 +9,11 @@ the schema or the OpenAPI document (AGENTS.md, API Boundary Principles).
 ``tests/api/test_contract.py``). The CRUD models differ in one way: no
 ``template_id``, and an unknown field is a 422 rather than ignored, so a
 caller still sending one hears about it (spec D5).
+
+Every request field takes its own JSON type and no other (#35): where
+pydantic's lax mode would coerce one, a ``BeforeValidator`` refuses it.
+``tests/api/test_request_bodies.py`` probes every field from the OpenAPI
+document.
 """
 
 from datetime import datetime
@@ -51,22 +56,48 @@ MonitorName = Annotated[
 Template = Annotated[str, StringConstraints(min_length=1), AfterValidator(refuse_unstorable)]
 
 
-def refuse_bool(value: Any, info: ValidationInfo) -> Any:
-    """Reject a boolean where seconds are due (#34).
-
-    Pydantic's lax ``int`` takes ``true`` as 1 and ``false`` as 0. Only
-    booleans: JSON Schema's ``integer`` takes ``600.0``, which strict mode
-    would refuse.
-    """
+def _json_type(value: Any) -> str:
+    """The JSON type *value* came as, for a 422: ``a string``, ``null``."""
+    if value is None:
+        return "null"
     if isinstance(value, bool):
-        raise ValueError(f"{info.field_name} is a number of seconds, not a boolean")
+        return "a boolean"
+    if isinstance(value, int | float):
+        return "a number"
+    if isinstance(value, str):
+        return "a string"
+    return "an array" if isinstance(value, list) else "an object"
+
+
+def refuse_non_number(value: Any, info: ValidationInfo) -> Any:
+    """Reject a boolean or a string where seconds are due (#34, #35).
+
+    Pydantic's lax ``int`` takes ``true`` as 1 and ``"600"`` as 600. Only
+    those: JSON Schema's ``integer`` takes ``600.0``, which strict mode would
+    refuse, and ``null`` is a setting for ``renotify_seconds``. Pydantic
+    refuses an array or an object itself.
+    """
+    if isinstance(value, bool | str):
+        raise ValueError(f"{info.field_name} is a number of seconds, not {_json_type(value)}")
+    return value
+
+
+def refuse_non_boolean(value: Any, info: ValidationInfo) -> Any:
+    """Reject anything but a JSON boolean (#35).
+
+    Pydantic's lax ``bool`` takes ``0``, ``1.0``, ``"yes"`` and ``"off"``:
+    ``{"enabled": 0}`` paused a monitor.
+    """
+    if not isinstance(value, bool):
+        raise ValueError(f"{info.field_name} is true or false, not {_json_type(value)}")
     return value
 
 
 # Outermost, so pydantic still emits Field's bounds as JSON Schema keywords;
 # inside the Optional, renotify's were its raw ``gt`` and ``le``.
-Seconds = Annotated[int, BeforeValidator(refuse_bool)]
-NullableSeconds = Annotated[int | None, BeforeValidator(refuse_bool)]
+Seconds = Annotated[int, BeforeValidator(refuse_non_number)]
+NullableSeconds = Annotated[int | None, BeforeValidator(refuse_non_number)]
+Boolean = Annotated[bool, BeforeValidator(refuse_non_boolean)]
 
 
 class MonitorCreate(BaseModel):
@@ -87,7 +118,7 @@ class MonitorCreate(BaseModel):
     channel_ids: list[ULIDStr] = Field(default_factory=list)
     title_template: Template
     body_template: Template
-    enabled: bool = True
+    enabled: Boolean = True
 
 
 class MonitorUpdate(BaseModel):
@@ -110,7 +141,7 @@ class MonitorUpdate(BaseModel):
     channel_ids: list[ULIDStr] = None
     title_template: Template = None
     body_template: Template = None
-    enabled: bool = None
+    enabled: Boolean = None
 
     @field_validator(
         "name",

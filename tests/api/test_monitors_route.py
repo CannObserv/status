@@ -1504,23 +1504,18 @@ HISTORY = 2000
 
 
 async def _a_long_history(db_session, tenant: Tenant) -> str:
-    """A monitor whose week of events is mostly ones no notice query wants.
-
-    Check-ins of other kinds and suppressed repeats (an ``alert`` with a
-    null status), with one notice of each kind among them. ``ANALYZE`` then
-    tells the planner so: on an empty or never-analyzed ``monitor_events``
-    both indexes cost the same and either may win (#38).
+    """A week-long fault: a 5-minute probe's ``alert`` check-ins, each a
+    suppressed repeat with a null status (#28), and one notice of each kind
+    among them. ``ANALYZE`` then tells the planner so: on an empty or
+    never-analyzed ``monitor_events`` both indexes cost the same and either
+    may win (#38).
     """
     monitor = Monitor(tenant_id=tenant.id, name="long history", interval_seconds=300)
     db_session.add(monitor)
     await db_session.flush()
     now = datetime.now(UTC)
     rows = [
-        {
-            "monitor_id": monitor.id,
-            "kind": "alert" if i % 2 else "first_checkin",
-            "at": now - timedelta(minutes=5 * i),
-        }
+        {"monitor_id": monitor.id, "kind": "alert", "at": now - timedelta(minutes=5 * i)}
         for i in range(HISTORY)
     ]
     for i, kind in enumerate(("alert", "recovered", "cleared")):

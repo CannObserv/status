@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi
 from sqlalchemy.exc import IntegrityError
@@ -1498,6 +1498,50 @@ async def _notice(db_session, monitor_id: str, kind: str, status: str | None, ag
     return at
 
 
+#: Events per seeded history: enough that walking them costs more than one
+#: probe of ``ix_monitor_events_notice``, so the plan tests are not a tie (#38).
+HISTORY = 2000
+
+
+async def _a_long_history(db_session, tenant: Tenant) -> str:
+    """A monitor whose week of events is mostly ones no notice query wants.
+
+    Check-ins of other kinds and suppressed repeats (an ``alert`` with a
+    null status), with one notice of each kind among them. ``ANALYZE`` then
+    tells the planner so: on an empty or never-analyzed ``monitor_events``
+    both indexes cost the same and either may win (#38).
+    """
+    monitor = Monitor(tenant_id=tenant.id, name="long history", interval_seconds=300)
+    db_session.add(monitor)
+    await db_session.flush()
+    now = datetime.now(UTC)
+    rows = [
+        {
+            "monitor_id": monitor.id,
+            "kind": "alert" if i % 2 else "first_checkin",
+            "at": now - timedelta(minutes=5 * i),
+        }
+        for i in range(HISTORY)
+    ]
+    for i, kind in enumerate(("alert", "recovered", "cleared")):
+        rows[i * 100].update(kind=kind, dispatch_status="sent")
+    await db_session.execute(insert(MonitorEvent), rows)
+    await db_session.execute(text("ANALYZE monitor_events"))
+    return str(monitor.id)
+
+
+async def _plan(db_session, stmt) -> str:
+    """*stmt*'s plan, after checking each notice predicate is an index's
+    condition, not a filter over rows it walked: that holds whichever index
+    the planner picks (#38)."""
+    sql = stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    await db_session.execute(text("SET LOCAL enable_seqscan = off"))
+    plan = "\n".join(row[0] for row in await db_session.execute(text(f"EXPLAIN {sql}")))
+    filters = [line for line in plan.splitlines() if "Filter:" in line]
+    assert not [f for f in filters if "kind" in f or "dispatch_status" in f], plan
+    return plan
+
+
 def _served(body: dict, notice: str) -> tuple[datetime | None, str | None]:
     at = body[f"last_{notice}_at"]
     return (datetime.fromisoformat(at) if at else None, body[f"last_{notice}_status"])
@@ -1613,23 +1657,20 @@ class TestNoticeStatus:
         for name in ("last_status", "last_alert_status", "last_report_", "not_accepted"):
             assert name in described
 
-    async def test_each_notice_is_one_probe_of_its_index(self, db_session):
+    async def test_each_notice_is_one_probe_of_its_index(self, db_session, tenant):
         """The query must match ``ix_monitor_events_notice``'s predicate, or
         Postgres falls back to walking each monitor's history and every
         other test here still passes (CR 4)."""
-        stmt = _with_notices().where(Monitor.tenant_id == "01J0000000000000000000TENT")
-        sql = stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
-        await db_session.execute(text("SET LOCAL enable_seqscan = off"))
-        plan = "\n".join(row[0] for row in await db_session.execute(text(f"EXPLAIN {sql}")))
+        await _a_long_history(db_session, tenant)
+        plan = await _plan(db_session, _with_notices().where(Monitor.tenant_id == tenant.id))
         assert plan.count("Index Scan Backward using ix_monitor_events_notice") == 3, plan
 
-    async def test_the_faults_last_report_is_one_probe_of_the_index(self, db_session):
+    async def test_the_faults_last_report_is_one_probe_of_the_index(self, db_session, tenant):
         """Read on every ``alert`` inside a fault (#28): a 5-minute probe in a
         week-long fault must not walk 2,000 events per check-in."""
-        stmt = _fault_report_query("01J0000000000000000000MONI", datetime.now(UTC))
-        sql = stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
-        await db_session.execute(text("SET LOCAL enable_seqscan = off"))
-        plan = "\n".join(row[0] for row in await db_session.execute(text(f"EXPLAIN {sql}")))
+        monitor_id = await _a_long_history(db_session, tenant)
+        stmt = _fault_report_query(monitor_id, datetime.now(UTC) - timedelta(days=7))
+        plan = await _plan(db_session, stmt)
         assert "Index Scan Backward using ix_monitor_events_notice" in plan, plan
 
     async def test_an_update_answers_from_one_moment(self, api, headers, monitor, db_session):

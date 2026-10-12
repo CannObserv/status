@@ -1508,7 +1508,9 @@ async def _a_long_history(db_session, tenant: Tenant) -> str:
     suppressed repeat with a null status (#28), and one notice of each kind
     among them. ``ANALYZE`` then tells the planner so: on an empty or
     never-analyzed ``monitor_events`` both indexes cost the same and either
-    may win (#38).
+    may win (#38). Its row count outlives the test's rollback (``ANALYZE``
+    writes ``pg_class`` in place), so a later test in the session plans for
+    rows that are gone: a plan test seeds and analyzes for itself.
     """
     monitor = Monitor(tenant_id=tenant.id, name="long history", interval_seconds=300)
     db_session.add(monitor)

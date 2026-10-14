@@ -34,7 +34,7 @@ dev = [
     "pytest-cov>=7.1.0,<8",
     "pyyaml>=6.0,<7",
     "respx>=0.23.1,<0.24",
-    "ruff>=0.16.5,<0.17",
+    "ruff>=0.16.5,<0.18",
 ]
 
 [tool.pytest.ini_options]

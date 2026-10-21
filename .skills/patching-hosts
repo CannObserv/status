@@ -1,0 +1,24 @@
+# patching-hosts knob: read by the vendored skill, never written by it.
+# Grammar: skills-vendor/gregoryfoster-skills/skills/patching-hosts/references/knob.md
+# All times UTC.
+
+class production
+posture scheduled
+
+window Wed 17:00-23:00
+
+# A sweep or drift check mid-run: wait for it to end.
+inflight systemctl list-units 'status-sweep*.service' status-drift.service --state=activating,active,deactivating --no-legend | wc -l
+
+service status.service
+service status-dev.service
+
+health curl -sf --max-time 5 http://status:9000/ready
+health curl -sf --max-time 5 http://status:9001/health
+
+datastore postgres postgresql@16-main status status_dev
+exception database:status_test 2027-04-21 the test suite's database: rebuilt by every run, nothing to recover
+
+origin Tailscale pin 1.102.4
+
+records CannObserv/status

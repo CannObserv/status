@@ -21,4 +21,7 @@ exception database:status_test 2027-04-21 the test suite's database: rebuilt by 
 
 origin Tailscale pin 1.102.4
 
+# exe-setup.service disabled and /exe.dev/setup 600 (CannObserv/provisioner#4); its key revoked 2026-10-21 (#54).
+exception setup-script:redelivered 2027-04-21 Tailscale auth key revoked 2026-10-21; unit disabled, file contained at 600
+
 records CannObserv/status

@@ -145,8 +145,9 @@ flock -n 9 || die "another deploy is running (it holds the lock on $ROOT)"
 # The installed units each target replaces, kept for a switch back (#18).
 backup="$(mktemp -d "${TMPDIR:-/tmp}/status-deploy.XXXXXX")"
 # `|| :`: under set -e a failing command in the trap would replace the exit
-# status, turning a verified deploy into 1 or a dead target's 4 into 1.
-trap 'rm -rf "$backup" || :' EXIT
+# status, turning a verified deploy into 1 or a dead target's 4 into 1. A copy
+# left behind is named, as a failed prune is (#53).
+trap 'rm -rf "$backup" || note "could not remove $backup; remove it by hand: rm -rf $backup" || :' EXIT
 
 # The sweeps resolve their link on every pass, so relinking a running target
 # puts the build live within 60 s, unverified, whatever this flag says (CR 4).

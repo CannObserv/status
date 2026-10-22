@@ -278,7 +278,9 @@ class World:
         self.sysetc = tmp / "sysetc"  # /etc, for units and host configs (#18)
         self.units = self.sysetc / "systemd" / "system"
         self.owned = tmp / "root-owned"  # the sudo and stat stubs' ledger (#14)
-        for d in (self.root, self.etc, self.stubs, self.ci):
+        # Every run's TMPDIR: never the real /tmp, which kept what a run left (#53).
+        self.tmpdir = tmp / "tmpdir"
+        for d in (self.root, self.etc, self.stubs, self.ci, self.tmpdir):
             d.mkdir()
         self.units.mkdir(parents=True)
         self.log.touch()
@@ -323,6 +325,7 @@ class World:
         env = {
             "PATH": f"{self.stubs}:{os.environ['PATH']}",
             "HOME": str(self.tmp),
+            "TMPDIR": str(self.tmpdir),
             "STATUS_DEPLOY_ROOT": str(self.root),
             "STATUS_DEPLOY_ENV_DIR": str(self.etc),
             "STATUS_DEPLOY_ETC": str(self.sysetc),
@@ -442,6 +445,9 @@ class World:
 def world(tmp_path):
     w = World(tmp_path)
     yield w
+    # #53: a run cleans up after itself; a test that stops it removes the rest.
+    left = sorted(p.name for p in w.tmpdir.iterdir())
+    assert not left, f"a deploy left {left} in TMPDIR"
     # The root and releases are read-only; make them deletable for tmp_path's cleanup.
     if w.root.exists():
         for path in [w.root, *w.root.rglob("*")]:
@@ -913,6 +919,23 @@ class TestReleases:
         # CR 26: a half-pruned release reads as interrupted, never as complete.
         half = world.root / "releases" / world.build(world.main[0])
         assert half.exists() and not (half / "REVISION").exists()
+        [left] = world.tmpdir.iterdir()  # the trap's rm failed too (#53)
+        shutil.rmtree(left)
+
+    def test_a_copy_that_cannot_be_removed_is_noted_and_changes_no_exit(self, world):
+        """#53: the trap's own rm fails too; name what it left, exit as before."""
+        assert_ok(world.run(world.main[0]))
+        result = world.run(world.main[1], FAKE_RM_FAIL="1")
+        assert_ok(result)
+        [left] = world.tmpdir.iterdir()
+        assert left.name.startswith("status-deploy.")
+        assert f"remove it by hand: rm -rf {left}" in result.stderr
+        shutil.rmtree(left)
+        failed = world.run(world.main[2], FAKE_RM_FAIL="1", FAKE_STALE_PORT="9001")
+        assert failed.returncode == 1, failed.stderr
+        [left] = world.tmpdir.iterdir()
+        assert f"remove it by hand: rm -rf {left}" in failed.stderr
+        shutil.rmtree(left)
 
     def test_a_linked_release_without_revision_is_never_deleted(self, world):
         """CR 27: every rebuild path checks the links, not only the broken-venv one."""
@@ -1713,12 +1736,10 @@ class TestUnits:
         assert world.installed("status-dev.service") == "dev v2\n"
 
     def test_the_copies_kept_for_a_switch_back_are_removed(self, world):
-        tmp = world.tmp / "tmpdir"
-        tmp.mkdir()
         world.push_deploy(V1)
         (world.units / "status.service").write_text("edited by hand\n")
-        assert_ok(world.run(TMPDIR=str(tmp)))
-        assert not list(tmp.iterdir())
+        assert_ok(world.run())
+        assert not list(world.tmpdir.iterdir())
 
     def test_a_unit_that_cannot_be_kept_aside_is_not_replaced(self, world):
         """No copy, no switch back: the target fails before overwriting it."""

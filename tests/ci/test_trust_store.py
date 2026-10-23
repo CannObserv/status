@@ -9,8 +9,8 @@ to (exe.dev's advisory, 2026-10-20; ``PYSEC-2026-4320``). certifi 2026.10.19
 dropped it. A lock that resolves an older certifi, by a downgrade or a
 constraint pulling it back, fails here rather than shipping.
 
-The test is G3's absence, not "no emSign": certifi kept three emSign roots it
-judged unaffected (G1, C1, ECC C3), so a fixed bundle still matches ``emSign``
+The test is G3's absence, not "no emSign": certifi 2026.10.19 kept three emSign
+roots it judged unaffected (G1, C1, ECC C3), and 2026.10.23 keeps G1 alone
 (CannObserv/provisioner#77).
 """
 

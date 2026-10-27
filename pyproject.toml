@@ -41,6 +41,9 @@ dev = [
 testpaths = ["tests"]
 addopts = "-v --tb=short -m 'not integration' --cov=src --cov-report=term-missing"
 asyncio_mode = "auto"
+# One basetemp on disk, and only a failed run's (#68; maintaining-host-disk repo-knobs.md).
+tmp_path_retention_count = 1
+tmp_path_retention_policy = "failed"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 markers = [

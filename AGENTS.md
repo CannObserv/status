@@ -64,6 +64,8 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` â
 
 **What is deployed is checked hourly** (#12): `status-drift.timer` pings `co-status-drift`, `/fail` once live has lagged `origin/main` in code (not docs or tests) for 8 h since the push. **Units ship with their release** (#18): each target's step installs that target's units that differ (`*-dev` are dev's), and a switch back restores them; new units are never enabled. Host configs under `deploy/` are compared after a live deploy, never installed.
 
+**This host's disk** (#68): the cohort's disk GC and headroom sensor (`maintaining-host-disk`; `/etc/cannobserv/disk-gc/`, timers `cannobserv-disk-*`), checking in with this co-status as `co-status` / `co-status-disk-headroom` at 80/75. A full root silences that path, so past it healthchecks.io's checks are the watcher. Provisioner owns the GC; never edit the installed copy.
+
 Setup, routine ops and the cutover: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Environment Variables

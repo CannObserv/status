@@ -1,4 +1,4 @@
 # Work lands on main through a reviewed PR, merged on GitHub (#79, #84).
 # Read by shipping-work, using-git-worktrees and the skills refresh hook
-# (gregoryfoster/skills#342, #560 there). Absent would mean `direct`.
+# (gregoryfoster/skills#342 and gregoryfoster/skills#560). Absent: `direct`.
 pr

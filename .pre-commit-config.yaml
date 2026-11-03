@@ -4,7 +4,7 @@
 # sync, and no network needed to bootstrap a clone.
 #
 # These hooks do not run pytest. CI does (.github/workflows/ci.yml), and so
-# does the ship gate (`pre-ship.sh`, in the shipping-work-python-fastapi skill
+# does the ship gate (`pre-ship.sh`, in the shipping-work skill
 # rather than the repo's scripts/). A green pre-commit proves style, not
 # correctness.
 #

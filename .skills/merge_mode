@@ -1,0 +1,4 @@
+# Work lands on main through a reviewed PR, merged on GitHub (#79, #84).
+# Read by shipping-work and using-git-worktrees after gregoryfoster/skills#342;
+# the 170af367 pin reads nothing here yet. Absent would mean `direct`.
+pr

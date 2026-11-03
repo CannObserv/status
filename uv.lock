@@ -181,7 +181,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0,<0.163" },
     { name = "httpx", specifier = ">=0.28.0,<0.29" },
     { name = "notifier-client", git = "https://github.com/CannObserv/notifier.git?subdirectory=clients%2Fpython&tag=v0.3.2" },
-    { name = "pydantic", specifier = ">=2.13.4,<3" },
+    { name = "pydantic", specifier = ">=2.14.2,<3" },
     { name = "python-json-logger", specifier = ">=4.0.0,<5" },
     { name = "python-ulid", specifier = ">=4.0.1,<5" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.1,<3" },

@@ -115,7 +115,7 @@ Dangling symlinks (fresh clone, new worktree): `bash .skills/doctor.sh`.
 ```
 Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `notifier#N` in code and docs (`CannObserv/notifier#N` in GitHub text, where it links).
 
-**Merging:** work lands on `main` through a PR merged on GitHub (`.skills/merge_mode` = `pr`), never a local merge and push. The pinned `shipping-work` (Steps 2.5, 3) and `using-git-worktrees` Phase 4 still describe a local merge: read it as push the branch, open a PR.
+**Merging:** work lands on `main` through a PR merged on GitHub (`.skills/merge_mode` = `pr`), never a local merge and push.
 
 **Date & time:** all UTC. ISO 8601: `YYYY-MM-DDTHH:MM:SS.ffffffZ` (timestamps), `YYYY-MM-DD` (dates).
 

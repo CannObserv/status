@@ -24,6 +24,9 @@ Invariants that `uv sync --locked` cannot express, from notifier#30 and its revi
   matching text — exhaustive is the whole point in this direction — and
   covers `alembic/` and `scripts/` alongside `src/`, because those run
   against production too and fail at run time rather than at test time.
+* **A floor sits at or above every advisory's fix.** The lock is what ships,
+  but a re-lock may take anything the floor permits; `pydantic>=2.13.4`
+  permitted both of 2.14.2's advisories. `SECURITY_FLOORS` names each one.
 
 The bound checks cover the one dependency table in this repo, runtime and dev
 groups alike. The importer check covers `[project.dependencies]` only — dev
@@ -92,6 +95,15 @@ IMPORT_LESS = {
 # floor for our own code is set by whoever pulls it in. An entry here is a
 # deliberate exception, not a shortcut past declaring the dependency.
 UNDECLARED_OK: dict[str, str] = {}
+
+# The lowest version each dependency may declare, and the advisories that set
+# it. Raised when an advisory is fixed upstream, never lowered.
+SECURITY_FLOORS = {
+    canonicalize_name(name): (Version(floor), advisories)
+    for name, (floor, advisories) in {
+        "pydantic": ("2.14.2", "GHSA-qpmf-fgh3-ff25, GHSA-3r8g-cqwr-jr29"),
+    }.items()
+}
 
 
 @cache
@@ -239,6 +251,20 @@ def test_zero_version_dependency_is_capped_inside_its_zero_line(case):
         f"put their breaking changes. Cap at the next minor above the locked "
         f"version instead."
     )
+
+
+@pytest.mark.parametrize("name", sorted(SECURITY_FLOORS), ids=str)
+def test_floor_excludes_every_advisory(name):
+    """A floor below an advisory's fix lets a re-lock take the vulnerable range back."""
+    minimum, advisories = SECURITY_FLOORS[name]
+    found = [req for _, req in every_declared_requirement() if canonicalize_name(req.name) == name]
+    assert found, f"SECURITY_FLOORS names {name}, which pyproject.toml no longer declares."
+    for requirement in found:
+        floors = versions_for(requirement, FLOOR_OPERATORS)
+        assert floors and min(floors) >= minimum, (
+            f"{requirement} permits versions below {minimum}, which fixes "
+            f"{advisories}. Raise the floor to >={minimum}."
+        )
 
 
 @pytest.mark.parametrize(

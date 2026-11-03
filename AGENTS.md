@@ -99,10 +99,10 @@ uv run pre-commit install                     # once per clone
 
 Vendored as submodules under `skills-vendor/` (read-only; change upstream). Each skill is a symlink in `skills/` (agentskills.io), re-linked from `.claude/skills/` (Claude Code); a committed directory in `skills/` overrides the vendored copy in both. None overridden yet. Procedure: the `managing-skills` skill.
 
-**Kept fresh by managing-skills' `SessionStart` hook** (`.claude/hooks/skills-submodule-update.sh`, #86): once per UTC day, on `main`, it proposes any vendor bump as one PR from `skills/submodule-refresh` (`pr` mode; never pushes `main`). With no git credential or `gh` login it logs one stderr line and changes nothing. Log: the main checkout's `.git/skills-update.log`.
-
 - **`gregoryfoster/skills`** (`skills-vendor/gregoryfoster-skills/`): `adopting-dependabot`, `coordinating-epics`, `curating-context`, `enforcing-architecture`, `init-socraticode`, `maintaining-host-disk`, `managing-skills`, `orchestrating-issue-backlog`, `patching-hosts`, `reviewing-architecture`, `reviewing-code-python-fastapi`, `shipping-work`, `using-git-worktrees`, `using-mayfly-chat`, `writing-plans`.
 - **`obra/superpowers`** (`skills-vendor/obra-superpowers/`): `brainstorming`, `dispatching-parallel-agents`, `subagent-driven-development`, `systematic-debugging`, `test-driven-development`, `verification-before-completion`, `writing-skills`. Its `writing-plans` and `using-git-worktrees` are not linked; gregoryfoster's hold those names.
+
+**Kept fresh by managing-skills' `SessionStart` hook** (`.claude/hooks/skills-submodule-update.sh`, #86): once per UTC day, on `main`, it proposes any vendor bump as one PR from `skills/submodule-refresh` (`pr` mode; never pushes `main`). With no git credential or `gh` login it logs one stderr line and changes nothing. Log: the main checkout's `.git/skills-update.log`.
 
 **Specs in `docs/specs/`, plans in `docs/plans/`**, never `docs/superpowers/`. A spec (`YYYY-MM-DD-<topic>-design.md`, from `brainstorming`) is the design: what, why, the decisions. A plan (`YYYY-MM-DD-<topic>.md`, from `writing-plans`) is how one piece of a spec gets built: phases, steps, tests; it links its spec. This is the stated preference `brainstorming` defers to, which is why it is not overridden.
 

@@ -146,3 +146,27 @@ Types: feat, fix, refactor, docs, test, chore. Notifier issues are written `noti
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — releases, `deploy.sh`, rollback, the schema check, health checks
 - [docs/specs/](docs/specs/) — the MVP spec; the deploy spec (#9)
 - [docs/plans/](docs/plans/) — the Phases 1–2 plan and later ones
+- [docs/SOCRATICODE.md](docs/SOCRATICODE.md) — semantic search on co-index's shared store: tools, the pin, the one-host rule, memory caps (#76)
+
+<!-- BEGIN socraticode-policy -->
+## Code Exploration Policy
+
+SocratiCode is the preferred semantic-search tool here once indexed (manifest
+`.socraticodecontextartifacts.json`). Its MCP tools are **deferred** — schemas
+load only after the `ToolSearch` prefetch that
+`.claude/hooks/socraticode-reminder.sh` prints each session.
+
+**Negative rule.** Use SocratiCode MCP tools first for semantic questions
+("where is X", "how does Y work", "what depends on Z"). Reach for `grep`/`rg`
+only on exact strings (error messages, log lines, known symbols). Reserve the
+Explore subagent for path-pattern walks (`*.py` under `src/api/routes/`), not
+semantic search.
+
+| Goal | Tool |
+|------|------|
+| Where is X defined / how does Y work / what touches Z | `codebase_search` |
+| Exact string or regex (errors, log lines, known symbols) | `grep` / `rg` |
+| Imports/dependents of a file · blast radius of a change | `codebase_graph_query` / `codebase_impact` |
+
+Full tool table, prefetch hook, per-tool guidance: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md).
+<!-- END socraticode-policy -->

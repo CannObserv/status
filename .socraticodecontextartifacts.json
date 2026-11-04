@@ -1,0 +1,64 @@
+{
+  "artifacts": [
+    {
+      "name": "agent-guidelines",
+      "path": "./AGENTS.md",
+      "description": "Agent working agreements: what co-status owns (dead-man's timers, alerts through notifier's /dispatch, never delivered here), module map, infrastructure and ports, releases and deploy.sh, credentials, the frozen check-in contract, conventions."
+    },
+    {
+      "name": "design-specs",
+      "path": "./docs/specs",
+      "description": "Designs of record: the MVP (decisions D1-D15, the check-in contract, notifier as the only delivery path), releases and deploy (R1-R13), alert faults (#28)."
+    },
+    {
+      "name": "monitors-reference",
+      "path": "./docs/reference/monitors.md",
+      "description": "The dead-man's timer: monitor model, API, what gets sent and when, the owed alert, redelivery, who watches the sweep."
+    },
+    {
+      "name": "deployment",
+      "path": "./docs/DEPLOYMENT.md",
+      "description": "Releases under /srv/status, scripts/deploy.sh, the CI gate, rollback, drift, units and host configs, the schema check, health checks, Node.js from NodeSource."
+    },
+    {
+      "name": "runbook",
+      "path": "./docs/RUNBOOK.md",
+      "description": "First-time setup, routine ops, reading undelivered alerts and notices, healthchecks.io watching, the cutover of a monitor from notifier."
+    },
+    {
+      "name": "socraticode-doc",
+      "path": "./docs/SOCRATICODE.md",
+      "description": "Semantic search reference: tool table, the prefetch hook, per-tool notes, graph health and index scope, plus this repo's pin, link stub, one-host rule and memory caps."
+    },
+    {
+      "name": "implementation-plans",
+      "path": "./docs/plans",
+      "description": "Dated implementation plans, one per issue. History: a later plan or the code supersedes an earlier one."
+    },
+    {
+      "name": "migrations",
+      "path": "./alembic/versions",
+      "description": "Alembic migrations, expand-only: the schema of tenants, api keys, monitors and monitor_events, and each column's history."
+    },
+    {
+      "name": "notifier-checkin-contract",
+      "path": "./tests/fixtures/notifier-checkin-contract.json",
+      "description": "notifier's check-in contract at notifier@2c02dbf, frozen here (D6): request and response of POST /api/v1/monitors/{id}/checkin."
+    },
+    {
+      "name": "deploy-units",
+      "path": "./deploy",
+      "description": "What this VM runs: the API, sweep and drift units (live and dev), memory reservations and OOM policy, earlyoom, needrestart, the NodeSource apt files."
+    },
+    {
+      "name": "ci-workflow",
+      "path": "./.github/workflows/ci.yml",
+      "description": "GitHub Actions: lint, test (CPython 3.12, uv sync --locked, Postgres 16), migrations; the jobs deploy.sh's CI gate requires."
+    },
+    {
+      "name": "project-config",
+      "path": "./pyproject.toml",
+      "description": "Dependency and tool contract: Python >=3.12, bounded specifiers, notifier-client, ruff rules, pytest and coverage config."
+    }
+  ]
+}

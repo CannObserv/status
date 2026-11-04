@@ -92,6 +92,11 @@ sudo systemctl daemon-reload
 # needrestart lists restarts and never performs them (notifier#91).
 sudo install -D -m 644 deploy/needrestart.conf.d/status.conf \
      /etc/needrestart/conf.d/status.conf
+
+# Node.js, agent tooling only (#76; docs/DEPLOYMENT.md § Node.js). Installs
+# deploy/apt/nodesource.sources to /etc/apt/sources.list.d/ and
+# deploy/apt/nodesource.pref to /etc/apt/preferences.d/, after the key's check.
+sudo bash scripts/nodesource.sh install
 ```
 
 **Check before anything depends on it:**
@@ -114,7 +119,7 @@ Reboot once and confirm the node returns with the same identity, tag and bind.
 | Try a pushed branch on :9001 | `scripts/deploy.sh --dev origin/<branch>` |
 | Roll back | `journalctl -t status-deploy -n 20`, then `scripts/deploy.sh <previous build>` |
 | Change a unit | Edit `deploy/`, merge, `scripts/deploy.sh`: it installs the units that differ and reloads; a new unit it names with its `enable --now` ([DEPLOYMENT.md § Units](DEPLOYMENT.md#units)) |
-| Change a host config (sysctl, earlyoom, slices, needrestart) | Edit `deploy/`, merge, then install it by hand as under First-time setup. A live deploy warns while it differs |
+| Change a host config (sysctl, earlyoom, slices, needrestart, NodeSource) | Edit `deploy/`, merge, then install it by hand as under First-time setup. A live deploy warns while it differs |
 | What is running | `readlink /srv/status/live /srv/status/dev`; `build` in `/health` and in every sweep line |
 | Who changed a release or a link by hand? | Root owns them, so any change took sudo (#14): `sudo journalctl _COMM=sudo -o short-iso \| grep -E '/srv/status\|COMMAND=/(usr/)?bin/(ba)?sh$\|COMMAND=/(usr/)?bin/su( \|$)'`. A root shell shows only as a shell, never what it did. Lines that fall within a deploy (`journalctl -t status-deploy`) are the deploy's own ([DEPLOYMENT.md § Who owns a release](DEPLOYMENT.md#who-owns-a-release)) |
 | Is the sweep firing? | `systemctl list-timers 'status-sweep*'` |

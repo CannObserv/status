@@ -66,6 +66,8 @@ Tests reach notifier through the real `notifier-client` intercepted by `respx` โ
 
 **This host's disk** (#68): the cohort's disk GC and headroom sensor (`maintaining-host-disk`; `/etc/cannobserv/disk-gc/`, timers `cannobserv-disk-*`), checking in with this co-status as `co-status` / `co-status-disk-headroom` at 80/75. A full root silences that path, so past it healthchecks.io's checks are the watcher. Provisioner owns the GC; never edit the installed copy.
 
+**Node.js is agent tooling only** (#76): Node 26 LTS from NodeSource, through `scripts/nodesource.sh` (pinned line, fingerprint-checked key). No unit runs it. [DEPLOYMENT.md ยง Node.js](docs/DEPLOYMENT.md#nodejs-agent-tooling-only).
+
 Setup, routine ops and the cutover: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Environment Variables

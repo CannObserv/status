@@ -1,0 +1,24 @@
+# Semantic-index exclusions (#76), layered on SocratiCode's built-in defaults and
+# .gitignore. Pinned by tests/ci/test_socraticode_config.py. Governs the code index and
+# graph only, never the context artifacts (docs/SOCRATICODE.md).
+
+# Vendored gregoryfoster/skills and obra/superpowers. skills/ and .claude/skills/ are
+# symlinks into skills-vendor/ (no overrides), and .skills/ holds the installed
+# doctor.sh. Left in, they outnumber co-status's own files, and notifier's
+# includeLinked search would serve them as status.
+skills-vendor/
+skills/
+.claude/skills/
+.skills/
+
+# Every hook here is a symlink into skills-vendor/: an indexer that follows symlinks
+# would reach the vendored tree through this directory.
+.claude/hooks/
+
+# Worktrees: using-git-worktrees' root and the harness's, both inside this tree.
+.worktrees/
+.claude/worktrees/
+
+# Dated prose. Searchable as the implementation-plans context artifact; out of the
+# code index so a superseded plan cannot outrank the source it describes.
+docs/plans/

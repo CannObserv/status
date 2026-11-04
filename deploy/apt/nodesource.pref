@@ -1,0 +1,14 @@
+Explanation: Installed as /etc/apt/preferences.d/nodesource.pref by scripts/nodesource.sh (#76;
+Explanation: copied from CannObserv/processor, processor#6).
+Explanation: nodejs comes from NodeSource, never universe's 18. Pinned by host because the
+Explanation: repo's Release Origin is aptly's generic ". nodistro". 600: above 500, below 1000.
+Package: nodejs
+Pin: origin deb.nodesource.com
+Pin-Priority: 600
+
+Explanation: Everything else this host serves (nsolid, and whatever it adds) stays below
+Explanation: Ubuntu's 500, so adding the source brings Node and nothing else. The nodejs
+Explanation: entry above wins.
+Package: *
+Pin: origin deb.nodesource.com
+Pin-Priority: 100

@@ -138,7 +138,7 @@ Units are not part of this check: every deploy installs them, so they drift only
 - **A rollback installs the old release's units.** Units always match the build their target runs. Units the old release lacks stay installed: a build from before #12 leaves `status-drift.*` in place, failing `203/EXEC` until live is past it ([RUNBOOK](RUNBOOK.md)).
 - **A hand edit in `/etc/systemd/system/` lasts until the next deploy of its target, whatever that deploy changes.** The deploy compares each unit with its installed copy, not with the previous release, so it replaces the edit and names the unit. An emergency edit belongs in `deploy/` too.
 - **By hand still:** enabling a new unit; `sudo systemctl reenable <unit>` after its `[Install]` section changes; and retiring one (`disable --now`, then remove the file and `daemon-reload`), since a unit gone from `deploy/` stays installed.
-- **Host configs are compared, never installed.** Sysctl, earlyoom, the slice and Postgres drop-ins and needrestart change rarely, and installing one means `sysctl -p`, an earlyoom restart or a slice reload. After a live deploy, each one under `deploy/` that differs from its installed copy, or is missing, is a warning naming both paths; install it as the [RUNBOOK](RUNBOOK.md) First-time setup does. `HOST_CONFIGS` in `deploy.sh` maps each to its path, and `test_deploy.py` holds every file under `deploy/` to being a unit or one of them.
+- **Host configs are compared, never installed.** Sysctl, earlyoom, the slice and Postgres drop-ins, needrestart and the NodeSource apt files ([§ Node.js](#nodejs-agent-tooling-only)) change rarely, and installing one means `sysctl -p`, an earlyoom restart or a slice reload. After a live deploy, each one under `deploy/` that differs from its installed copy, or is missing, is a warning naming both paths; install it as the [RUNBOOK](RUNBOOK.md) First-time setup does. `HOST_CONFIGS` in `deploy.sh` maps each to its path, and `test_deploy.py` holds every file under `deploy/` to being a unit or one of them.
 
 ## The schema check
 
@@ -192,3 +192,32 @@ curl http://status:9000/health                   # any tailnet node, this VM too
 The sweep logs `build` in every `monitor sweep complete` line.
 
 **The production sweep asks `http://status:9000/ready` after every pass** and pings healthchecks.io's `co-status-api` with the answer (#13, [monitors.md § Who watches co-status](reference/monitors.md#who-watches-co-status)). So `journalctl -u status` has a `/ready` line every minute.
+
+## Node.js (agent tooling only)
+
+Node 26 LTS from NodeSource's apt repo, for SocratiCode (`npx`; [SOCRATICODE.md](SOCRATICODE.md)) and `using-mayfly-chat`. No unit runs it. The method is CannObserv/processor's (processor#6), copied with its test: `scripts/nodesource.sh` here, because `deploy/` holds only units and host configs. Line 26 was the operator's call on 2026-11-04 (#76): 26 is LTS since 2026-10-28, and processor still runs 24. Node 26 crashes SocratiCode older than 1.13, so check init-socraticode's preflight before pinning back past that.
+
+```bash
+sudo bash scripts/nodesource.sh install   # key, source, pin, nodejs; ends with check
+bash scripts/nodesource.sh check          # exit 0 in sync (a pending update is a note, not drift); 3, naming each drift
+```
+
+| Installed | From | Why |
+|---|---|---|
+| `/etc/apt/keyrings/nodesource.gpg` | `https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key`, refused unless its fingerprint is `6F71 F525 2828 41EE DAF8 51B4 2F59 B5F9 9B1B E0B4` | `Signed-By:` binds the key to this one source |
+| `/etc/apt/sources.list.d/nodesource.sources` | [deploy/apt/nodesource.sources](../deploy/apt/nodesource.sources) | `node_26.x`: the major line is pinned |
+| `/etc/apt/preferences.d/nodesource.pref` | [deploy/apt/nodesource.pref](../deploy/apt/nodesource.pref) | `nodejs` from NodeSource at 600: above universe's 18 (500), never a downgrade. Everything else the host serves at 100 |
+
+The two apt files are host configs: a live deploy warns when they differ from the installed copies ([§ Units](#units)). `node` is the package's `/usr/bin/node`, so it is on every PATH, hooks and VS Code sessions included. It replaced Ubuntu's `nodejs` 18 and its `node-*` libraries, none of which anything here used.
+
+**Patching.** Nothing on this host updates Node on its own: `apt-daily{,-upgrade}.timer` and `unattended-upgrades` are masked. `check` names a pending release as a note. NodeSource ships its security fixes in its own repo, never `noble-security`. Take one with `sudo bash scripts/nodesource.sh install`, which refreshes the lists first, installs at adj 0 with needrestart only listing, and ends with `check`.
+
+**Moving the major line:** in one commit, edit `node_<N>.x` in `deploy/apt/nodesource.sources`, `EXPECTED_MAJOR` in `tests/deploy/test_nodesource.py`, this section's "Node <N> LTS" and its table row, and AGENTS.md's Node line. The test fails until all of them agree. Then run `sudo bash scripts/nodesource.sh install`.
+
+**Removing it:**
+
+```bash
+sudo apt-get purge nodejs
+sudo rm /etc/apt/keyrings/nodesource.gpg /etc/apt/sources.list.d/nodesource.sources /etc/apt/preferences.d/nodesource.pref
+sudo apt-get update
+```

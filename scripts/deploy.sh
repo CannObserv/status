@@ -32,7 +32,7 @@
 #      stays (R7).
 #
 # After a live deploy, the host configs under deploy/ (sysctl, earlyoom, the
-# slice drop-ins, needrestart) are compared with their installed copies; a
+# slice drop-ins, needrestart, the NodeSource apt files) are compared with their installed copies; a
 # difference is a warning, never installed (#18).
 #
 # Runs as exedev, the units' user, and builds as exedev. Root owns the deploy
@@ -71,6 +71,8 @@ HOST_CONFIGS=(
   "system.slice.d/10-memory-protection.conf=systemd/system/system.slice.d/10-memory-protection.conf"
   "system-postgresql.slice.d/10-memory-protection.conf=systemd/system/system-postgresql.slice.d/10-memory-protection.conf"
   "postgresql@16-main.service.d/10-memory.conf=systemd/system/postgresql@16-main.service.d/10-memory.conf"
+  "apt/nodesource.sources=apt/sources.list.d/nodesource.sources"
+  "apt/nodesource.pref=apt/preferences.d/nodesource.pref"
 )
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

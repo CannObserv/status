@@ -140,6 +140,18 @@ def test_hook_exports_the_token_exactly_and_never_prints_it(tmp_path: Path) -> N
     assert not (project / "pwned").exists()
 
 
+def test_an_env_file_the_hook_creates_is_private(tmp_path: Path) -> None:
+    """CR 1: the token's copy is no more readable than ``.env`` (600), whatever the
+    caller's umask."""
+    project = _project(tmp_path, "GH_TOKEN=t\n")
+    old = os.umask(0o022)
+    try:
+        _, target = _hook(project, tmp_path)
+    finally:
+        os.umask(old)
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
 def test_hook_reads_the_primary_checkouts_env_from_a_worktree(tmp_path: Path) -> None:
     """``.env`` is git-ignored, so a linked worktree has none of its own."""
     project = _project(tmp_path, "GH_TOKEN=primary\n")

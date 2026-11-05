@@ -81,6 +81,8 @@ Units read `/etc/status/` only: live `.env`, dev `dev.env` (`DEV_DATABASE_URL`).
 
 Source them with `. scripts/load_env.sh`; never word-split through `xargs`.
 
+`gh` needs no loading: `.claude/hooks/gh-env.sh` (SessionStart) exports `.env`'s `GH_TOKEN` to the session's Bash calls, read as data (#92). `GH_TOKEN_<REPO>` stay per call.
+
 ## Common Commands
 
 ```bash
@@ -104,7 +106,7 @@ Vendored as submodules under `skills-vendor/` (read-only; change upstream). Each
 - **`gregoryfoster/skills`** (`skills-vendor/gregoryfoster-skills/`): `adopting-dependabot`, `coordinating-epics`, `curating-context`, `enforcing-architecture`, `init-socraticode`, `maintaining-host-disk`, `managing-skills`, `orchestrating-issue-backlog`, `patching-hosts`, `reviewing-architecture`, `reviewing-code-python-fastapi`, `shipping-work`, `using-git-worktrees`, `using-mayfly-chat`, `writing-plans`.
 - **`obra/superpowers`** (`skills-vendor/obra-superpowers/`): `brainstorming`, `dispatching-parallel-agents`, `subagent-driven-development`, `systematic-debugging`, `test-driven-development`, `verification-before-completion`, `writing-skills`. Its `writing-plans` and `using-git-worktrees` are not linked; gregoryfoster's hold those names.
 
-**Kept fresh by managing-skills' `SessionStart` hook** (`.claude/hooks/skills-submodule-update.sh`, #86): once per UTC day, on `main`, it proposes a bump of every submodule (`obra-superpowers` too; unpinned) as one PR from `skills/submodule-refresh` (`pr` mode; never pushes `main`). Every session, on any branch, it also reinstalls `.skills/doctor.sh` from the vendor. With no git credential or `gh` login it logs one stderr line and changes nothing. Log: the main checkout's `.git/skills-update.log`.
+**Kept fresh by managing-skills' `SessionStart` hook** (`.claude/hooks/skills-submodule-update.sh`, #86): once per UTC day, on `main`, it proposes a bump of every submodule (`obra-superpowers` too; unpinned) as one PR from `skills/submodule-refresh` (`pr` mode; never pushes `main`). Every session, on any branch, it also reinstalls `.skills/doctor.sh` from the vendor. Its registration hands it `.env`'s `GH_TOKEN` (`scripts/env-value.sh`, read as data, never sourced) and scopes `gh auth git-credential` as git's only helper, so it can push that branch over https and open the PR (#92; local until gregoryfoster/skills#576). Without a token it logs one stderr line and changes nothing. Log: the main checkout's `.git/skills-update.log`.
 
 **Specs in `docs/specs/`, plans in `docs/plans/`**, never `docs/superpowers/`. A spec (`YYYY-MM-DD-<topic>-design.md`, from `brainstorming`) is the design: what, why, the decisions. A plan (`YYYY-MM-DD-<topic>.md`, from `writing-plans`) is how one piece of a spec gets built: phases, steps, tests; it links its spec. This is the stated preference `brainstorming` defers to, which is why it is not overridden.
 

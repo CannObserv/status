@@ -148,7 +148,7 @@ Installed by #76 on 2026-11-04, a fresh install straight onto co-index's shared 
 
 **Linked: `../notifier`**, the repo this one reads (the check-in contract, `/dispatch`). There is no notifier clone here. The link resolves through a one-file stub, `~/notifier/.socraticode.json` = `{"projectId": "notifier"}`, a host step outside the repo. If the stub goes missing, `includeLinked` drops notifier silently, and the daily health check names it.
 
-**Index scope.** `.socraticodeignore` excludes the vendored skill trees, `.claude/hooks/` (every hook is a symlink into `skills-vendor/`), both worktree roots, and `docs/plans/`. Plans are still searchable as the `implementation-plans` artifact; the schema is searchable as `migrations`.
+**Index scope.** `.socraticodeignore` excludes the vendored skill trees, the hooks in `.claude/hooks/` that are symlinks into `skills-vendor/` (by name; `gh-env.sh` is this repo's own and stays in, #92), both worktree roots, and `docs/plans/`. Plans are still searchable as the `implementation-plans` artifact; the schema is searchable as `migrations`.
 
 **Pin: `socraticode@1.16.1`**, the newest version any cohort client wrote with on 2026-11-04. It is set in three places:
 - the driver's pre-install, `~/.socraticode/pin`;

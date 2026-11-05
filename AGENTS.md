@@ -75,7 +75,7 @@ Setup, routine ops and the cutover: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 Two env files, loaded in order by `scripts/load_env.sh` (later values override):
 
 1. **`/etc/status/.env`** — production secrets (`DATABASE_URL`); on the co-status VM only.
-2. **`.env`** (repo root, git-ignored) — `TEST_DATABASE_URL`, `DEV_DATABASE_URL`. Never commit it. For pytest and hand-run servers; no unit reads it.
+2. **`.env`** (repo root, git-ignored) — `TEST_DATABASE_URL`, `DEV_DATABASE_URL`, `GH_TOKEN` (two SessionStart hooks read it, #92). Never commit it. For pytest, hand-run servers and `gh`; no unit reads it.
 
 Units read `/etc/status/` only: live `.env`, dev `dev.env` (`DEV_DATABASE_URL`).
 

@@ -42,5 +42,7 @@ if [ -z "${CLAUDE_ENV_FILE:-}" ]; then
   echo "gh-env: CLAUDE_ENV_FILE is unset, so GH_TOKEN is not exported; per call: $manual"
   exit 0
 fi
+# A file this creates is as private as .env (600); one the harness made keeps its mode.
+umask 077
 printf 'export GH_TOKEN=%q\n' "$token" >>"$CLAUDE_ENV_FILE" ||
   echo "gh-env: could not write CLAUDE_ENV_FILE; per call: $manual"

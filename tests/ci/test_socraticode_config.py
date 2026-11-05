@@ -2,9 +2,9 @@
 
 Mirrors CannObserv/processor's ``tests/test_socraticode_config.py`` (processor#5), itself
 from broker's (broker#17, broker#33), adapted: this repo's env sources, its one linked
-sibling, ``.claude/hooks/`` out of the index, and the skills refresh hook's entry kept
-beside SocratiCode's two. Nothing here reaches the store; the VM-local checks skip loudly
-where their file is absent rather than pass vacuously.
+sibling, the vendored links in ``.claude/hooks/`` out of the index, and the skills
+refresh hook's entry kept beside SocratiCode's two. Nothing here reaches the store; the
+VM-local checks skip loudly where their file is absent rather than pass vacuously.
 """
 
 import json
@@ -81,8 +81,9 @@ VENDORED = {"skills-vendor/", "skills/", ".claude/skills/", ".skills/"}
 #: using-git-worktrees' root and the harness's, both inside this tree.
 NESTED_CHECKOUTS = {".worktrees/", ".claude/worktrees/"}
 
-#: Every hook here is a symlink into ``skills-vendor/``. An indexer that follows
-#: symlinks would reach the vendored tree through this directory.
+#: An indexer that follows symlinks would reach the vendored tree through a hook
+#: link, so each is excluded by name. The directory isn't: ``gh-env.sh`` (#92) is
+#: this repo's own and stays in the index.
 HOOK_LINKS = ".claude/hooks/"
 
 #: Dated prose. It is out of the code index so it can't outrank source, and stays
@@ -267,7 +268,7 @@ def test_the_session_and_driver_pins_agree(client_env: dict[str, str]) -> None:
 def test_the_index_excludes_vendored_skills_nested_checkouts_and_hook_links() -> None:
     """Left in, vendored prose outnumbers this repo's own files, and every sibling's
     ``includeLinked`` search would serve it as status."""
-    assert VENDORED | NESTED_CHECKOUTS | {HOOK_LINKS} <= _index_ignore_entries()
+    assert VENDORED | NESTED_CHECKOUTS <= _index_ignore_entries()
 
 
 def test_every_excluded_skill_is_vendored_or_an_upstream_override() -> None:
@@ -285,11 +286,18 @@ def test_every_excluded_skill_is_vendored_or_an_upstream_override() -> None:
         assert entry.is_symlink() and os.readlink(entry).startswith("../../skills/"), entry
 
 
-def test_every_hook_is_a_vendored_link_so_excluding_the_directory_loses_nothing() -> None:
-    """``.claude/hooks/`` is excluded whole only because nothing in it belongs to this repo."""
+def test_each_vendored_hook_link_is_excluded_by_name_and_own_hooks_are_indexed() -> None:
+    """A link left in serves vendored code as status; excluding ``.claude/hooks/``
+    whole would drop this repo's own hooks out of the index without a word."""
+    ignored = _index_ignore_entries()
+    assert HOOK_LINKS not in ignored, "excludes gh-env.sh (#92) along with the links"
     for entry in sorted(HOOKS_DIR.iterdir()):
-        assert entry.is_symlink(), f"{entry.name} is a file, and would drop out of the index"
-        assert "skills-vendor/" in os.readlink(entry), entry
+        name = f"{HOOK_LINKS}{entry.name}"
+        if entry.is_symlink():
+            assert "skills-vendor/" in os.readlink(entry), entry
+            assert name in ignored, f"{name}: a vendored link the index would follow"
+        else:
+            assert name not in ignored, f"{name}: this repo's own, dropped from the index"
 
 
 def test_dated_prose_left_the_code_index_for_the_context_store() -> None:

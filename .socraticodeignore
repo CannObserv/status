@@ -11,9 +11,12 @@ skills/
 .claude/skills/
 .skills/
 
-# Every hook here is a symlink into skills-vendor/: an indexer that follows symlinks
-# would reach the vendored tree through this directory.
-.claude/hooks/
+# The hooks that are symlinks into skills-vendor/, by name: an indexer that follows
+# symlinks would reach the vendored tree through them. gh-env.sh is co-status's own
+# (#92) and stays in.
+.claude/hooks/skills-submodule-update.sh
+.claude/hooks/socraticode-health.sh
+.claude/hooks/socraticode-reminder.sh
 
 # Worktrees: using-git-worktrees' root and the harness's, both inside this tree.
 .worktrees/

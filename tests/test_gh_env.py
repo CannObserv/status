@@ -2,17 +2,14 @@
 
 Ported from CannObserv/processor#115 (``tests/test_gh_env.py`` at ``9ff80046``), a
 local replica of upstream's planned ``using-github-cli`` (gregoryfoster/skills#334)
-until it ships, then replaced by it. Two consumers:
+until it ships, then replaced by it. Its consumer is the agent's Bash calls, through
+``.claude/hooks/gh-env.sh`` and ``$CLAUDE_ENV_FILE``.
 
-- the agent's Bash calls, through ``.claude/hooks/gh-env.sh`` and ``$CLAUDE_ENV_FILE``;
-- the refresh hook, whose ``merge_mode pr`` path opens its PR with ``gh``. SessionStart
-  hooks run in parallel, so no export reaches it: its registration reads the token
-  itself, through ``scripts/env-value.sh``.
-
-Where status differs from processor: its origin is https, not an SSH deploy key, so
-the refresh hook's ``git push`` of ``skills/submodule-refresh`` needs a credential
-too. The registration scopes ``credential.helper='!gh auth git-credential'`` to the
-hook through ``GIT_CONFIG_COUNT``: the token is read at push time, never stored.
+Not the refresh hook. Its registration once read the token itself and scoped
+``gh auth git-credential`` to it through ``GIT_CONFIG_COUNT``. Since
+gregoryfoster/skills#576 the hook reads ``.env`` as data and hands the token to ``gh``
+and its https push per call, never exported, so the registration is
+``install-refresh.sh``'s own again; the tests below hold it there.
 
 ``.env`` is never executed (``set -a; . .env`` would run it), the token is never
 printed, and the hook always exits 0.
@@ -220,51 +217,58 @@ def test_gh_env_is_registered_once() -> None:
     assert ".claude/hooks/gh-env.sh" in entries[0]["command"]
 
 
-def _run_refresh_registration(
-    tmp_path: Path, env_text: str | None, extra: dict | None = None
-) -> Path:
-    """Run the registered command as the harness does, against a stand-in hook that
-    records the token and the credential helpers its git would use."""
+#: The refresh hook's registration as ``install-refresh.sh`` writes it, with nothing
+#: before ``bash``: the hook reads ``.env``'s ``GH_TOKEN`` itself and hands it to
+#: ``gh`` and the push per call, never exported (gregoryfoster/skills#576). An
+#: exported token reaches the new pointer's ``install-doctor.sh`` before anyone has
+#: reviewed the bump, and a set ``GIT_CONFIG_COUNT`` keeps the hook from adding its
+#: own credential helper.
+REFRESH_COMMAND = 'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh"'
+
+
+def _refresh_entry() -> dict:
     (entry,) = [h for h in _session_start() if REFRESH_HOOK.name in h["command"]]
+    return entry
+
+
+def _run_refresh_registration(tmp_path: Path, env_text: str | None) -> Path:
+    """Run the registered command as the harness does, against a stand-in hook that
+    records the token and the git config its environment carries."""
     project = _project(tmp_path, env_text)
     stand_in = project / REFRESH_HOOK
     stand_in.write_text(
         "#!/usr/bin/env bash\n"
-        'printf %s "$GH_TOKEN" > "$CLAUDE_PROJECT_DIR/seen"\n'
-        'git config --get-all credential.helper > "$CLAUDE_PROJECT_DIR/helpers"\n'
+        'printf %s "${GH_TOKEN-}" > "$CLAUDE_PROJECT_DIR/seen"\n'
+        'printf %s "${GIT_CONFIG_COUNT-}" > "$CLAUDE_PROJECT_DIR/config-count"\n'
+        'git config --get-all credential.helper > "$CLAUDE_PROJECT_DIR/helpers" || true\n'
     )
-    env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
-    env |= HERMETIC_GIT | {"CLAUDE_PROJECT_DIR": str(project)} | (extra or {})
-    subprocess.run(["bash", "-c", entry["command"]], env=env, cwd=project, check=True)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("GH_TOKEN", "GITHUB_TOKEN") and not k.startswith("GIT_CONFIG_")
+    }
+    env |= HERMETIC_GIT | {"CLAUDE_PROJECT_DIR": str(project)}
+    subprocess.run(["bash", "-c", _refresh_entry()["command"]], env=env, cwd=project, check=True)
     return project
 
 
-def test_the_refresh_registration_hands_its_hook_the_token(tmp_path: Path) -> None:
+def test_the_refresh_registration_is_the_installers_own() -> None:
+    """No prefix: re-running ``install-refresh.sh`` changes nothing it owns."""
+    entry = _refresh_entry()
+    assert entry["command"] == REFRESH_COMMAND
+    assert entry["timeout"] == 120
+
+
+def test_the_refresh_registration_exports_no_token_and_no_git_config(tmp_path: Path) -> None:
+    """``.env``'s token stays in ``.env`` for the hook to read; nothing scopes git."""
     project = _run_refresh_registration(tmp_path, f"GH_TOKEN={NASTY}\n")
-    assert (project / "seen").read_text() == NASTY
+    assert (project / "seen").read_text() == ""
+    assert (project / "config-count").read_text() == ""
+    assert (project / "helpers").read_text() == ""
     assert not (project / "pwned").exists()
-
-
-def test_the_refresh_registration_keeps_a_set_token(tmp_path: Path) -> None:
-    project = _run_refresh_registration(tmp_path, "GH_TOKEN=from-file\n", {"GH_TOKEN": "env"})
-    assert (project / "seen").read_text() == "env"
 
 
 def test_the_refresh_hook_still_runs_without_a_token(tmp_path: Path) -> None:
     """It reinstalls the doctor every session, token or not."""
     project = _run_refresh_registration(tmp_path, None)
     assert (project / "seen").read_text() == ""
-
-
-def test_the_refresh_hooks_git_pushes_with_gh_as_its_only_helper(tmp_path: Path) -> None:
-    """https origin: the hook's ``git push`` asks ``gh`` for the token at push time.
-    The empty first value resets any helper configured elsewhere, and nothing is
-    written to a git config file."""
-    project = _run_refresh_registration(tmp_path, "GH_TOKEN=t\n")
-    assert (project / "helpers").read_text().splitlines() == ["", "!gh auth git-credential"]
-    local = subprocess.run(
-        ["git", "-C", str(project), "config", "--local", "--get-all", "credential.helper"],
-        capture_output=True,
-        text=True,
-    )
-    assert local.stdout == ""

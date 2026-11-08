@@ -63,11 +63,57 @@ READY = {
 }
 
 
+#: Tries the probe gets before the ``api_clock`` closes its window.
+TRIES = 3
+
+#: Longer than any test may take: a try that stalls this long was never cut off.
+STALL_SECONDS = 60
+
+
+class ApiClock:
+    """``heartbeat``'s ``asyncio`` under test: the API's window closes on a counted try (#91).
+
+    ``timeout`` is asyncio's own, kept so the test can close it. ``sleep`` counts
+    retries and closes the window in the ``tries``-th, the way a window closes
+    while the probe waits to retry. Nothing depends on how fast the host is, so the
+    production window and retry (20 s, 2 s) stay as they are and are recorded.
+    """
+
+    def __init__(self, tries: int):
+        self.tries = tries
+        self.timeouts: list[float] = []
+        self.sleeps: list[float] = []
+        self._latest: asyncio.Timeout | None = None
+
+    def timeout(self, delay: float) -> asyncio.Timeout:
+        self.timeouts.append(delay)
+        self._latest = asyncio.timeout(delay)
+        return self._latest
+
+    async def sleep(self, delay: float) -> None:
+        self.sleeps.append(delay)
+        if len(self.sleeps) >= self.tries:
+            self.close()
+            # Cancelled here, at once: the wait itself is never served.
+            await asyncio.sleep(delay)
+        await asyncio.sleep(0)
+
+    def close(self) -> None:
+        """Close the window now: the probe's timeout, the latest one entered."""
+        self._latest.reschedule(asyncio.get_running_loop().time())
+
+
 @pytest.fixture
-def api(monkeypatch):
-    """The production API's ``/ready``: ready, until a test says not. A short window."""
-    monkeypatch.setattr(heartbeat, "API_WINDOW_SECONDS", 0.2)
-    monkeypatch.setattr(heartbeat, "API_RETRY_SECONDS", 0.01)
+def api_clock(monkeypatch) -> ApiClock:
+    """The probe's window and retry, run by tries rather than wall time."""
+    clock = ApiClock(TRIES)
+    monkeypatch.setattr(heartbeat, "asyncio", clock)
+    return clock
+
+
+@pytest.fixture
+def api(api_clock):
+    """The production API's ``/ready``: ready, until a test says not."""
     with respx.mock(assert_all_called=False) as mock:
         mock.get(API_READY_URL, name="ready").respond(200, json=READY)
         yield mock
@@ -263,7 +309,21 @@ class TestApiChecked:
         await Heartbeat(KEY).api_checked()
         assert _paths(pings) == [f"/{KEY}/{API_CHECK}/fail"]
         assert pings.calls[0].request.content == body
-        assert api.routes["ready"].call_count > 1
+        assert api.routes["ready"].call_count == TRIES
+
+    async def test_a_slow_host_changes_nothing(self, pings, api):
+        """#91: a starved runner, one try holding the CPU past any short wall-clock
+        window. The tries and the body are the same as on an idle one."""
+
+        def slow_refusal(request):
+            if api.routes["ready"].call_count == 1:
+                time.sleep(0.3)
+            raise httpx.ConnectError("refused")
+
+        api.routes["ready"].mock(side_effect=slow_refusal)
+        await Heartbeat(KEY).api_checked()
+        assert pings.calls[0].request.content == b"ConnectError: refused"
+        assert api.routes["ready"].call_count == TRIES
 
     async def test_a_restart_inside_the_window_is_not_an_outage(self, pings, api):
         """2026-10-01 14:54:10: deploy.sh's forced pass ended 0.2 s before uvicorn listened."""
@@ -274,31 +334,48 @@ class TestApiChecked:
         ]
         await Heartbeat(KEY).api_checked()
         assert _paths(pings) == [f"/{KEY}/{API_CHECK}"]
+        assert api.routes["ready"].call_count == 3
 
-    async def test_a_stalled_api_is_cut_off_at_the_window(self, pings, api):
+    async def test_a_stalled_api_is_cut_off_at_the_window(self, pings, api, api_clock):
         """The window bounds the whole probe, however many tries are still in flight."""
+        answered = []
 
         async def stall(request):
-            await asyncio.sleep(5)
+            api_clock.close()
+            await asyncio.sleep(STALL_SECONDS)
+            answered.append(request)
             return httpx.Response(200, json=READY)
 
         api.routes["ready"].mock(side_effect=stall)
-        started = time.monotonic()
         await Heartbeat(KEY).api_checked()
-        assert time.monotonic() - started < 1
+        assert answered == []
         assert _paths(pings) == [f"/{KEY}/{API_CHECK}/fail"]
         assert pings.calls[0].request.content == b"TimeoutError"
 
-    async def test_a_try_cut_off_by_the_window_reports_the_hang(self, pings, api):
+    async def test_a_try_cut_off_by_the_window_reports_the_hang(self, pings, api, api_clock):
         """Not the try before it: the body describes how the window ended."""
 
+        stalled = []
+
         async def stall(request):
-            await asyncio.sleep(5)
+            # respx records a call when it returns; this one never does.
+            stalled.append(request)
+            api_clock.close()
+            await asyncio.sleep(STALL_SECONDS)
             return httpx.Response(200, json=READY)
 
         api.routes["ready"].side_effect = [httpx.Response(503, json={"db": False}), stall]
         await Heartbeat(KEY).api_checked()
+        assert len(stalled) == 1
         assert pings.calls[0].request.content == b"TimeoutError"
+
+    async def test_the_probe_asks_for_productions_window_and_retry(self, pings, api, api_clock):
+        """#91: the tests close the window by count, so nothing shrinks the window or
+        the retry to fit one. The probe's one bound is the window, entered first."""
+        api.routes["ready"].mock(side_effect=httpx.ConnectError("refused"))
+        await Heartbeat(KEY).api_checked()
+        assert api_clock.timeouts[0] == heartbeat.API_WINDOW_SECONDS
+        assert api_clock.sleeps == [heartbeat.API_RETRY_SECONDS] * TRIES
 
     async def test_not_ready_is_a_journal_warning_too(self, pings, api, caplog):
         api.routes["ready"].respond(503, json={"status": "not_ready", "db": False})

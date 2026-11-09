@@ -1386,6 +1386,91 @@ class TestUnstorableValues:
         assert response.status_code == 422, response.text
 
 
+#: The keys of one error in a 422's ``detail``. pydantic adds ``ctx`` to a
+#: ``value_error`` and a ``literal_error``. Our handler drops ``input`` when a
+#: value was refused for its size or is nested too deep to echo (#33).
+_ECHOED = {"type", "loc", "msg", "input", "ctx"}
+_NOT_ECHOED = _ECHOED - {"input"}
+_NO_CTX = _ECHOED - {"ctx"}
+
+_TOO_LARGE = '{"variables":{"x":"' + "a" * types.MAX_JSON_BYTES + '"}}'
+
+
+class TestTheCheckinsRefusals:
+    """The D6 guard for the check-in's 422s (#90).
+
+    ``tests/api/test_contract.py`` pins the check-in's 202 against notifier's
+    snapshot, but the snapshot holds no 422. This table pins one 422 per input
+    a consumer can send: its status, its ``detail`` shape (each error's keys),
+    its ``loc`` and its ``type``. The comparison is with co-status's own 422s
+    as measured on 2026-11-09 (fastapi 0.162), not with notifier's: notifier
+    at 2c02dbf has no #31 or #33 refusals. A fastapi or pydantic bump that
+    changes any of them fails here. The tests above pin the messages and that
+    nothing is written or sent.
+    """
+
+    @pytest.mark.parametrize(
+        ("body", "loc", "kind", "keys"),
+        [
+            # #31: not JSON, but Python's parser takes them.
+            ('{"variables":{"x":NaN}}', ["body", "variables"], "value_error", _ECHOED),
+            ('{"variables":{"x":Infinity}}', ["body", "variables"], "value_error", _ECHOED),
+            ('{"metadata":{"x":-Infinity}}', ["body", "metadata"], "value_error", _ECHOED),
+            # #33: valid JSON that a sink cannot take.
+            (r'{"variables":{"x":"a\u0000b"}}', ["body", "variables"], "value_error", _ECHOED),
+            (r'{"variables":{"x":"\ud800"}}', ["body", "variables"], "value_error", _ECHOED),
+            (r'{"variables":{"\udc00":1}}', ["body", "variables"], "value_error", _ECHOED),
+            (
+                f'{{"variables":{{"x":{_nested(MAX_DEPTH)}}}}}',
+                ["body", "variables"],
+                "value_error",
+                _ECHOED,
+            ),
+            (
+                f'{{"variables":{{"x":{_nested(3000)}}}}}',
+                ["body", "variables"],
+                "value_error",
+                _NOT_ECHOED,
+            ),
+            (_TOO_LARGE, ["body", "variables"], "value_error", _NOT_ECHOED),
+            # The model's own refusals.
+            ('{"status":"nope"}', ["body", "status"], "literal_error", _ECHOED),
+            # The one accepted difference from notifier (#66, accepted 2026-10-28):
+            # notifier at 2c02dbf says "missing"; fastapi 0.151.0 (#16536) made
+            # ours "model_attributes_type". Same status and loc, nothing valid
+            # changes, and notifier-client always sends an object. Not a D6 break.
+            ("null", ["body"], "model_attributes_type", _NO_CTX),
+        ],
+        ids=[
+            "nan",
+            "infinity",
+            "-infinity",
+            "nul",
+            "surrogate-in-value",
+            "surrogate-in-key",
+            "deeper-than-128",
+            "too-deep-to-echo",
+            "over-1-mib",
+            "bad-status",
+            "null-body",
+        ],
+    )
+    async def test_each_refusal_keeps_its_422(self, api, headers, monitor, body, loc, kind, keys):
+        response = await _post_raw(api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", body)
+        assert response.status_code == 422, response.text
+        assert set(response.json()) == {"detail"}
+        (error,) = response.json()["detail"]
+        assert (set(error), error["loc"], error["type"]) == (keys, loc, kind)
+
+    async def test_an_extra_key_is_no_refusal(self, api, headers, monitor):
+        """Not a 422: notifier's ``CheckinRequest`` allows extra keys, and so does
+        ours. ``extra="forbid"`` here would break D6 for a consumer sending one."""
+        response = await _post_raw(
+            api, headers, f"/api/v1/monitors/{monitor['id']}/checkin", '{"status":"ok","extra":1}'
+        )
+        assert response.status_code == 202, response.text
+
+
 def _unreachable(notifier) -> None:
     notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
 

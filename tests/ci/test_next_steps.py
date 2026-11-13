@@ -58,7 +58,9 @@ def test_code_ships_through_deploy_sh():
 def test_nothing_to_deploy_is_drift_counts():
     """The row defers to ``counts()``, which exists, rather than listing paths."""
     assert callable(drift.counts)
-    row = next(row for row in rows() if "nothing to deploy" in row)
+    matches = [row for row in rows() if "nothing to deploy" in row]
+    assert len(matches) == 1, f"one 'nothing to deploy' row, not {len(matches)}"
+    row = matches[0]
     assert "`src/core/drift.py`" in row and "`counts()`" in row
     for ignored in (*drift._IGNORED_DIRS, *drift._IGNORED_FILES, ".md"):
         assert ignored not in row, f"{ignored} is counts()'s to say"

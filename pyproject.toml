@@ -19,6 +19,15 @@ dependencies = [
     "uvicorn>=0.52.4,<0.55",
 ]
 
+[tool.uv]
+# Security floors on transitive dependencies (#114). A constraint installs
+# nothing; it only bounds what a re-lock may resolve. Each line names its
+# advisory in SECURITY_FLOORS (tests/ci/test_dependencies.py) and carries an
+# upper bound like any declared specifier.
+constraint-dependencies = [
+    "opentelemetry-api>=1.45.2,<2",  # via fastapi
+]
+
 [tool.uv.sources]
 # Pinned to a tag, never a branch (notifier docs/RELEASING.md § Adopting a
 # release). Public repo, so no credential. v0.3.2 has everything co-status

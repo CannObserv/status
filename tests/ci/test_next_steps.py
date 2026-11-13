@@ -59,8 +59,8 @@ def test_nothing_to_deploy_is_drift_counts():
     assert callable(drift.counts)
     row = next(row for row in rows() if "nothing to deploy" in row)
     assert "`src/core/drift.py`" in row and "`counts()`" in row
-    for ignored in (*drift._IGNORED_DIRS, *drift._IGNORED_FILES):
-        assert f"`{ignored}`" not in row, f"{ignored} is counts()'s to say"
+    for ignored in (*drift._IGNORED_DIRS, *drift._IGNORED_FILES, ".md"):
+        assert ignored not in row, f"{ignored} is counts()'s to say"
 
 
 def test_host_configs_are_deploy_sh_list():

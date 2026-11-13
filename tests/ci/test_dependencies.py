@@ -27,6 +27,8 @@ Invariants that `uv sync --locked` cannot express, from notifier#30 and its revi
 * **A floor sits at or above every advisory's fix.** The lock is what ships,
   but a re-lock may take anything the floor permits; `pydantic>=2.13.4`
   permitted both of 2.14.2's advisories. `SECURITY_FLOORS` names each one.
+  A transitive dependency's floor is a `[tool.uv] constraint-dependencies`
+  line, which the bound checks read too (#114).
 
 The bound checks cover the one dependency table in this repo, runtime and dev
 groups alike. The importer check covers `[project.dependencies]` only — dev
@@ -102,6 +104,8 @@ SECURITY_FLOORS = {
     canonicalize_name(name): (Version(floor), advisories)
     for name, (floor, advisories) in {
         "pydantic": ("2.14.2", "GHSA-qpmf-fgh3-ff25, GHSA-3r8g-cqwr-jr29"),
+        # Transitive (via fastapi), so its floor is a [tool.uv] constraint (#114).
+        "opentelemetry-api": ("1.45.2", "GHSA-mf5v-w3w3-f6cg"),
     }.items()
 }
 
@@ -114,11 +118,14 @@ def table(path: Path) -> dict:
 
 
 def declared(path: Path) -> list[Requirement]:
-    """Every requirement a table declares, in any of its three sections.
+    """Every requirement a table declares, in any of its four sections.
 
     `optional-dependencies` is read even though neither table has extras
     today: an enforcement test that passes vacuously on the section someone
-    adds next is not enforcement.
+    adds next is not enforcement. `[tool.uv] constraint-dependencies` is read
+    because that is where a transitive dependency's security floor lives
+    (#114): it installs nothing, but it is a specifier a re-lock obeys, so it
+    answers to the same bound, 0.x and floor checks as a declared one.
     """
     parsed = table(path)
     project = parsed.get("project", {})
@@ -127,6 +134,7 @@ def declared(path: Path) -> list[Requirement]:
         lines.extend(extra)
     for group in parsed.get("dependency-groups", {}).values():
         lines.extend(group)
+    lines.extend(parsed.get("tool", {}).get("uv", {}).get("constraint-dependencies", []))
     return [Requirement(line) for line in lines]
 
 
@@ -258,13 +266,30 @@ def test_floor_excludes_every_advisory(name):
     """A floor below an advisory's fix lets a re-lock take the vulnerable range back."""
     minimum, advisories = SECURITY_FLOORS[name]
     found = [req for _, req in every_declared_requirement() if canonicalize_name(req.name) == name]
-    assert found, f"SECURITY_FLOORS names {name}, which pyproject.toml no longer declares."
+    assert found, (
+        f"SECURITY_FLOORS names {name}, which pyproject.toml no longer declares or constrains."
+    )
     for requirement in found:
         floors = versions_for(requirement, FLOOR_OPERATORS)
         assert floors and min(floors) >= minimum, (
             f"{requirement} permits versions below {minimum}, which fixes "
             f"{advisories}. Raise the floor to >={minimum}."
         )
+
+
+def test_declared_reads_uv_constraints(tmp_path):
+    """A floor on a transitive dependency lives in `[tool.uv] constraint-dependencies`.
+
+    Declaring it as a dependency would fail the importer rule, so the floor,
+    bound and 0.x checks have to see the constraint table or the floor goes
+    unchecked (#114).
+    """
+    path = tmp_path / "pyproject.toml"
+    path.write_text(
+        '[project]\nname = "x"\nversion = "0"\ndependencies = ["a>=1,<2"]\n'
+        '[tool.uv]\nconstraint-dependencies = ["b>=1.2.3,<2"]\n'
+    )
+    assert [str(req) for req in declared(path)] == ["a<2,>=1", "b<2,>=1.2.3"]
 
 
 @pytest.mark.parametrize(

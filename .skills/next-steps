@@ -1,0 +1,11 @@
+# shipping-work's Step 8 rows for co-status (#100). They replace the stack
+# file's table: units run releases (#9), hand-run alembic against production
+# is refused (#15), and units ship with their release (#18). Held by
+# tests/ci/test_next_steps.py. Deploying is a separate, paused step: there is
+# deliberately no .skills/deploy_command.
+Code changed (any path `src/core/drift.py`'s `counts()` counts, migrations and `deploy/` units included): `scripts/deploy.sh`, dev then live, live once the commit's push run on `main` passed every job (`--skip-ci` only in an emergency, logged). Never a hand-run `alembic upgrade` or `systemctl restart`.
+A migration or unit edit not yet merged: rehearse it on dev with `scripts/deploy.sh --dev origin/<branch>`, after pushing the branch.
+New unit under `deploy/`: deploys never enable one; after the deploy, run the `sudo systemctl enable --now <unit>` that `scripts/deploy.sh` prints.
+Host config changed (one of `scripts/deploy.sh`'s `HOST_CONFIGS`): install it by hand as docs/RUNBOOK.md § First-time setup does; the deploy only warns.
+New env var or secret: add it to `/etc/status/.env` (live) and `/etc/status/dev.env` (dev) before the deploy. Keys are systemd credentials, never env vars: notifier `/etc/status/notifier-api{,-dev}.key` (D13), healthchecks.io `/etc/status/hc-ping.key`.
+No changed path counts for `src/core/drift.py`'s `counts()`: nothing to deploy.

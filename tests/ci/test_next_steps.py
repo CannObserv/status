@@ -26,7 +26,8 @@ DEPLOY = REPO_ROOT / "scripts" / "deploy.sh"
 def rows() -> list[str]:
     """The knob's rows, as ``read-next-steps.sh`` parses them."""
     parsed = []
-    for line in KNOB.read_text().splitlines():
+    # Newlines only, as `read -r` splits: read_text() turns \r into \n, splitlines() breaks on \f.
+    for line in KNOB.read_bytes().decode().split("\n"):
         line = line.strip()
         if line and not line.startswith("#"):
             parsed.append(line)

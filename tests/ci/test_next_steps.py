@@ -50,7 +50,7 @@ def test_is_a_regular_file_with_rows():
 
 def test_code_ships_through_deploy_sh():
     """The row that replaces the stack file's migrate-then-restart."""
-    assert any("scripts/deploy.sh" in row and "--dev" not in row for row in rows())
+    assert any("`scripts/deploy.sh`" in row and "Never a hand-run" in row for row in rows())
     assert any("scripts/deploy.sh --dev origin/" in row for row in rows())
 
 

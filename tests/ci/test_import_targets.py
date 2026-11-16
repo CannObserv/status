@@ -27,11 +27,12 @@ KNOB = REPO_ROOT / ".skills" / "import-targets"
 UNITS = REPO_ROOT / "deploy"
 
 LAUNCHER = re.compile(r"^ExecStart=\S*/(scripts/[\w-]+\.sh)\s*$", re.MULTILINE)
-INVOCATION = re.compile(r"\b(?:python|uvicorn)\b")
+PYTHON = r"python[\d.]*"  # python, python3, python3.12
+INVOCATION = re.compile(rf"\b(?:{PYTHON}|uvicorn)\b")
 PATTERNS = (
     re.compile(r"\buvicorn\s+([\w.]+):\w+"),
-    re.compile(r"\bpython\s+-m\s+([\w.]+)"),
-    re.compile(r"\bpython\s+(scripts/\w+)\.py\b"),
+    re.compile(rf"\b{PYTHON}\s+-m\s+([\w.]+)"),
+    re.compile(rf"\b{PYTHON}\s+(scripts/\w+)\.py\b"),
 )
 
 
@@ -107,3 +108,9 @@ def test_reads_every_invocation_on_a_line():
     """Two on one line, ``&&``-chained, are two modules, not the first alone."""
     line = "uv run python -m src.a && exec uv run python -m src.b"
     assert modules_in(line) == {"src.a", "src.b"}
+
+
+def test_reads_a_versioned_interpreter():
+    """``python3`` and ``python3.12`` are Python too, not a line to pass over."""
+    assert modules_in("exec uv run python3.12 -m src.a") == {"src.a"}
+    assert modules_in("uv run python3 scripts/b.py") == {"scripts.b"}

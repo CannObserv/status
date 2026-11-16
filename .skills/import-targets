@@ -1,0 +1,15 @@
+# shipping-work's import check (pre-ship.sh): one importable module per line,
+# each run as `python -c "import <module>"` from the repo root (#109).
+#
+# Every module a unit's launcher hands to Python, and nothing else:
+# tests/ci/test_import_targets.py derives the set from deploy/*.service and
+# fails when this list differs from it.
+
+# serve.sh and dev_server.sh: `uvicorn src.api.main:app`
+src.api.main
+# dev_server.sh and sweep.sh: `python -m`, before the server or the sweep starts
+src.core.db_safety
+src.core.schema_state
+# sweep.sh and drift.sh: `python scripts/<x>.py`, imported as scripts.<x>
+scripts.sweep_monitors
+scripts.check_drift

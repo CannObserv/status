@@ -20,6 +20,7 @@ and an inherited ``DATABASE_URL`` would hide an import-time dependency on it.
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 from tests.ci.test_dependencies import REPO_ROOT
 
@@ -28,6 +29,7 @@ UNITS = REPO_ROOT / "deploy"
 
 EXEC = re.compile(r"^Exec\w*=(.*)$", re.MULTILINE)  # ExecStart=, ExecStartPre=, …
 LAUNCHER = re.compile(r"/(scripts/[\w-]+\.sh)\b")
+HELPER = re.compile(r"\b([\w-]+\.sh)\b")  # by name: launchers run helpers by their own dirname
 PYTHON = r"python[\d.]*"  # python, python3, python3.12
 INVOCATION = re.compile(rf"\b(?:{PYTHON}|uvicorn)\b")
 PATTERNS = (
@@ -57,23 +59,27 @@ def modules_in(line: str) -> set[str]:
     return hits
 
 
-def launched_modules(launcher: str) -> set[str]:
-    """The modules one launcher hands to Python, from its non-comment lines."""
-    modules = set()
-    for line in (REPO_ROOT / launcher).read_text().splitlines():
-        if not line.lstrip().startswith("#"):
-            modules.update(modules_in(line))
-    return modules
+def script_lines(path: Path) -> list[str]:
+    """A shell script's lines, comments dropped."""
+    return [line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")]
 
 
-def launched(units: list[str]) -> tuple[set[str], set[str]]:
-    """The launchers these unit files start, and every module those hand to Python."""
+def launched(units: list[str], root: Path = REPO_ROOT) -> tuple[set[str], set[str]]:
+    """The scripts these unit files start, and every module those hand to Python."""
     found, modules = set(), set()
     for unit in units:
         for command in EXEC.findall(unit):
             found.update(LAUNCHER.findall(command))
             modules.update(modules_in(command))
-    modules.update(*(launched_modules(launcher) for launcher in found))
+    pending = sorted(found)
+    while pending:
+        for line in script_lines(root / pending.pop()):
+            modules.update(modules_in(line))
+            for name in HELPER.findall(line):
+                helper = f"scripts/{name}"
+                if helper not in found and (root / helper).is_file():
+                    found.add(helper)
+                    pending.append(helper)
     return found, modules
 
 
@@ -134,3 +140,15 @@ def test_reads_every_exec_line_of_a_unit():
     found, modules = launched([unit])
     assert found == {"scripts/drift.sh"}
     assert modules == {"src.a", "scripts.check_drift"}
+
+
+def test_follows_the_scripts_a_launcher_runs(tmp_path):
+    """``serve.sh`` runs ``tailnet_bind.sh``: Python a helper starts is a unit's too."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "serve.sh").write_text('HOST="$("$(dirname "$0")/bind.sh")"\nexec uv run x\n')
+    (scripts / "bind.sh").write_text("# python -m src.comment\nuv run python -m src.b\n")
+    unit = "ExecStart=/srv/status/live/scripts/serve.sh\n"
+    found, modules = launched([unit], root=tmp_path)
+    assert found == {"scripts/serve.sh", "scripts/bind.sh"}
+    assert modules == {"src.b"}

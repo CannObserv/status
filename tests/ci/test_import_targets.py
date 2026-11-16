@@ -97,7 +97,13 @@ def test_is_a_regular_file_with_targets():
 def test_names_every_module_a_unit_launches_and_nothing_else():
     """A new entry point can't skip the check, and a retired one can't linger."""
     found, expected = launched(unit_files())
-    assert {"scripts/serve.sh", "scripts/sweep.sh", "scripts/drift.sh"} <= found
+    launchers = {
+        "scripts/serve.sh",
+        "scripts/dev_server.sh",
+        "scripts/sweep.sh",
+        "scripts/drift.sh",
+    }
+    assert launchers <= found
     assert sorted(targets()) == sorted(expected)
 
 

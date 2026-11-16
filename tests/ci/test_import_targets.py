@@ -7,10 +7,13 @@ names what to import instead, one module per line, parsed by
 whitespace trimmed). The reader is a submodule CI never checks out, so these
 tests hold the file itself.
 
-The rule for what it names: every module a unit's launcher hands to Python,
+The rule for what it names: every module a unit hands to Python,
 ``uvicorn <module>:app``, ``python -m <module>`` and ``python scripts/<x>.py``
-(as ``scripts.<x>``). A script, not only the ``src`` module behind it, because a
-script's own imports can break while every ``src`` module still imports.
+(as ``scripts.<x>``). Read from each ``Exec*=`` line under ``deploy/``, each
+``scripts/*.sh`` one starts and each script those name in turn; an invocation
+in none of those shapes fails the test rather than going unread. A script, not
+only the ``src`` module behind it, because a script's own imports can break
+while every ``src`` module still imports.
 
 Each target is imported in a fresh interpreter with a scrubbed environment: an
 in-process import would pass on any module the suite had already imported,

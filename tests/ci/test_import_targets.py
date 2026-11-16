@@ -104,7 +104,11 @@ def test_names_every_module_a_unit_launches_and_nothing_else():
         "scripts/drift.sh",
     }
     assert launchers <= found
-    assert sorted(targets()) == sorted(expected)
+    missing, extra = sorted(expected - set(targets())), sorted(set(targets()) - expected)
+    assert not (missing or extra), (
+        f".skills/import-targets differs from what the units launch: add {missing}, "
+        f"drop {extra}. A launcher change goes in the knob too, for pre-ship's import check."
+    )
 
 
 def test_each_target_imports_in_a_fresh_scrubbed_interpreter():

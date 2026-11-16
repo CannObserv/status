@@ -26,7 +26,8 @@ from tests.ci.test_dependencies import REPO_ROOT
 KNOB = REPO_ROOT / ".skills" / "import-targets"
 UNITS = REPO_ROOT / "deploy"
 
-LAUNCHER = re.compile(r"^ExecStart=\S*/(scripts/[\w-]+\.sh)\s*$", re.MULTILINE)
+EXEC = re.compile(r"^Exec\w*=(.*)$", re.MULTILINE)  # ExecStart=, ExecStartPre=, …
+LAUNCHER = re.compile(r"/(scripts/[\w-]+\.sh)\b")
 PYTHON = r"python[\d.]*"  # python, python3, python3.12
 INVOCATION = re.compile(rf"\b(?:{PYTHON}|uvicorn)\b")
 PATTERNS = (
@@ -47,14 +48,6 @@ def targets() -> list[str]:
     return parsed
 
 
-def launchers() -> set[str]:
-    """Each ``scripts/*.sh`` a unit under ``deploy/`` starts."""
-    found = set()
-    for unit in sorted(UNITS.glob("*.service")):
-        found.update(LAUNCHER.findall(unit.read_text()))
-    return found
-
-
 def modules_in(line: str) -> set[str]:
     """The modules one shell line hands to Python; fails on an invocation it can't read."""
     if not INVOCATION.search(line):
@@ -73,6 +66,22 @@ def launched_modules(launcher: str) -> set[str]:
     return modules
 
 
+def launched(units: list[str]) -> tuple[set[str], set[str]]:
+    """The launchers these unit files start, and every module those hand to Python."""
+    found, modules = set(), set()
+    for unit in units:
+        for command in EXEC.findall(unit):
+            found.update(LAUNCHER.findall(command))
+            modules.update(modules_in(command))
+    modules.update(*(launched_modules(launcher) for launcher in found))
+    return found, modules
+
+
+def unit_files() -> list[str]:
+    """Every unit under ``deploy/`` that runs something."""
+    return [unit.read_text() for unit in sorted(UNITS.glob("*.service"))]
+
+
 def test_is_a_regular_file_with_targets():
     """No file, or none after comments, and pre-ship falls back to its guess and skips."""
     assert KNOB.is_file() and not KNOB.is_symlink()
@@ -81,9 +90,8 @@ def test_is_a_regular_file_with_targets():
 
 def test_names_every_module_a_unit_launches_and_nothing_else():
     """A new entry point can't skip the check, and a retired one can't linger."""
-    found = launchers()
+    found, expected = launched(unit_files())
     assert {"scripts/serve.sh", "scripts/sweep.sh", "scripts/drift.sh"} <= found
-    expected = set().union(*(launched_modules(launcher) for launcher in found))
     assert sorted(targets()) == sorted(expected)
 
 
@@ -114,3 +122,15 @@ def test_reads_a_versioned_interpreter():
     """``python3`` and ``python3.12`` are Python too, not a line to pass over."""
     assert modules_in("exec uv run python3.12 -m src.a") == {"src.a"}
     assert modules_in("uv run python3 scripts/b.py") == {"scripts.b"}
+
+
+def test_reads_every_exec_line_of_a_unit():
+    """Arguments after a launcher, and Python a unit runs itself, ``ExecStartPre=`` too."""
+    unit = (
+        "[Service]\n"
+        "ExecStartPre=/srv/status/live/.venv/bin/python -m src.a\n"
+        "ExecStart=/srv/status/live/scripts/drift.sh --once\n"
+    )
+    found, modules = launched([unit])
+    assert found == {"scripts/drift.sh"}
+    assert modules == {"src.a", "scripts.check_drift"}

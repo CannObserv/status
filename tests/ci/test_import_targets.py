@@ -54,15 +54,21 @@ def launchers() -> set[str]:
     return found
 
 
+def modules_in(line: str) -> set[str]:
+    """The modules one shell line hands to Python; fails on an invocation it can't read."""
+    if not INVOCATION.search(line):
+        return set()
+    hits = {m.group(1).replace("/", ".") for p in PATTERNS for m in p.finditer(line)}
+    assert hits, f"a Python invocation this test can't read: {line.strip()}"
+    return hits
+
+
 def launched_modules(launcher: str) -> set[str]:
     """The modules one launcher hands to Python, from its non-comment lines."""
     modules = set()
     for line in (REPO_ROOT / launcher).read_text().splitlines():
-        if line.lstrip().startswith("#") or not INVOCATION.search(line):
-            continue
-        hits = [m.group(1) for p in PATTERNS for m in [p.search(line)] if m]
-        assert hits, f"{launcher}: a Python invocation this test can't read: {line.strip()}"
-        modules.update(hit.replace("/", ".") for hit in hits)
+        if not line.lstrip().startswith("#"):
+            modules.update(modules_in(line))
     return modules
 
 
@@ -95,3 +101,9 @@ def test_each_target_imports_in_a_fresh_scrubbed_interpreter():
         if result.returncode != 0:
             failures[target] = result.stderr.strip().splitlines()[-1:]
     assert not failures
+
+
+def test_reads_every_invocation_on_a_line():
+    """Two on one line, ``&&``-chained, are two modules, not the first alone."""
+    line = "uv run python -m src.a && exec uv run python -m src.b"
+    assert modules_in(line) == {"src.a", "src.b"}

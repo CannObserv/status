@@ -11,7 +11,7 @@ import json
 import logging
 import time
 
-import httpx
+import httpx2
 import pytest
 import respx
 
@@ -38,8 +38,8 @@ DEV_DB = "postgresql+asyncpg://status@localhost/status_dev"
 
 @pytest.fixture(autouse=True)
 def _restore_httpx_filters():
-    """Each Heartbeat adds a filter to the process-wide httpx logger; take them back."""
-    httpx_logger = logging.getLogger("httpx")
+    """Each Heartbeat adds a filter to the process-wide httpx2 logger; take them back."""
+    httpx_logger = logging.getLogger("httpx2")
     saved = list(httpx_logger.filters)
     yield
     httpx_logger.filters[:] = saved
@@ -290,15 +290,15 @@ class TestApiChecked:
         [
             # What httpx says here with nothing listening, and with no MagicDNS.
             (
-                httpx.ConnectError("All connection attempts failed"),
+                httpx2.ConnectError("All connection attempts failed"),
                 b"ConnectError: All connection attempts failed",
             ),
             (
-                httpx.ConnectError("[Errno -2] Name or service not known"),
+                httpx2.ConnectError("[Errno -2] Name or service not known"),
                 b"ConnectError: [Errno -2] Name or service not known",
             ),
             # No message to add: the type alone.
-            (httpx.ConnectTimeout(""), b"ConnectTimeout"),
+            (httpx2.ConnectTimeout(""), b"ConnectTimeout"),
         ],
         ids=["refused", "unresolved", "silent"],
     )
@@ -318,7 +318,7 @@ class TestApiChecked:
         def slow_refusal(request):
             if api.routes["ready"].call_count == 1:
                 time.sleep(0.3)
-            raise httpx.ConnectError("refused")
+            raise httpx2.ConnectError("refused")
 
         api.routes["ready"].mock(side_effect=slow_refusal)
         await Heartbeat(KEY).api_checked()
@@ -328,9 +328,9 @@ class TestApiChecked:
     async def test_a_restart_inside_the_window_is_not_an_outage(self, pings, api):
         """2026-10-01 14:54:10: deploy.sh's forced pass ended 0.2 s before uvicorn listened."""
         api.routes["ready"].side_effect = [
-            httpx.ConnectError("refused"),
-            httpx.ConnectError("refused"),
-            httpx.Response(200, json=READY),
+            httpx2.ConnectError("refused"),
+            httpx2.ConnectError("refused"),
+            httpx2.Response(200, json=READY),
         ]
         await Heartbeat(KEY).api_checked()
         assert _paths(pings) == [f"/{KEY}/{API_CHECK}"]
@@ -344,7 +344,7 @@ class TestApiChecked:
             api_clock.close()
             await asyncio.sleep(STALL_SECONDS)
             answered.append(request)
-            return httpx.Response(200, json=READY)
+            return httpx2.Response(200, json=READY)
 
         api.routes["ready"].mock(side_effect=stall)
         await Heartbeat(KEY).api_checked()
@@ -362,9 +362,9 @@ class TestApiChecked:
             stalled.append(request)
             api_clock.close()
             await asyncio.sleep(STALL_SECONDS)
-            return httpx.Response(200, json=READY)
+            return httpx2.Response(200, json=READY)
 
-        api.routes["ready"].side_effect = [httpx.Response(503, json={"db": False}), stall]
+        api.routes["ready"].side_effect = [httpx2.Response(503, json={"db": False}), stall]
         await Heartbeat(KEY).api_checked()
         assert len(stalled) == 1
         assert pings.calls[0].request.content == b"TimeoutError"
@@ -372,7 +372,7 @@ class TestApiChecked:
     async def test_the_probe_asks_for_productions_window_and_retry(self, pings, api, api_clock):
         """#91: the tests close the window by count, so nothing shrinks the window or
         the retry to fit one. The probe's one bound is the window, entered first."""
-        api.routes["ready"].mock(side_effect=httpx.ConnectError("refused"))
+        api.routes["ready"].mock(side_effect=httpx2.ConnectError("refused"))
         await Heartbeat(KEY).api_checked()
         assert api_clock.timeouts[0] == heartbeat.API_WINDOW_SECONDS
         assert api_clock.sleeps == [heartbeat.API_RETRY_SECONDS] * TRIES
@@ -385,13 +385,13 @@ class TestApiChecked:
 
     async def test_a_failed_ping_never_raises(self, pings, api):
         pings.routes.clear()
-        pings.post(url__regex=r".*").mock(side_effect=httpx.ConnectError("refused"))
+        pings.post(url__regex=r".*").mock(side_effect=httpx2.ConnectError("refused"))
         await Heartbeat(KEY).api_checked()
 
 
 class TestAPingNeverFailsTheSweep:
     @pytest.mark.parametrize(
-        "error", [httpx.ConnectError("refused"), httpx.ReadTimeout("slow")], ids=repr
+        "error", [httpx2.ConnectError("refused"), httpx2.ReadTimeout("slow")], ids=repr
     )
     async def test_a_network_error_is_logged_and_swallowed(self, pings, caplog, error):
         pings.routes.clear()
@@ -406,7 +406,7 @@ class TestAPingNeverFailsTheSweep:
 
         async def stall(request):
             await asyncio.sleep(5)
-            return httpx.Response(200)
+            return httpx2.Response(200)
 
         pings.routes.clear()
         pings.post(url__regex=r".*").mock(side_effect=stall)
@@ -424,17 +424,17 @@ class TestAPingNeverFailsTheSweep:
             await Heartbeat(KEY).sweep_failed(RuntimeError())
         assert any("404" in r.message for r in caplog.records)
 
-    async def test_the_key_never_reaches_httpxs_request_log(self, pings, caplog):
-        """httpx logs every request's URL at INFO, and the URL holds the key."""
+    async def test_the_key_never_reaches_the_request_log(self, pings, caplog):
+        """httpx2 logs every request's URL at INFO, and the URL holds the key."""
         with caplog.at_level("DEBUG"):
             await Heartbeat(KEY).sweep_completed(_report())
-        assert any(r.name == "httpx" for r in caplog.records)
+        assert any(r.name == "httpx2" for r in caplog.records)
         assert all(KEY not in r.getMessage() for r in caplog.records)
 
     async def test_the_key_never_reaches_an_error_log_line(self, pings, caplog):
         pings.routes.clear()
         pings.post(url__regex=r".*").mock(
-            side_effect=httpx.ConnectError(f"refused {PING_BASE_URL}/{KEY}/x")
+            side_effect=httpx2.ConnectError(f"refused {PING_BASE_URL}/{KEY}/x")
         )
         with caplog.at_level("DEBUG"):
             await Heartbeat(KEY).sweep_completed(_report())
@@ -455,15 +455,15 @@ class TestPing:
         assert _paths(pings) == [f"/{KEY}/some-check{suffix}"]
         assert pings.calls[0].request.content == b"body"
 
-    async def test_the_key_never_reaches_httpxs_request_log(self, pings, caplog):
+    async def test_the_key_never_reaches_the_request_log(self, pings, caplog):
         with caplog.at_level("DEBUG"):
             await ping(KEY, "some-check", Signal.UP, "body")
-        assert any(r.name == "httpx" for r in caplog.records)
+        assert any(r.name == "httpx2" for r in caplog.records)
         assert all(KEY not in r.getMessage() for r in caplog.records)
 
     async def test_never_raises(self, pings, caplog):
         pings.routes.clear()
-        pings.post(url__regex=r".*").mock(side_effect=httpx.ConnectError("refused"))
+        pings.post(url__regex=r".*").mock(side_effect=httpx2.ConnectError("refused"))
         with caplog.at_level("WARNING"):
             await ping(KEY, "some-check", Signal.FAIL, "body")
         assert any("some-check" in r.message for r in caplog.records)
@@ -497,5 +497,5 @@ class TestHeartbeatFromEnvironment:
 def test_the_redaction_is_installed_once_per_key():
     Heartbeat(KEY)
     Heartbeat(KEY)
-    httpx_filters = logging.getLogger("httpx").filters
+    httpx_filters = logging.getLogger("httpx2").filters
     assert sum(getattr(f, "key", None) == KEY for f in httpx_filters) == 1

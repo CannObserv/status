@@ -104,6 +104,8 @@ SECURITY_FLOORS = {
     canonicalize_name(name): (Version(floor), advisories)
     for name, (floor, advisories) in {
         "pydantic": ("2.14.2", "GHSA-qpmf-fgh3-ff25, GHSA-3r8g-cqwr-jr29"),
+        # Dropped emSign ECC Root CA - G3 (#58); tests/ci/test_trust_store.py.
+        "certifi": ("2026.10.19", "PYSEC-2026-4320"),
         # Transitive (via fastapi), so its floor is a [tool.uv] constraint (#114).
         "opentelemetry-api": ("1.45.2", "GHSA-mf5v-w3w3-f6cg"),
     }.items()

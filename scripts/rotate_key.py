@@ -68,7 +68,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 
-import httpx
+import httpx2
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.api_keys import (
@@ -83,6 +83,7 @@ from src.core.api_keys import (
 )
 from src.core.database import get_session_factory
 from src.core.logging import configure_script_logging
+from src.core.tls import trusted
 from src.core.utils import format_utc_iso
 
 #: An authenticated endpoint that costs a tenant with no data nothing to
@@ -363,7 +364,7 @@ def verify(
     *,
     new_raw: str | None = None,
     old_raw: str | None = None,
-    client: httpx.Client | None = None,
+    client: httpx2.Client | None = None,
 ) -> list[Check]:
     """Probe *base_url* and report what the keys actually do there.
 
@@ -383,7 +384,7 @@ def verify(
     name rather than being quietly worth less than it looks.
     """
     owned = client is None
-    client = client or httpx.Client(timeout=VERIFY_TIMEOUT_SECONDS)
+    client = client or httpx2.Client(timeout=VERIFY_TIMEOUT_SECONDS, verify=trusted())
     checks: list[Check] = []
     try:
         if new_raw is not None:
@@ -397,11 +398,13 @@ def verify(
     return checks
 
 
-def _probe(client: httpx.Client, base_url: str, raw_key: str, name: str, *, expected: int) -> Check:
+def _probe(
+    client: httpx2.Client, base_url: str, raw_key: str, name: str, *, expected: int
+) -> Check:
     url = base_url.rstrip("/") + VERIFY_PATH
     try:
         response = client.get(url, headers={"X-API-Key": raw_key})
-    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+    except (httpx2.HTTPError, httpx2.InvalidURL) as exc:
         # InvalidURL is deliberately listed: it does *not* subclass HTTPError,
         # so a fumbled base URL — `http://[::1` and this host's tailnet
         # address has an IPv6 form — escaped as a traceback, after the

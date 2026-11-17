@@ -25,11 +25,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-import httpx
+import httpx2
 
 from src.core.build import UNSTAMPED
 from src.core.heartbeat import Signal
 from src.core.logging import get_logger
+from src.core.tls import trusted
 from src.core.utils import format_utc_iso
 
 logger = get_logger(__name__)
@@ -181,10 +182,11 @@ async def assess(live: str, *, now: datetime, api: str = GITHUB_API) -> Verdict:
     """Ask GitHub about *live*, the live release's build id. Never raises."""
     try:
         async with asyncio.timeout(CHECK_TIMEOUT_SECONDS):
-            async with httpx.AsyncClient(
+            async with httpx2.AsyncClient(
                 base_url=api,
                 timeout=REQUEST_TIMEOUT_SECONDS,
                 headers={"Accept": "application/vnd.github+json"},
+                verify=trusted(),
             ) as client:
                 return await _assess(client, live, now)
     except GitHubSilent as exc:
@@ -197,7 +199,7 @@ async def assess(live: str, *, now: datetime, api: str = GITHUB_API) -> Verdict:
         return Verdict(Signal.LOG, "GitHub's answer is not the JSON expected")
 
 
-async def _assess(client: httpx.AsyncClient, live: str, now: datetime) -> Verdict:
+async def _assess(client: httpx2.AsyncClient, live: str, now: datetime) -> Verdict:
     if live == UNSTAMPED:
         return first_look(live, {})
     try:
@@ -221,7 +223,7 @@ async def _assess(client: httpx.AsyncClient, live: str, now: datetime) -> Verdic
 
 
 async def _first_counting(
-    client: httpx.AsyncClient, live: str, found: list[Push], now: datetime
+    client: httpx2.AsyncClient, live: str, found: list[Push], now: datetime
 ) -> Push:
     """The oldest push whose diff from *live* counts; ``main``'s (the last) is known to.
 
@@ -238,10 +240,10 @@ async def _first_counting(
     return found[min(WALK_LIMIT, len(found) - 1)]
 
 
-async def _get(client: httpx.AsyncClient, path: str) -> Mapping:
+async def _get(client: httpx2.AsyncClient, path: str) -> Mapping:
     try:
         response = await client.get(path)
-    except httpx.HTTPError as exc:
+    except httpx2.HTTPError as exc:
         raise GitHubSilent(f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__)
     if not response.is_success:
         try:

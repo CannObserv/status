@@ -32,6 +32,7 @@ Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 | `src/core/alerting.py` | **The only module that talks to notifier.** Endpoint check, idempotency keys (missing, recovered, cleared), `send()`, `redeliver()`, request `Budget` |
 | `src/core/sweep.py` | The pass that marks missing monitors and sends/owes their alerts; redelivers undelivered ones, spaced, until delivered or capped (#10); reports undelivered ones, the check-in's notices too, never-accepted ones included (#6, #8, #19) |
 | `src/core/heartbeat.py` | healthchecks.io pings after each production pass (#1), and the API's `/ready` (#13); never fails the sweep. `ping()` for any check |
+| `src/core/tls.py` | `trusted()`: certifi's roots alone. Every httpx2 call under `src/`/`scripts/` passes `verify=trusted()`, since httpx2 defaults to the OS store, which trusts roots certifi dropped (#58, #125); `tests/ci/test_trust_store.py` |
 | `src/core/drift.py` | Does live lag `origin/main` in code that runs? GitHub, unauthenticated; hourly `status-drift.timer` → `co-status-drift` (#12) |
 | `src/core/importer.py` | One monitor in from notifier's export, disabled |
 | `src/core/schema_state.py` | Database vs the code's Alembic head; `behind` fails a pass and `/ready`, never a start (#9) |
@@ -39,7 +40,7 @@ Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 | `src/api/routes/monitors.py` | CRUD and the check-in: records every one; opens, reports, suppresses and clears faults (#28) |
 | `tests/fixtures/notifier-checkin-contract.json` | notifier's check-in contract, compared by `tests/api/test_contract.py` |
 
-Tests reach notifier through the real `notifier-client` intercepted by `respx` — the `notifier` and `alerter` fixtures in `tests/conftest.py`.
+Tests reach notifier through the real `notifier-client` intercepted by `respx` — the `notifier` and `alerter` fixtures in `tests/conftest.py`. respx mocks `httpx` only, and the SDK (0.4.0) and the service send through **httpx2**, so `tests/conftest.py` calls `httpx2.alias_httpx()` before any import and loads respx's plugin itself (`-p no:respx` in `addopts`). The alias is tests-only and hides a stray `import httpx`; `tests/ci/test_http_stack.py` keeps `httpx`/`httpcore` out of `src/`, `scripts/` and `alembic/`, and out of a fresh interpreter (#125). `unreachable` raises httpx2's `ConnectError` at its transport.
 
 ## Infrastructure
 

@@ -31,12 +31,13 @@ from collections import Counter
 from collections.abc import Mapping
 from enum import StrEnum
 
-import httpx
+import httpx2
 
 from src.core.credentials import read_credential
 from src.core.db_safety import database_name, environment_label
 from src.core.logging import get_logger
 from src.core.sweep import SweepReport
+from src.core.tls import trusted
 
 logger = get_logger(__name__)
 
@@ -62,6 +63,8 @@ API_BODY_LIMIT = 200
 #: No retry: the next pass is 60 seconds away and each check's grace period
 #: absorbs a missed one.
 PING_TIMEOUT_SECONDS = 5.0
+#: Where httpx2 logs each request's method and URL, at INFO.
+REQUEST_LOGGER = "httpx2"
 
 
 class Signal(StrEnum):
@@ -74,7 +77,7 @@ class Signal(StrEnum):
 
 
 class _RedactKey(logging.Filter):
-    """Masks the ping key in httpx's ``HTTP Request: POST <url>`` INFO lines."""
+    """Masks the ping key in httpx2's ``HTTP Request: POST <url>`` INFO lines."""
 
     def __init__(self, key: str) -> None:
         super().__init__()
@@ -87,11 +90,15 @@ class _RedactKey(logging.Filter):
         return True
 
 
-def _redact_in_httpx_log(key: str) -> None:
-    """Install :class:`_RedactKey` on the ``httpx`` logger, once per key."""
-    httpx_logger = logging.getLogger("httpx")
-    if not any(isinstance(f, _RedactKey) and f.key == key for f in httpx_logger.filters):
-        httpx_logger.addFilter(_RedactKey(key))
+def _redact_in_request_log(key: str) -> None:
+    """Install :class:`_RedactKey` on httpx2's logger, once per key.
+
+    ``httpx2``, not ``httpx``: the fork renamed its logger (#125), and a filter
+    left on the old name masks nothing.
+    """
+    request_logger = logging.getLogger(REQUEST_LOGGER)
+    if not any(isinstance(f, _RedactKey) and f.key == key for f in request_logger.filters):
+        request_logger.addFilter(_RedactKey(key))
 
 
 class Heartbeat:
@@ -103,8 +110,8 @@ class Heartbeat:
         self._key = ping_key
         self._base_url = base_url
         self._api_url = api_url
-        # httpx logs every request URL at INFO, and this URL carries the key.
-        _redact_in_httpx_log(ping_key)
+        # httpx2 logs every request URL at INFO, and this URL carries the key.
+        _redact_in_request_log(ping_key)
 
     async def sweep_completed(self, report: SweepReport) -> None:
         """Signal a completed pass, and whether notifier took its alerts."""
@@ -149,18 +156,18 @@ async def ping(
     key: str, check: str, signal: Signal, body: str, *, base_url: str = PING_BASE_URL
 ) -> None:
     """Send *body* to *check* as *signal*. Never raises; a failure is a journal warning."""
-    # httpx logs every request URL at INFO, and this URL carries the key.
-    _redact_in_httpx_log(key)
+    # httpx2 logs every request URL at INFO, and this URL carries the key.
+    _redact_in_request_log(key)
     url = f"{base_url}/{key}/{check}{signal}"
     try:
-        # The bound is on the whole ping: httpx's timeout is per phase
+        # The bound is on the whole ping: httpx2's timeout is per phase
         # (connect, write, read, pool), and DNS has none at all.
         async with asyncio.timeout(PING_TIMEOUT_SECONDS):
-            async with httpx.AsyncClient(timeout=PING_TIMEOUT_SECONDS) as client:
+            async with httpx2.AsyncClient(timeout=PING_TIMEOUT_SECONDS, verify=trusted()) as client:
                 response = await client.post(url, content=body)
     except Exception as exc:
         # Anything at all: a ping must never fail the process that sent it.
-        # The type only: an httpx message can carry the URL, and the URL the key.
+        # The type only: an httpx2 message can carry the URL, and the URL the key.
         logger.warning(f"healthchecks ping for {check} failed: {type(exc).__name__}")
         return
     if not response.is_success:
@@ -196,10 +203,10 @@ async def _probe_api(url: str) -> tuple[bool, str]:
     """Ask *url* until it is ready or the window closes: ``(ready, what it said)``."""
     answer = "TimeoutError"
     try:
-        # One bound on every try together: httpx's timeout is per phase, and
+        # One bound on every try together: httpx2's timeout is per phase, and
         # DNS has none at all.
         async with asyncio.timeout(API_WINDOW_SECONDS):
-            async with httpx.AsyncClient(timeout=PING_TIMEOUT_SECONDS) as client:
+            async with httpx2.AsyncClient(timeout=PING_TIMEOUT_SECONDS, verify=trusted()) as client:
                 while True:
                     # What a try the window cuts off reports: it never returns
                     # to overwrite this, so the body says how the window ended.
@@ -212,7 +219,7 @@ async def _probe_api(url: str) -> tuple[bool, str]:
         return False, answer
 
 
-async def _ask_ready(client: httpx.AsyncClient, url: str) -> tuple[bool, str]:
+async def _ask_ready(client: httpx2.AsyncClient, url: str) -> tuple[bool, str]:
     """One ``GET /ready``. Ready is a 200 from the production database, nothing less."""
     try:
         response = await client.get(url)

@@ -9,7 +9,7 @@ goes through respx, never the network.
 import asyncio
 from datetime import UTC, datetime, timedelta
 
-import httpx
+import httpx2
 import pytest
 import respx
 
@@ -430,7 +430,7 @@ class TestAssessWhenGitHubCannotSay:
         assert verdict == Verdict(Signal.LOG, "GitHub did not answer: 502")
 
     async def test_unreachable_is_logged(self, github):
-        github.get(url__regex=r".*").mock(side_effect=httpx.ConnectError("refused"))
+        github.get(url__regex=r".*").mock(side_effect=httpx2.ConnectError("refused"))
         verdict = await assess(LIVE, now=NOW)
         assert verdict == Verdict(Signal.LOG, "GitHub did not answer: ConnectError: refused")
 
@@ -454,7 +454,7 @@ class TestAssessWhenGitHubCannotSay:
 
         async def stall(request):
             await asyncio.sleep(5)
-            return httpx.Response(200)
+            return httpx2.Response(200)
 
         github.get(url__regex=r".*").mock(side_effect=stall)
         verdict = await assess(LIVE, now=NOW)

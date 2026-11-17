@@ -77,8 +77,9 @@ def test_read_knob_reads_bulk_factor_3_5_without_findings():
         ["bash", str(READ_KNOB), "--config", str(KNOB)],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    assert out.returncode == 0, out.stderr
     knob = json.loads(out.stdout)
     assert knob["bulk_factor"]["value"] == 3.5, knob["bulk_factor"]
     number = knob["bulk_factor"]["line"]

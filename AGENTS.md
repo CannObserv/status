@@ -20,7 +20,7 @@ TDD required. Red → Green → Refactor. No production code without a failing t
 
 Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 
-`pre-commit` runs ruff only, never pytest. A clean commit hook says nothing about correctness — only CI does (`.github/workflows/ci.yml`: `lint`, `test`, `migrations`). CI pins CPython 3.12 and installs with `uv sync --locked`, because `core = "sysmon"` coverage needs both; `tests/ci/` asserts it.
+`pre-commit` runs ruff only, never pytest. A clean commit hook says nothing about correctness — only CI does (`.github/workflows/ci.yml`: `lint`, `test`, `migrations`). Installed in the main checkout; worktrees share its `.git/hooks`. Never `pre-commit install` from a worktree: it pins that worktree's venv, and once the worktree is removed every commit is refused until reinstalled from the main checkout (#110). CI pins CPython 3.12 and installs with `uv sync --locked`, because `core = "sysmon"` coverage needs both; `tests/ci/` asserts it.
 
 ## Project Layout
 
@@ -93,7 +93,7 @@ uv run pytest
 uv run pytest --no-cov tests/path/test_x.py   # a subset; skips the coverage gate
 uv run ruff check . && uv run ruff format --check .
 uv run pre-commit run --all-files
-uv run pre-commit install                     # once per clone
+uv run pre-commit install                     # once per clone, from the main checkout
 ```
 
 ## Server Lifecycle

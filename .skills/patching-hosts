@@ -5,6 +5,11 @@
 class production
 posture scheduled
 
+# The bulk's budget: this many times its dry run (default 3, gregoryfoster/skills#556).
+# Bulks here ran 2.9x (2026-10-21) and 3.1x (2026-11-13: 245 s against a 78 s dry run,
+# /var/backups/patching-hosts-20261113T000827Z) (#115).
+bulk-factor 3.5
+
 window Wed 17:00-23:00
 
 # A sweep or drift check mid-run: wait for it to end.

@@ -9,7 +9,7 @@ and gets it — once, under the same idempotency key — when notifier answers.
 import secrets
 from datetime import UTC, datetime, timedelta
 
-import httpx
+import httpx2
 import pytest
 from sqlalchemy import select
 
@@ -201,7 +201,7 @@ class TestTheOwedAlert:
     async def test_an_unreachable_notifier_leaves_the_alert_owed(
         self, db_session, tenant, alerter, notifier
     ):
-        notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.dispatch.mock(side_effect=httpx2.ConnectError("refused"))
         monitor = await _save(db_session, tenant)
 
         report = await sweep_monitors(db_session, alerter, NOW)
@@ -216,7 +216,7 @@ class TestTheOwedAlert:
         self, db_session, tenant, alerter, notifier
     ):
         monitor = await _save(db_session, tenant)
-        notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.dispatch.mock(side_effect=httpx2.ConnectError("refused"))
         await sweep_monitors(db_session, alerter, NOW)
         first_key = missing_key(monitor, NOW)
 
@@ -237,7 +237,7 @@ class TestTheOwedAlert:
     async def test_notifier_unreachable_at_health_still_marks_and_owes(
         self, db_session, tenant, alerter, notifier
     ):
-        notifier.health.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.health.mock(side_effect=httpx2.ConnectError("refused"))
         monitor = await _save(db_session, tenant)
         report = await sweep_monitors(db_session, alerter, NOW)
         assert report.owed == [str(monitor.id)]
@@ -310,7 +310,7 @@ class TestTheUndeliveredAlert:
         self, db_session, tenant, alerter, notifier
     ):
         """Owed is not undelivered: nothing about this outage was sent yet."""
-        notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.dispatch.mock(side_effect=httpx2.ConnectError("refused"))
         monitor = await _save(
             db_session,
             tenant,
@@ -362,7 +362,7 @@ class TestTheRedelivery:
     async def test_a_new_outage_forgets_the_last_ones_dispatch(
         self, db_session, tenant, alerter, notifier
     ):
-        notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.dispatch.mock(side_effect=httpx2.ConnectError("refused"))
         monitor = await _save(
             db_session,
             tenant,
@@ -450,9 +450,9 @@ class TestTheRedelivery:
     @pytest.mark.parametrize(
         "failure",
         [
-            httpx.ConnectError("refused"),
-            httpx.Response(503),
-            httpx.Response(401, json={"detail": "no"}),
+            httpx2.ConnectError("refused"),
+            httpx2.Response(503),
+            httpx2.Response(401, json={"detail": "no"}),
         ],
     )
     async def test_any_other_failure_leaves_it_due(
@@ -469,7 +469,7 @@ class TestTheRedelivery:
         self, db_session, tenant, alerter, notifier
     ):
         await self._undelivered(db_session, tenant, alerter, notifier)
-        notifier.health.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.health.mock(side_effect=httpx2.ConnectError("refused"))
         await sweep_monitors(db_session, alerter, NOW + timedelta(minutes=1))
         assert notifier.redelivered() == []
 
@@ -550,7 +550,7 @@ class TestTheRedelivery:
 
         def slow(request):
             clock[0] += sweep.REDELIVERY_WINDOW.total_seconds() / 2
-            return httpx.Response(202, json=_dispatch_record("failed"))
+            return httpx2.Response(202, json=_dispatch_record("failed"))
 
         notifier.redeliver.mock(side_effect=slow)
 
@@ -579,7 +579,7 @@ class TestTheRedelivery:
 
         def slow_send(request):
             clock[0] += sweep.REDELIVERY_WINDOW.total_seconds()
-            return httpx.Response(202, json=_dispatch_record("failed"))
+            return httpx2.Response(202, json=_dispatch_record("failed"))
 
         notifier.dispatch.mock(side_effect=slow_send)
 
@@ -761,6 +761,6 @@ class TestEndpointCheck:
     async def test_the_report_says_notifier_did_not_answer(
         self, db_session, tenant, alerter, notifier
     ):
-        notifier.health.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.health.mock(side_effect=httpx2.ConnectError("refused"))
         report = await sweep_monitors(db_session, alerter, NOW)
         assert report.notifier_ok is False

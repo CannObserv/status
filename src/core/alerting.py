@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-import httpx
+import httpx2
 from notifier_client import NotifierClient, NotifierError, RateLimited, ServerError
 from notifier_client.types import DispatchOut
 
@@ -242,7 +242,7 @@ class Alerter:
         """Raise unless notifier's ``/health`` names co-status's environment."""
         try:
             health = await self._client.health()
-        except (httpx.TransportError, ServerError, RateLimited) as exc:
+        except (httpx2.TransportError, ServerError, RateLimited) as exc:
             raise NotifierUnavailable(f"notifier /health unreachable: {exc!r}") from exc
         theirs = health.get("environment")
         if theirs != self.environment:
@@ -259,7 +259,7 @@ class Alerter:
             preview = await self._client.preview(
                 title_template=title_template, body_template=body_template, variables=variables
             )
-        except (httpx.TransportError, ServerError, RateLimited) as exc:
+        except (httpx2.TransportError, ServerError, RateLimited) as exc:
             raise NotifierUnavailable(f"notifier preview unreachable: {exc!r}") from exc
         error = preview.error if isinstance(preview.error, str) else None
         if error:
@@ -270,7 +270,7 @@ class Alerter:
         """The channel ids co-status's own notifier tenant owns."""
         try:
             channels = await self._client.channels.list()
-        except (httpx.TransportError, ServerError, RateLimited) as exc:
+        except (httpx2.TransportError, ServerError, RateLimited) as exc:
             raise NotifierUnavailable(f"notifier channels unreachable: {exc!r}") from exc
         return {str(c.id) for c in channels}
 
@@ -340,7 +340,7 @@ class Alerter:
         """
         try:
             dispatch = await self._client.redeliver(dispatch_id)
-        except (httpx.TransportError, ServerError, RateLimited) as exc:
+        except (httpx2.TransportError, ServerError, RateLimited) as exc:
             raise NotifierUnavailable(f"notifier redeliver unreachable: {exc!r}") from exc
         except NotifierError as exc:
             if exc.status_code == 409:
@@ -366,7 +366,7 @@ class Alerter:
                 idempotency_key=idempotency_key,
                 metadata=metadata,
             )
-        except (httpx.TransportError, ServerError, RateLimited) as exc:
+        except (httpx2.TransportError, ServerError, RateLimited) as exc:
             raise NotifierUnavailable(f"notifier dispatch unreachable: {exc!r}") from exc
         except NotifierError as exc:
             unknown = _unknown_channel_ids(exc)

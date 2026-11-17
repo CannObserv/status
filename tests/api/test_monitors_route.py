@@ -11,7 +11,7 @@ import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
-import httpx
+import httpx2
 import pytest
 from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.dialects import postgresql
@@ -119,7 +119,7 @@ class TestCreate:
         assert stranger in response.text
 
     async def test_cannot_check_channels_while_notifier_is_down(self, api, headers, notifier):
-        notifier.channels.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.channels.mock(side_effect=httpx2.ConnectError("refused"))
         response = await api.post(
             "/api/v1/monitors",
             headers=headers,
@@ -394,7 +394,7 @@ class TestWhenNotifierFails:
     async def test_an_unreachable_notifier_still_records_the_checkin(
         self, api, headers, monitor, notifier, db_session
     ):
-        notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.dispatch.mock(side_effect=httpx2.ConnectError("refused"))
         response = await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
         assert response.status_code == 202
         assert response.json()["dispatches"] == []
@@ -412,7 +412,7 @@ class TestWhenNotifierFails:
     ):
         """Unchecked is not rejected: the check-in lands, the report does not,
         and its event says so (#19)."""
-        notifier.preview.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.preview.mock(side_effect=httpx2.ConnectError("refused"))
         response = await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
         assert response.status_code == 202
         assert not notifier.dispatch.called
@@ -439,7 +439,7 @@ class TestWhenNotifierFails:
 
         async def slow(request):
             await asyncio.sleep(1)
-            return httpx.Response(202)
+            return httpx2.Response(202)
 
         notifier.dispatch.mock(side_effect=slow)
         response = await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
@@ -678,7 +678,7 @@ class TestFaults:
     async def test_a_preview_failure_at_the_crossing_is_resent_next_tick(
         self, api, headers, monitor, notifier, db_session
     ):
-        notifier.preview.mock(side_effect=httpx.ConnectError("refused"))
+        notifier.preview.mock(side_effect=httpx2.ConnectError("refused"))
         await _checkin(api, headers, monitor, status="alert", variables={"source": "x"})
         notifier.preview.mock(side_effect=None)
         notifier.preview.respond(json={"title": "t", "body": "b"})
@@ -1472,11 +1472,11 @@ class TestTheCheckinsRefusals:
 
 
 def _unreachable(notifier) -> None:
-    notifier.dispatch.mock(side_effect=httpx.ConnectError("refused"))
+    notifier.dispatch.mock(side_effect=httpx2.ConnectError("refused"))
 
 
 def _health_unreachable(notifier) -> None:
-    notifier.health.mock(side_effect=httpx.ConnectError("refused"))
+    notifier.health.mock(side_effect=httpx2.ConnectError("refused"))
 
 
 def _wrong_environment(notifier) -> None:

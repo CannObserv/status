@@ -8,7 +8,7 @@ idempotency behave exactly as they will against notifier.
 import asyncio
 from datetime import UTC, datetime, timedelta
 
-import httpx
+import httpx2
 import pytest
 import respx
 from notifier_client import NotifierClient, RetryConfig
@@ -190,8 +190,9 @@ class TestCheckEndpoint:
         with pytest.raises(EndpointMismatch):
             await alerter.check_endpoint()
 
-    async def test_an_unreachable_notifier_is_unavailable_not_mismatched(self, alerter, notifier):
-        notifier.get("/health").mock(side_effect=httpx.ConnectError("refused"))
+    async def test_an_unreachable_notifier_is_unavailable_not_mismatched(
+        self, alerter, unreachable
+    ):
         with pytest.raises(NotifierUnavailable):
             await alerter.check_endpoint()
 
@@ -208,7 +209,7 @@ class TestSend:
             metadata={"monitor_id": "m", "reason": "missing"},
         )
         sent = route.calls.last.request
-        body = httpx.Response(200, content=sent.content).json()
+        body = httpx2.Response(200, content=sent.content).json()
         assert body["title_template"] == "T {{ x }}"
         assert body["variables"] == {"x": "1"}
         assert body["channel_ids"] == CHANNELS
@@ -250,7 +251,7 @@ class TestSend:
         """One deleted channel must not silence a monitor."""
         route = notifier.post("/api/v1/dispatch")
         route.side_effect = [
-            httpx.Response(
+            httpx2.Response(
                 404,
                 json={
                     "detail": {
@@ -259,12 +260,12 @@ class TestSend:
                     }
                 },
             ),
-            httpx.Response(202, json=_dispatch()),
+            httpx2.Response(202, json=_dispatch()),
         ]
         delivery = await alerter.send(
             title_template="t", body_template="b", variables={}, channel_ids=CHANNELS
         )
-        retried = httpx.Response(200, content=route.calls.last.request.content).json()
+        retried = httpx2.Response(200, content=route.calls.last.request.content).json()
         assert retried["channel_ids"] == [CHANNELS[1]]
         assert delivery.dropped_channel_ids == (CHANNELS[0],)
         assert any(CHANNELS[0] in r.getMessage() for r in caplog.records)
@@ -273,8 +274,8 @@ class TestSend:
         """A channel deleted between the two calls: one retry, not a loop."""
         route = notifier.post("/api/v1/dispatch")
         route.side_effect = [
-            httpx.Response(404, json={"detail": {"message": "x", "channel_ids": [CHANNELS[0]]}}),
-            httpx.Response(404, json={"detail": {"message": "x", "channel_ids": [CHANNELS[1]]}}),
+            httpx2.Response(404, json={"detail": {"message": "x", "channel_ids": [CHANNELS[0]]}}),
+            httpx2.Response(404, json={"detail": {"message": "x", "channel_ids": [CHANNELS[1]]}}),
         ]
         with pytest.raises(NoDeliverableChannel):
             await alerter.send(
@@ -304,8 +305,7 @@ class TestSend:
             await alerter.send(title_template="t", body_template="b", variables={}, channel_ids=[])
         assert not route.called
 
-    async def test_a_network_failure_is_unavailable(self, alerter, notifier):
-        notifier.post("/api/v1/dispatch").mock(side_effect=httpx.ConnectError("refused"))
+    async def test_a_network_failure_is_unavailable(self, alerter, unreachable):
         with pytest.raises(NotifierUnavailable):
             await alerter.send(
                 title_template="t",
@@ -410,8 +410,7 @@ class TestRedeliver:
         assert caught.value.status_code == code
         assert not isinstance(caught.value, RedeliveryCapped)
 
-    async def test_a_network_failure_is_unavailable(self, alerter, notifier):
-        notifier.post(REDELIVER).mock(side_effect=httpx.ConnectError("refused"))
+    async def test_a_network_failure_is_unavailable(self, alerter, unreachable):
         with pytest.raises(NotifierUnavailable):
             await alerter.redeliver("01J0000000000000000000DISP")
 
@@ -461,15 +460,13 @@ class TestCheckTemplate:
         assert caught.value.section == "body"
         assert "undefined" in caught.value.message
 
-    async def test_an_unreachable_preview_is_unavailable(self, alerter, notifier):
-        notifier.post("/api/v1/preview").mock(side_effect=httpx.ConnectError("refused"))
+    async def test_an_unreachable_preview_is_unavailable(self, alerter, unreachable):
         with pytest.raises(NotifierUnavailable):
             await alerter.check_template("T", "B", {})
 
 
 class TestKnownChannelIds:
-    async def test_an_unreachable_notifier_is_unavailable(self, alerter, notifier):
-        notifier.get("/api/v1/channels").mock(side_effect=httpx.ConnectError("refused"))
+    async def test_an_unreachable_notifier_is_unavailable(self, alerter, unreachable):
         with pytest.raises(NotifierUnavailable):
             await alerter.known_channel_ids()
 

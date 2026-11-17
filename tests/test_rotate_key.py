@@ -13,7 +13,7 @@ revoke in a single transaction.
 import secrets
 from datetime import UTC, datetime
 
-import httpx
+import httpx2
 import pytest
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -430,13 +430,13 @@ class TestRender:
 
 
 class TestVerify:
-    def _client(self, handler) -> httpx.Client:
-        return httpx.Client(transport=httpx.MockTransport(handler))
+    def _client(self, handler) -> httpx2.Client:
+        return httpx2.Client(transport=httpx2.MockTransport(handler))
 
     def test_passes_when_the_new_key_is_accepted(self):
         def handler(request):
             assert request.url.path == VERIFY_PATH
-            return httpx.Response(200, json=[])
+            return httpx2.Response(200, json=[])
 
         checks = verify("http://status:9000", new_raw="csk_new", client=self._client(handler))
 
@@ -449,7 +449,7 @@ class TestVerify:
         checks = verify(
             "http://status:9000",
             new_raw="csk_new",
-            client=self._client(lambda request: httpx.Response(403)),
+            client=self._client(lambda request: httpx2.Response(403)),
         )
 
         assert [c.ok for c in checks] == [False]
@@ -458,8 +458,8 @@ class TestVerify:
     def test_passes_when_the_old_key_is_refused(self):
         def handler(request):
             if request.headers["X-API-Key"] == "csk_old":
-                return httpx.Response(401)
-            return httpx.Response(200, json=[])
+                return httpx2.Response(401)
+            return httpx2.Response(200, json=[])
 
         checks = verify(
             "http://status:9000",
@@ -476,7 +476,7 @@ class TestVerify:
             "http://status:9000",
             new_raw="csk_new",
             old_raw="csk_old",
-            client=self._client(lambda request: httpx.Response(200, json=[])),
+            client=self._client(lambda request: httpx2.Response(200, json=[])),
         )
 
         assert [c.ok for c in checks] == [True, False]
@@ -487,8 +487,8 @@ class TestVerify:
 
         def handler(request):
             if request.headers["X-API-Key"] == "csk_old":
-                return httpx.Response(403)
-            return httpx.Response(200, json=[])
+                return httpx2.Response(403)
+            return httpx2.Response(200, json=[])
 
         checks = verify(
             "http://status:9000",
@@ -500,7 +500,7 @@ class TestVerify:
         assert checks[1].ok is False
 
     def test_a_malformed_base_url_is_a_failed_check_not_a_crash(self):
-        """`httpx.InvalidURL` does not subclass `httpx.HTTPError`, so it
+        """`httpx2.InvalidURL` does not subclass `httpx2.HTTPError`, so it
         escaped the handler and surfaced as a traceback — after the rotation
         had already committed, which is the one moment verify() promises not
         to leave an operator guessing. `http://[::1` is a fumbled IPv6 URL,
@@ -508,7 +508,7 @@ class TestVerify:
         checks = verify(
             "http://[::1",
             new_raw="csk_new",
-            client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200))),
+            client=httpx2.Client(transport=httpx2.MockTransport(lambda r: httpx2.Response(200))),
         )
 
         assert checks[0].ok is False
@@ -519,7 +519,7 @@ class TestVerify:
         A traceback here would leave an operator unsure whether it landed."""
 
         def handler(request):
-            raise httpx.ConnectError("no route to host")
+            raise httpx2.ConnectError("no route to host")
 
         checks = verify("http://status:9000", new_raw="csk_new", client=self._client(handler))
 
@@ -636,7 +636,7 @@ class TestVerificationNeverReportsSuccessHavingCheckedNothing:
         checks = verify(
             "http://status:9000",
             old_raw="csk_old",
-            client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401))),
+            client=httpx2.Client(transport=httpx2.MockTransport(lambda r: httpx2.Response(401))),
         )
 
         assert checks[0].ok is True
@@ -648,14 +648,14 @@ class TestVerificationNeverReportsSuccessHavingCheckedNothing:
 
         def handler(request):
             if request.headers["X-API-Key"] == "csk_old":
-                return httpx.Response(401)
-            return httpx.Response(200, json=[])
+                return httpx2.Response(401)
+            return httpx2.Response(200, json=[])
 
         checks = verify(
             "http://status:9000",
             new_raw="csk_new",
             old_raw="csk_old",
-            client=httpx.Client(transport=httpx.MockTransport(handler)),
+            client=httpx2.Client(transport=httpx2.MockTransport(handler)),
         )
 
         assert "uncontrolled" not in checks[1].name

@@ -15,20 +15,32 @@ from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
-import pytest
-import respx
-from httpx import ASGITransport, AsyncClient
-from notifier_client import NotifierClient, RetryConfig
-from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from ulid import ULID
+import httpx2
 
-from src.api.deps import get_db_session
-from src.core import schema_state
-from src.core.alerting import NOTIFIER_URLS, Alerter
-from src.core.logging import AUDIT_SOCKET_ENV
-from src.core.models import ApiKey, Base, Tenant
+# respx mocks httpx only; notifier-client 0.4.0 and the service send through
+# httpx2 (#125). The alias makes respx's `import httpx` resolve to httpx2, so its
+# mocks are httpx2 objects end to end. Tests only: production never calls it,
+# and tests/ci/test_http_stack.py checks the service without it. It has to run
+# before anything imports httpx, hence the imports below it, and why pyproject's
+# addopts disables respx's entry-point plugin and this file loads it instead.
+# A late call raises rather than splitting the stack.
+httpx2.alias_httpx()
+
+import pytest  # noqa: E402
+import respx  # noqa: E402
+from httpx2 import ASGITransport, AsyncClient  # noqa: E402
+from notifier_client import NotifierClient, RetryConfig  # noqa: E402
+from sqlalchemy import event, text  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: E402
+from ulid import ULID  # noqa: E402
+
+from src.api.deps import get_db_session  # noqa: E402
+from src.core import schema_state  # noqa: E402
+from src.core.alerting import NOTIFIER_URLS, Alerter  # noqa: E402
+from src.core.logging import AUDIT_SOCKET_ENV  # noqa: E402
+from src.core.models import ApiKey, Base, Tenant  # noqa: E402
+
+pytest_plugins = ["respx.plugin"]
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 if not TEST_DATABASE_URL:
@@ -351,7 +363,7 @@ class FakeNotifier:
         ``by_reason`` overrides it per ``metadata.reason``: ``recovered="failed"``.
         """
 
-        def respond(request: httpx.Request) -> httpx.Response:
+        def respond(request: httpx2.Request) -> httpx2.Response:
             reason = json.loads(request.content).get("metadata", {}).get("reason")
             return _echo_dispatch(request, by_reason.get(reason, status))
 
@@ -368,9 +380,9 @@ class FakeNotifier:
     def refusing(self, reason: str, code: int = 422) -> None:
         """Refuse every dispatch whose ``metadata.reason`` is *reason*; accept the rest (#19)."""
 
-        def respond(request: httpx.Request) -> httpx.Response:
+        def respond(request: httpx2.Request) -> httpx2.Response:
             if json.loads(request.content).get("metadata", {}).get("reason") == reason:
-                return httpx.Response(code, json={"detail": "refused"})
+                return httpx2.Response(code, json={"detail": "refused"})
             return _echo_dispatch(request)
 
         self.dispatch.mock(side_effect=respond)
@@ -392,9 +404,9 @@ def _record(**fields) -> dict:
     } | fields
 
 
-def _echo_dispatch(request: httpx.Request, status: str = "succeeded") -> httpx.Response:
+def _echo_dispatch(request: httpx2.Request, status: str = "succeeded") -> httpx2.Response:
     body = json.loads(request.content)
-    return httpx.Response(
+    return httpx2.Response(
         202,
         json=_record(
             idempotency_key=body.get("idempotency_key"),
@@ -408,9 +420,9 @@ def _echo_dispatch(request: httpx.Request, status: str = "succeeded") -> httpx.R
     )
 
 
-def _echo_redelivery(request: httpx.Request, status: str = "succeeded") -> httpx.Response:
+def _echo_redelivery(request: httpx2.Request, status: str = "succeeded") -> httpx2.Response:
     """The dispatch the path names, with *status*; no attempts, as the fake sends none."""
-    return httpx.Response(202, json=_record(id=request.url.path.split("/")[-2], status=status))
+    return httpx2.Response(202, json=_record(id=request.url.path.split("/")[-2], status=status))
 
 
 @pytest.fixture
@@ -440,6 +452,21 @@ def notifier() -> Iterator[FakeNotifier]:
                 side_effect=_echo_redelivery
             ),
         )
+
+
+@pytest.fixture
+def unreachable(monkeypatch) -> None:
+    """notifier cannot be reached: every request fails to connect (#125).
+
+    Raised at httpx2's own transport, beneath the SDK and above anything respx
+    patches, so the exception is the class the SDK re-raises in production
+    with or without the test-only alias. Nothing leaves the process.
+    """
+
+    async def refuse(self, request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("refused", request=request)
+
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", refuse)
 
 
 @pytest.fixture

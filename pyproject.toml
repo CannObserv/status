@@ -9,9 +9,13 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.15.0,<2",
     "asyncpg>=0.30.0,<0.33",
+    # The CA bundle our own HTTPS calls trust, through src/core/tls.py: httpx2
+    # alone would read the OS store (#58, #125).
+    "certifi>=2026.10.23,<2027",
     "fastapi>=0.115.0,<0.163",
-    "httpx>=0.28.0,<0.29",
-    "notifier-client>=0.3.2,<0.4",
+    # notifier-client 0.4.0's HTTP library, and ours, so its exceptions match (#125).
+    "httpx2>=2.16.2,<3",
+    "notifier-client>=0.4.0,<0.5",
     "pydantic>=2.14.2,<3",
     "python-json-logger>=4.0.0,<5",
     "python-ulid>=4.0.1,<5",
@@ -30,9 +34,10 @@ constraint-dependencies = [
 
 [tool.uv.sources]
 # Pinned to a tag, never a branch (notifier docs/RELEASING.md § Adopting a
-# release). Public repo, so no credential. v0.3.2 has everything co-status
-# calls: health, dispatch, preview, channels.list and redeliver (#10).
-notifier-client = { git = "https://github.com/CannObserv/notifier.git", subdirectory = "clients/python", tag = "v0.3.2" }
+# release). Public repo, so no credential. Dependabot cannot move a git-sourced
+# pin: this line moves by hand. v0.4.0 sends through httpx2 (#125); its calls
+# are v0.3.2's: health, dispatch, preview, channels.list and redeliver (#10).
+notifier-client = { git = "https://github.com/CannObserv/notifier.git", subdirectory = "clients/python", tag = "v0.4.0" }
 
 [dependency-groups]
 dev = [
@@ -48,7 +53,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short -m 'not integration' --cov=src --cov-report=term-missing"
+# -p no:respx: respx's entry-point plugin imports httpx before tests/conftest.py
+# can alias it to httpx2 (#125); the conftest loads the plugin itself, after.
+addopts = "-v --tb=short -m 'not integration' -p no:respx --cov=src --cov-report=term-missing"
 asyncio_mode = "auto"
 # One basetemp on disk, and only a failed run's (#68; maintaining-host-disk repo-knobs.md).
 tmp_path_retention_count = 1

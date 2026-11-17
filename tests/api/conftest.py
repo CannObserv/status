@@ -14,7 +14,7 @@ from typing import Annotated
 
 import pytest
 from fastapi import Depends, FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_alerter, get_db_session, require_api_key

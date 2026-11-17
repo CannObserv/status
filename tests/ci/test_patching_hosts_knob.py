@@ -25,13 +25,39 @@ READ_KNOB = REPO_ROOT / "skills" / "patching-hosts" / "scripts" / "read-knob.sh"
 BULK_FACTOR = re.compile(r"^[1-9][0-9]?([.][0-9][0-9]?)?$")
 
 
+def tokens(line: str) -> list[str]:
+    """One line's words, as ``_knob_parse_file`` reads them.
+
+    A trailing ``\\r`` dropped; a comment cut at the first ``#`` at the start or
+    after whitespace; then split on spaces and tabs alone, as ``read -a`` does.
+    """
+    line = re.split(r"(?:^|[ \t])#", line.removesuffix("\r"), maxsplit=1)[0]
+    return [t for t in re.split(r"[ \t]+", line) if t]
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("bulk-factor 3.5", ["bulk-factor", "3.5"]),
+        ("bulk-factor 3.5\r", ["bulk-factor", "3.5"]),
+        ("\tbulk-factor  3.5  # 3.1x on 2026-11-13", ["bulk-factor", "3.5"]),
+        ("# bulk-factor 3.5", []),
+        ("health curl http://h/#frag", ["health", "curl", "http://h/#frag"]),
+        ("bulk-factor 3.5\x0b", ["bulk-factor", "3.5\x0b"]),
+    ],
+)
+def test_tokens_splits_as_the_reader_does(line: str, expected: list[str]):
+    """A comment the reader cuts isn't a value; a character it refuses isn't a space."""
+    assert tokens(line) == expected
+
+
 def bulk_factor_lines() -> list[tuple[int, list[str]]]:
     """Each ``bulk-factor`` line, by line number, as the reader tokenises it."""
     found = []
     for number, line in enumerate(KNOB.read_bytes().decode().split("\n"), start=1):
-        tokens = line.split()
-        if tokens and tokens[0] == "bulk-factor":
-            found.append((number, tokens[1:]))
+        words = tokens(line)
+        if words and words[0] == "bulk-factor":
+            found.append((number, words[1:]))
     return found
 
 

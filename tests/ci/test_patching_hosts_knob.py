@@ -71,8 +71,12 @@ def test_knob_sets_bulk_factor_3_5_once():
 
 
 @pytest.mark.skipif(not READ_KNOB.is_file(), reason="skills-vendor not checked out (CI)")
-def test_read_knob_reads_bulk_factor_3_5_without_findings():
-    """The vendored reader accepts the line: no finding names it."""
+def test_read_knob_reads_bulk_factor_3_5_with_no_finding_on_its_line():
+    """The vendored reader accepts the line: no finding names it.
+
+    Findings on other lines are another line's business: the knob's exceptions
+    expire 2027-04-21, and that finding shouldn't fail this test.
+    """
     out = subprocess.run(
         ["bash", str(READ_KNOB), "--config", str(KNOB)],
         capture_output=True,

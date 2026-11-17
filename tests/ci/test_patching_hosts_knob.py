@@ -67,7 +67,7 @@ def test_knob_sets_bulk_factor_3_5_once():
     assert len(lines) == 1, lines
     _, values = lines[0]
     assert values == ["3.5"]
-    assert BULK_FACTOR.match(values[0])
+    assert BULK_FACTOR.fullmatch(values[0])
 
 
 @pytest.mark.skipif(not READ_KNOB.is_file(), reason="skills-vendor not checked out (CI)")

@@ -11,7 +11,8 @@
 # Both hooks are read-only: they report violations rather than rewriting files
 # mid-commit. Fix with `uv run ruff format .` / `uv run ruff check --fix .`.
 #
-# Install once per clone: uv run pre-commit install
+# Install once per clone, from the main checkout (worktrees share it; see
+# AGENTS.md): uv run pre-commit install
 repos:
   - repo: local
     hooks:

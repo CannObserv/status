@@ -146,7 +146,7 @@ Installed by #76 on 2026-11-04, a fresh install straight onto co-index's shared 
 
 **One host, one checkout.** Only this VM indexes `status`, from the main checkout (`~/status`), because the index lock is per host (notifier#57 D11). A worktree session carries no key, and with `projectId` it would update the same collections from the worktree's files. Search from worktrees, never index from them.
 
-**Linked: `../notifier`**, the repo this one reads (the check-in contract, `/dispatch`). There is no notifier clone here. The link resolves through a one-file stub, `~/notifier/.socraticode.json` = `{"projectId": "notifier"}`, a host step outside the repo. If the stub goes missing, `includeLinked` drops notifier silently, and the daily health check names it.
+**Linked: `../notifier`**, the repo this one reads (the check-in contract, `/dispatch`). There is no notifier clone here. The link resolves through a one-file stub, `~/notifier/.socraticode.json` = `{"projectId": "notifier"}`, a host step outside the repo. If the stub goes missing, `includeLinked` drops notifier silently, and the daily health check names it. So does a link that resolves and adds nothing, notifier's collection missing or empty in the store (gregoryfoster/skills#573): the daily check names that too.
 
 **Index scope.** `.socraticodeignore` excludes the vendored skill trees, the hooks in `.claude/hooks/` that are symlinks into `skills-vendor/` (by name; `gh-env.sh` is this repo's own and stays in, #92), both worktree roots, and `docs/plans/`. Plans are still searchable as the `implementation-plans` artifact; the schema is searchable as `migrations`.
 

@@ -1,0 +1,3 @@
+# shipping-work push.sh posts gate/local after the local gate passes (#133).
+# ci.yml then skips test's Run tests on that PR head; see attestation.md.
+on

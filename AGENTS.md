@@ -84,6 +84,8 @@ Source them with `. scripts/load_env.sh`; never word-split through `xargs`.
 
 `gh` needs no loading: `.claude/hooks/gh-env.sh` (SessionStart) exports `.env`'s `GH_TOKEN` to the session's Bash calls, read as data (#92). `GH_TOKEN_<REPO>` stay per call.
 
+**`git push` has no credentials here, `push.sh`'s included** (#137): git has no `credential.helper` and the token reaches only gh, through the session's env, so a bare push fails rc 128. `push.sh` runs `git push` itself (no `-c`), so pass gh as git's helper through the env; `GIT_CONFIG_VALUE_0=` first empties the helper list, so gh alone answers, from `GH_TOKEN`, storing nothing and printing no token. The gate needs `.env`, which a worktree lacks, so source the main checkout's: `. "$(git rev-parse --path-format=absolute --git-common-dir)/../scripts/load_env.sh" && GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth git-credential' bash skills/shipping-work/scripts/push.sh`.
+
 ## Common Commands
 
 ```bash

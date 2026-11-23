@@ -1,6 +1,8 @@
 # The repo's only automated correctness gate. Ported from notifier, where
 # every green result before it came from someone choosing to run the suite
-# (notifier#27) — and this repo commits straight to main too.
+# (notifier#27). Work lands on main through PRs merged on GitHub
+# (.skills/merge_mode = pr), and main's push run is the one deploy.sh reads
+# (#11).
 #
 # `pre-commit` is not a substitute — it runs ruff and nothing else.
 name: CI
@@ -20,6 +22,8 @@ concurrency:
 
 permissions:
   contents: read
+  # The attest step reads the combined status (#133); unlisted keys are none.
+  statuses: read
 
 jobs:
   lint:
@@ -79,11 +83,59 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --locked
+      # Did the local gate pass on exactly this PR's head? (#133,
+      # gregoryfoster/skills#688) With .skills/attest-local-gate on,
+      # shipping-work's push.sh posts `gate/local` = success once pre-ship.sh
+      # has passed on the clean tree it pushed.
+      #
+      # Pull requests only. A push to main is a merge GitHub made, which
+      # carries no status, and it is the run deploy.sh reads (#11): reading
+      # there could skip nothing, and a refused read would fail main's `test`.
+      # Unset reads as not attested, so the suite runs.
+      #
+      # HEAD is the PR's head: on pull_request, github.sha is the merge commit,
+      # which nobody gated. The combined status keeps each context's latest
+      # state; /statuses lists every status ever posted, so a later failure
+      # would still count. A page is 30 contexts unless more are asked for. A
+      # refused read fails this step: loud, never a silent skip. The verdict is
+      # logged as well as written.
+      #
+      # These comments sit here, not in `run:`: tests/ci splits every `run:`
+      # into shell words, and an apostrophe there is an unbalanced quote.
+      - name: Attested by the local gate?
+        id: attest
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          n=$(gh api "repos/${{ github.repository }}/commits/$HEAD/status?per_page=100" \
+                --jq '[.statuses[] | select(.context == "gate/local" and .state == "success")] | length')
+          echo "attested=$([ "$n" -gt 0 ] && echo yes || echo no)" | tee -a "$GITHUB_OUTPUT"
+      # Skipped only for an attested commit, on a branch push or a pull
+      # request, and never for a bot's PR (Dependabot) or a fork's: neither
+      # came from a local gate. Everything else (a manual run, a tag) always
+      # runs it, and so does every push to main, since the attest step reads
+      # nothing there. The reference's `if:`, verbatim.
+      #
+      # Step-level, not job-level: a skipped step leaves `test` success.
+      # lint and migrations never skip; the local gate runs no alembic. An
+      # attested PR goes without coverage's fail_under (pre-ship.sh runs the
+      # suite --no-cov) until main's push run, the backstop. No schedule: with
+      # merge_mode pr, nothing reaches main without that run.
+      #
       # No -m and no --cov here: both live in [tool.pytest.ini_options]
       # addopts. A second spelling on the command line overrides rather than
       # composes, and gives the marker expression somewhere to drift.
       # STATUS_SECRET_KEY is not needed — conftest generates a throwaway one.
       - name: Run tests
+        if: >-
+          steps.attest.outputs.attested != 'yes'
+          || (github.event_name != 'push' && github.event_name != 'pull_request')
+          || startsWith(github.ref, 'refs/tags/')
+          || (github.event_name == 'pull_request'
+              && (github.event.pull_request.user.type == 'Bot'
+                  || github.event.pull_request.head.repo.full_name != github.repository))
         run: uv run pytest
 
   migrations:

@@ -24,9 +24,17 @@ filed about. The rest are conditions a reader cannot see in the YAML:
 * **Dependencies must install from the lockfile.** ``coverage`` is pinned
   nowhere in ``pyproject.toml`` but sysmon needs >= 7.10, so an unlocked
   resolve can change what the coverage gate measures.
+* **Only one step may skip, and only on a pull request** (#133). shipping-work's
+  ``push.sh`` posts ``gate/local`` after the local gate passed on the head it
+  pushed, and ``test`` then skips ``Run tests``. A bot's or a fork's PR never
+  skips, and nor does a push to ``main``: that run is the one ``deploy.sh``
+  reads (#11). ``lint`` and ``migrations`` never skip; the local gate runs no
+  alembic.
 """
 
+import os
 import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -86,9 +94,11 @@ def test_ci_workflow_exists():
 
 
 def test_ci_fires_on_push_to_main(ci):
-    """The trigger that matters: this repo commits straight to main.
+    """The trigger that matters: main's push run is the only one deploy.sh
+    reads (#11), and the only run a merge made on GitHub gets.
 
-    A pull_request-only gate is vacuous here — that is the whole of notifier#27.
+    A pull_request-only gate would leave what is deployed untested — the
+    shape of notifier#27.
     """
     assert "main" in triggers(ci)["push"]["branches"]
 
@@ -108,7 +118,28 @@ def test_ci_never_cancels_a_run_on_main(ci):
 
 
 def test_ci_takes_read_only_permissions(ci):
-    assert ci["permissions"] == {"contents": "read"}
+    """Read-only, and only what is read: the checkout, and the commit statuses
+    the attest step asks about (#133). No job widens it."""
+    grants = ci["permissions"]
+    assert set(grants) == {"contents", "statuses"}
+    assert set(grants.values()) == {"read"}
+    for name, job in ci["jobs"].items():
+        assert "permissions" not in job, name
+
+
+def test_every_run_block_splits_into_shell_words(ci):
+    """tests/ci reads `run:` as shell words. A comment inside one is a shell
+    comment shlex can't skip, so an apostrophe in it (`context's`) is an
+    unbalanced quote that errors every test touching that job. Comments go in
+    YAML, above the step (#133; watcher's finding on gregoryfoster/skills#688).
+    """
+    for name, job in ci["jobs"].items():
+        for step in steps(job):
+            run = step.get("run", "")
+            shlex.split(run)
+            assert not any(line.lstrip().startswith("#") for line in run.splitlines()), (
+                f"{name}: {step.get('name', step.get('id'))} carries a comment in run:"
+            )
 
 
 def test_ci_runs_lint_test_and_migrations(ci):
@@ -243,3 +274,121 @@ def test_database_services_are_waited_for(ci, job_name):
     """Without a health check the job races container startup, and the failure
     surfaces as an intermittent red — the hardest kind to attribute."""
     assert "pg_isready" in postgres(ci["jobs"][job_name])["options"]
+
+
+# The local-gate attestation (#133, gregoryfoster/skills#688).
+
+#: The heavy tier's `if:`, term by term, as shipping-work's reference gives it.
+SKIP_TERMS = (
+    "steps.attest.outputs.attested != 'yes'",
+    "(github.event_name != 'push' && github.event_name != 'pull_request')",
+    "startsWith(github.ref, 'refs/tags/')",
+    "github.event_name == 'pull_request'",
+    "github.event.pull_request.user.type == 'Bot'",
+    "github.event.pull_request.head.repo.full_name != github.repository",
+)
+
+#: The shell Actions runs a bash `run:` with.
+ACTIONS_BASH = ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c"]
+
+
+def only_step(job: dict, **match) -> dict:
+    found = [s for s in steps(job) if all(s.get(k) == v for k, v in match.items())]
+    assert len(found) == 1, f"{match}: {len(found)} steps"
+    return found[0]
+
+
+def attest_step(ci: dict) -> dict:
+    return only_step(ci["jobs"]["test"], id="attest")
+
+
+def run_tests_step(ci: dict) -> dict:
+    return only_step(ci["jobs"]["test"], name="Run tests")
+
+
+def test_attest_step_reads_gate_local_on_the_pr_head(ci):
+    """On pull_request, github.sha is the merge commit, which nobody gated;
+    the combined status keeps each context's latest state only."""
+    step = attest_step(ci)
+    assert step["env"]["HEAD"] == "${{ github.event.pull_request.head.sha || github.sha }}"
+    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    run = step["run"]
+    assert "commits/$HEAD/status?per_page=100" in run
+    assert '.context == "gate/local" and .state == "success"' in run
+    assert "$GITHUB_OUTPUT" in run
+
+
+def test_attest_step_reads_only_on_pull_requests(ci):
+    """main's push run is a merge GitHub made, with no status, and the run
+    deploy.sh reads (#11): reading there could skip nothing, and a refused read
+    would fail main's `test`. Unset reads as not attested."""
+    assert attest_step(ci)["if"] == "github.event_name == 'pull_request'"
+
+
+def test_attest_step_runs_before_the_suite(ci):
+    job = steps(ci["jobs"]["test"])
+    assert job.index(attest_step(ci)) < job.index(run_tests_step(ci))
+
+
+def test_the_suite_skips_only_when_attested_on_a_humans_pr(ci):
+    """Every term of the reference's `if:`: an attested push or pull request,
+    never a tag, a bot's PR (Dependabot) or a fork's."""
+    condition = " ".join(run_tests_step(ci)["if"].split())
+    for term in SKIP_TERMS:
+        assert term in condition, term
+    assert run_tests_step(ci)["run"] == "uv run pytest"
+
+
+def test_nothing_else_can_skip(ci):
+    """Step-level: a skipped step leaves `test` success. lint and migrations
+    never skip (the local gate runs no alembic), and no job carries an `if:`."""
+    for name, job in ci["jobs"].items():
+        assert "if" not in job, name
+        conditional = {s.get("id") or s.get("name") for s in steps(job) if "if" in s}
+        assert conditional == ({"attest", "Run tests"} if name == "test" else set()), name
+
+
+@pytest.mark.parametrize(
+    ("answer", "attested"), [("1", "yes"), ("2", "yes"), ("0", "no")], ids=["one", "two", "none"]
+)
+def test_attest_step_writes_and_logs_its_verdict(ci, tmp_path, answer, attested):
+    out, called = run_attest(ci, tmp_path, f'echo "$*" >"$CALLED"; echo {answer}')
+    assert out == f"attested={attested}\n"
+    assert "repos/CannObserv/status/commits/0123abc/status?per_page=100" in called
+
+
+def test_a_refused_read_fails_the_step_loudly(ci, tmp_path):
+    """Never a silent skip: the step fails, and writes no verdict."""
+    with pytest.raises(subprocess.CalledProcessError):
+        run_attest(ci, tmp_path, 'echo "HTTP 403" >&2; exit 1')
+    assert (tmp_path / "output").read_text() == ""
+
+
+def run_attest(ci: dict, tmp_path: Path, gh_body: str) -> tuple[str, str]:
+    """Run the attest step's script as Actions would, against a stub `gh`.
+
+    Returns what it wrote to $GITHUB_OUTPUT and the stub's arguments; asserts
+    the verdict was logged too.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(f"#!/usr/bin/env bash\n{gh_body}\n")
+    gh.chmod(0o755)
+    output = tmp_path / "output"
+    output.write_text("")
+    called = tmp_path / "called"
+    script = attest_step(ci)["run"].replace("${{ github.repository }}", "CannObserv/status")
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "HEAD": "0123abc",
+        "GITHUB_OUTPUT": str(output),
+        "CALLED": str(called),
+    }
+    result = subprocess.run(
+        [*ACTIONS_BASH, script], env=env, capture_output=True, text=True, check=True
+    )
+    written = output.read_text()
+    assert written in result.stdout, "the verdict is logged, not only written"
+    return written, called.read_text()

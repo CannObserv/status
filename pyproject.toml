@@ -12,7 +12,7 @@ dependencies = [
     # The CA bundle our own HTTPS calls trust, through src/core/tls.py: httpx2
     # alone would read the OS store (#58, #125).
     "certifi>=2026.10.23,<2027",
-    "fastapi>=0.115.0,<0.163",
+    "fastapi>=0.115.0,<0.166",
     # notifier-client 0.4.0's HTTP library, and ours, so its exceptions match (#125).
     "httpx2>=2.16.2,<3",
     "notifier-client>=0.4.0,<0.5",

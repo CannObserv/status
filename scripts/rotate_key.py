@@ -488,12 +488,15 @@ def _unverified_hint(outcome: Outcome) -> str:
     """The closing line of a live run without ``--verify``: the check it could have had.
 
     A revoke with no replacement minted nothing, so the one check it can have
-    is the revoked key's 401, which takes the raw key the script never held (#147).
+    is the revoked key's 401, which takes the raw key the script never held
+    (#147). That check is uncontrolled, so "checks", as the ``--verify`` path
+    says, not "proves"; and the row is gone, so a re-run is refused: the flags
+    belong on the revoking run.
     """
     if outcome.raw_key is None:
         return (
-            "NOT VERIFIED — pass --verify <base-url> --verify-old <raw> "
-            "to prove the revoked key now gets 401"
+            "NOT VERIFIED — the revoked key went unchecked: --verify <base-url> "
+            "--verify-old <raw> on the revoking run checks it now gets 401"
         )
     return "NOT VERIFIED — pass --verify <base-url> to prove the new key works"
 

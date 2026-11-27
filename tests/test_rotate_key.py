@@ -663,8 +663,8 @@ class TestVerificationNeverReportsSuccessHavingCheckedNothing:
 
 MINT_UNVERIFIED = "NOT VERIFIED — pass --verify <base-url> to prove the new key works"
 REVOKE_UNVERIFIED = (
-    "NOT VERIFIED — pass --verify <base-url> --verify-old <raw> "
-    "to prove the revoked key now gets 401"
+    "NOT VERIFIED — the revoked key went unchecked: --verify <base-url> "
+    "--verify-old <raw> on the revoking run checks it now gets 401"
 )
 
 
@@ -717,6 +717,25 @@ class TestTheUnverifiedLineFitsWhatTheRunDid:
         assert code == OK
         assert REVOKE_UNVERIFIED in out.splitlines()
         assert "new key" not in out
+
+    async def test_a_rerun_with_the_flags_refuses_so_the_line_names_the_revoking_run(
+        self, factory, capsys, live_session, live_tenant
+    ):
+        """The revoked row is gone, so a second run with `--verify` and
+        `--verify-old` is refused: the flags only work on the revoking run,
+        and the line has to say so (CR 1a)."""
+        doomed, _ = await mint(live_session, live_tenant, "doomed", "production")
+        await mint(live_session, live_tenant, "survivor", "production")
+        await live_session.commit()
+        doomed_id = str(doomed.id)
+        await main(parse_args(["--tenant-id", live_tenant, "--revoke", doomed_id, "--yes"]))
+        assert "on the revoking run" in capsys.readouterr().out
+
+        argv = ["--tenant-id", live_tenant, "--revoke", doomed_id, "--yes"]
+        argv += ["--verify", "http://status:9000", "--verify-old", "csk_doomed"]
+        code = await main(parse_args(argv))
+
+        assert code == REFUSED
 
 
 class TestRefusalsReachTheOperatorCleanly:

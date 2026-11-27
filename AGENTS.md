@@ -22,6 +22,8 @@ Python ≥3.12, uv, pytest, ruff, PostgreSQL 16, Alembic.
 
 `pre-commit` runs ruff only, never pytest. A clean commit hook says nothing about correctness — only CI does (`.github/workflows/ci.yml`: `lint`, `test`, `migrations`). CI pins CPython 3.12 and installs with `uv sync --locked`, because `core = "sysmon"` coverage needs both; `tests/ci/` asserts it. **Local-gate attestation** (#133): with `.skills/attest-local-gate` = `on`, shipping-work's `push.sh` runs the gate, pushes, and posts `gate/local`; `test` then skips its `Run tests` step on that human PR's head. `lint` and `migrations` never skip, nor does Dependabot's, a fork's, or `main`'s push run. Install the hook once per clone, from the main checkout; worktrees share its `.git/hooks`. Never `pre-commit install` from a worktree: it pins that worktree's venv, and once the worktree is removed every commit is refused (no `pre-commit` on PATH to fall back to) until reinstalled from the main checkout (#110).
 
+**Worktrees get their own venv** (#146): `.skills/worktree_venv` = `none`, so `worktree-create.sh` links no `.venv`; run `uv sync` in a new worktree. A linked one is the main checkout's, and a worktree's `uv sync` re-pointed its editable install at the worktree: once that was removed, the operator scripts (`rotate_key.py`, `seed_tenant.py`) lost `src`. `tests/ci/test_worktree_venv_knob.py`.
+
 ## Project Layout
 
 `src/api/` is transport (routes, schemas, auth deps); `src/core/` is domain. Core never imports api.

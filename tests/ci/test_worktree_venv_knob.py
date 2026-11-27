@@ -9,13 +9,13 @@ main checkout (``rotate_key.py``, ``seed_tenant.py``, ``import_monitors.py``).
 
 The first test holds the file, read with the script's grammar (whole-line ``#``
 comments and blank lines dropped, the first line left, trimmed): CI checks out
-no submodule, so it can't run the script. The second runs the vendored
-``worktree-create.sh`` against a scratch repo carrying this knob, so a submodule
-bump that renames the knob or its value fails a local run.
+no submodule, so it can't run the script. The others run the vendored
+``worktree-create.sh`` against a scratch repo carrying this knob, and ``link`` as
+the control, so a submodule bump that renames the knob or its value, or stops
+the scratch repo reaching the linker, fails a local run.
 """
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -67,12 +67,11 @@ def git(cwd: Path, env: dict[str, str], *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
 
 
-@pytest.mark.skipif(not CREATE.is_file(), reason="skills-vendor not checked out (CI)")
-def test_worktree_create_links_no_venv_under_this_knob(tmp_path: Path):
-    """A primary with a venv and this knob yields a worktree with no ``.venv``, said on stderr."""
+def created_worktree(tmp_path: Path, knob: str) -> Path:
+    """Run the vendored ``worktree-create.sh`` from a scratch primary with a venv and ``knob``."""
     primary = tmp_path / "primary"
     (primary / ".skills").mkdir(parents=True)
-    shutil.copyfile(KNOB, primary / ".skills" / "worktree_venv")
+    (primary / ".skills" / "worktree_venv").write_text(knob)
     (primary / ".venv" / "bin").mkdir(parents=True)
     (primary / ".venv" / "bin" / "activate").touch()
     (primary / ".gitignore").write_text(".worktrees/\n.venv\n.skills/\n")
@@ -93,6 +92,27 @@ def test_worktree_create_links_no_venv_under_this_knob(tmp_path: Path):
     assert out.returncode == 0, out.stderr
     worktree = Path(out.stdout.strip().splitlines()[-1])
     assert worktree.is_dir(), out.stdout
+    return worktree
+
+
+needs_vendor = pytest.mark.skipif(not CREATE.is_file(), reason="skills-vendor not checked out (CI)")
+
+
+@needs_vendor
+def test_worktree_create_links_no_venv_under_this_knob(tmp_path: Path):
+    """A primary with a venv and this knob yields a worktree with no ``.venv``."""
+    worktree = created_worktree(tmp_path, KNOB.read_text())
     assert not (worktree / ".venv").exists()
     assert not (worktree / ".venv").is_symlink()
-    assert "worktree_venv=none" in out.stderr, out.stderr
+
+
+@needs_vendor
+def test_worktree_create_links_the_venv_under_link(tmp_path: Path):
+    """The control: the same scratch primary under ``link`` gets the symlink.
+
+    Without it, a change to the linker's guard would leave the test above
+    passing without ever reaching the knob.
+    """
+    worktree = created_worktree(tmp_path, "link\n")
+    assert (worktree / ".venv").is_symlink()
+    assert (worktree / ".venv").resolve() == (tmp_path / "primary" / ".venv").resolve()

@@ -14,6 +14,7 @@ no submodule, so it can't run the script. The second runs the vendored
 bump that renames the knob or its value fails a local run.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -52,9 +53,18 @@ def test_knob_reads_none():
     assert configured(KNOB.read_text()) == "none"
 
 
-def git(cwd: Path, *args: str) -> None:
+def isolated(home: Path) -> dict[str, str]:
+    """An env for the scratch repo: the caller's PATH, no ``GIT_*``, ``home`` as HOME.
+
+    A ``GIT_DIR`` or ``GIT_INDEX_FILE`` from a hook would aim the scratch
+    commit at the real repo, and a global ``commit.gpgsign`` would refuse it.
+    """
+    return {"PATH": os.environ["PATH"], "HOME": str(home)}
+
+
+def git(cwd: Path, env: dict[str, str], *args: str) -> None:
     """Run git quietly in ``cwd``, failing the test on error."""
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+    subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
 
 
 @pytest.mark.skipif(not CREATE.is_file(), reason="skills-vendor not checked out (CI)")
@@ -66,9 +76,10 @@ def test_worktree_create_links_no_venv_under_this_knob(tmp_path: Path):
     (primary / ".venv" / "bin").mkdir(parents=True)
     (primary / ".venv" / "bin" / "activate").touch()
     (primary / ".gitignore").write_text(".worktrees/\n.venv\n.skills/\n")
-    git(primary, "init", "-q", "-b", "main")
-    git(primary, "add", ".gitignore")
-    git(primary, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    env = isolated(tmp_path)
+    git(primary, env, "init", "-q", "-b", "main")
+    git(primary, env, "add", ".gitignore")
+    git(primary, env, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 
     out = subprocess.run(
         ["bash", str(CREATE), "--new", "probe"],
@@ -76,7 +87,7 @@ def test_worktree_create_links_no_venv_under_this_knob(tmp_path: Path):
         capture_output=True,
         text=True,
         check=False,
-        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+        env=env,
     )
 
     assert out.returncode == 0, out.stderr

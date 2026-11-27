@@ -484,21 +484,38 @@ def _open_factory() -> async_sessionmaker[AsyncSession]:
     return get_session_factory()
 
 
-def _unverified_hint(outcome: Outcome) -> str:
-    """The closing line of a live run without ``--verify``: the check it could have had.
+def _unverified_hint(outcome: Outcome) -> list[str]:
+    """The closing lines of a live run without ``--verify``: the check it could have had.
 
     A revoke with no replacement minted nothing, so the one check it can have
     is the revoked key's 401, which takes the raw key the script never held
     (#147). That check is uncontrolled, so "checks", as the ``--verify`` path
     says, not "proves"; and the row is gone, so a re-run is refused: the flags
     belong on the revoking run.
+
+    A run that minted has the opposite trap (#150): "pass --verify" reads as
+    "run it again", and a mint's re-run mints a second live key, its first
+    one's raw value already printed. A rotation's re-run is refused instead,
+    since the revoked row is gone. So the line names the run the flag belongs
+    on and what a re-run would do, then gives the check that mints nothing:
+    the same authenticated read ``--verify`` makes, by hand, and ``--list``
+    for the count an extra key would show in.
     """
     if outcome.raw_key is None:
-        return (
+        return [
             "NOT VERIFIED — the revoked key went unchecked: --verify <base-url> "
             "--verify-old <raw> on the revoking run checks it now gets 401"
-        )
-    return "NOT VERIFIED — pass --verify <base-url> to prove the new key works"
+        ]
+    if outcome.revoked is None:
+        run, rerun = "minting", "a re-run mints a second key"
+    else:
+        run, rerun = "rotating", "a re-run is refused, the old key is gone"
+    return [
+        f"NOT VERIFIED — the new key went unchecked: --verify <base-url> belongs "
+        f"on the {run} run; {rerun}",
+        f"  check it without minting another: GET <base-url>{VERIFY_PATH} "
+        "with X-API-Key: <raw_key> gets 200; --list confirms the key count",
+    ]
 
 
 async def main(args: argparse.Namespace) -> int:
@@ -551,7 +568,8 @@ async def main(args: argparse.Namespace) -> int:
         if args.verify is not None:
             print("verification skipped — a dry run has nothing live to check")
         elif not outcome.dry_run:
-            print(_unverified_hint(outcome))
+            for line in _unverified_hint(outcome):
+                print(line)
         return OK
 
     checks = verify(args.verify, new_raw=outcome.raw_key, old_raw=args.verify_old)

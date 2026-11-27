@@ -40,8 +40,23 @@ from src.core.models import ApiKey, Tenant
 TENANT = "01J0TENANT0000000000000000"
 KEY = "01J0KEY0000000000000000000"
 
-#: ``main``'s closing line on a live run without ``--verify`` (#147).
-MINT_UNVERIFIED = "NOT VERIFIED — pass --verify <base-url> to prove the new key works"
+#: ``main``'s closing lines on a live run without ``--verify`` (#147, #150).
+#: A mint's re-run mints a second key and a rotation's is refused, so each
+#: names the run the flag belongs on, then the check that mints nothing.
+CHECK_MINTED = (
+    "  check it without minting another: GET <base-url>/api/v1/monitors "
+    "with X-API-Key: <raw_key> gets 200; --list confirms the key count"
+)
+MINT_UNVERIFIED = (
+    "NOT VERIFIED — the new key went unchecked: --verify <base-url> belongs "
+    "on the minting run; a re-run mints a second key",
+    CHECK_MINTED,
+)
+ROTATE_UNVERIFIED = (
+    "NOT VERIFIED — the new key went unchecked: --verify <base-url> belongs "
+    "on the rotating run; a re-run is refused, the old key is gone",
+    CHECK_MINTED,
+)
 REVOKE_UNVERIFIED = (
     "NOT VERIFIED — the revoked key went unchecked: --verify <base-url> "
     "--verify-old <raw> on the revoking run checks it now gets 401"
@@ -675,19 +690,35 @@ class TestTheUnverifiedLineFitsWhatTheRunDid:
     The exit code stays ``OK`` in every shape: unverified isn't failed.
     """
 
-    async def test_a_mint_points_at_the_new_key(self, factory, capsys, live_tenant):
+    async def test_a_mint_names_the_minting_run_and_a_check_that_mints_nothing(
+        self, factory, capsys, live_tenant
+    ):
         code = await main(parse_args(["--tenant-id", live_tenant, "--new-label", "fresh", "--yes"]))
 
-        out = capsys.readouterr().out
+        lines = capsys.readouterr().out.splitlines()
         assert code == OK
-        assert MINT_UNVERIFIED in out.splitlines()
-        assert "--verify-old" not in out
+        assert lines[-2:] == list(MINT_UNVERIFIED)
+        assert "--verify-old" not in "\n".join(lines)
 
-    async def test_a_mint_and_revoke_points_at_the_new_key(
+    async def test_a_mint_rerun_mints_a_second_key_so_the_line_says_so(
         self, factory, capsys, live_session, live_tenant
     ):
-        """The new key's probe is the one that controls the old key's 401,
-        so a rotation keeps today's line."""
+        """The reason the line can't just say "pass --verify": the obvious
+        re-run leaves an extra live key on the tenant (#150)."""
+        argv = ["--tenant-id", live_tenant, "--new-label", "fresh", "--yes"]
+        await main(parse_args(argv))
+        assert "a re-run mints a second key" in capsys.readouterr().out
+
+        code = await main(parse_args(argv))
+
+        assert code == OK
+        assert len(await keys_for(live_session, live_tenant)) == 2
+
+    async def test_a_mint_and_revoke_names_the_rotating_run(
+        self, factory, capsys, live_session, live_tenant
+    ):
+        """A rotation's re-run differs from a mint's: the revoke fails, so it
+        is refused and mints nothing. Its line says that, not the mint's."""
         old, _ = await mint(live_session, live_tenant, "old", "production")
         await live_session.commit()
         old_id = str(old.id)
@@ -698,10 +729,31 @@ class TestTheUnverifiedLineFitsWhatTheRunDid:
             )
         )
 
-        out = capsys.readouterr().out
+        lines = capsys.readouterr().out.splitlines()
         assert code == OK
-        assert MINT_UNVERIFIED in out.splitlines()
-        assert REVOKE_UNVERIFIED not in out
+        assert lines[-2:] == list(ROTATE_UNVERIFIED)
+        assert MINT_UNVERIFIED[0] not in lines
+        assert REVOKE_UNVERIFIED not in lines
+
+    async def test_a_rotation_rerun_with_verify_refuses_and_mints_nothing(
+        self, factory, capsys, live_session, live_tenant
+    ):
+        old, _ = await mint(live_session, live_tenant, "old", "production")
+        await live_session.commit()
+        old_id = str(old.id)
+        argv = ["--tenant-id", live_tenant, "--new-label", "new", "--revoke", old_id, "--yes"]
+        await main(parse_args(argv))
+        assert "a re-run is refused" in capsys.readouterr().out
+
+        code = await main(parse_args([*argv, "--verify", "http://status:9000"]))
+
+        assert code == REFUSED
+        assert len(await keys_for(live_session, live_tenant)) == 1
+
+    def test_the_check_is_the_read_verify_makes(self):
+        """The hand check stands in for ``--verify``, so it must be the same
+        request: the authenticated GET, not ``/health``, which takes no key."""
+        assert f"GET <base-url>{VERIFY_PATH} with X-API-Key: <raw_key> gets 200" in CHECK_MINTED
 
     async def test_a_revoke_only_points_at_the_revoked_key(
         self, factory, capsys, live_session, live_tenant

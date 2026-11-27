@@ -40,6 +40,13 @@ from src.core.models import ApiKey, Tenant
 TENANT = "01J0TENANT0000000000000000"
 KEY = "01J0KEY0000000000000000000"
 
+#: ``main``'s closing line on a live run without ``--verify`` (#147).
+MINT_UNVERIFIED = "NOT VERIFIED — pass --verify <base-url> to prove the new key works"
+REVOKE_UNVERIFIED = (
+    "NOT VERIFIED — the revoked key went unchecked: --verify <base-url> "
+    "--verify-old <raw> on the revoking run checks it now gets 401"
+)
+
 
 @pytest.fixture
 async def live_session(test_engine):
@@ -659,6 +666,76 @@ class TestVerificationNeverReportsSuccessHavingCheckedNothing:
         )
 
         assert "uncontrolled" not in checks[1].name
+
+
+class TestTheUnverifiedLineFitsWhatTheRunDid:
+    """Without ``--verify``, the closing line names the check this run could
+    have had. A revoke with no replacement minted nothing, so a line about
+    "the new key" points the operator at a key that doesn't exist (#147).
+    The exit code stays ``OK`` in every shape: unverified isn't failed.
+    """
+
+    async def test_a_mint_points_at_the_new_key(self, factory, capsys, live_tenant):
+        code = await main(parse_args(["--tenant-id", live_tenant, "--new-label", "fresh", "--yes"]))
+
+        out = capsys.readouterr().out
+        assert code == OK
+        assert MINT_UNVERIFIED in out.splitlines()
+        assert "--verify-old" not in out
+
+    async def test_a_mint_and_revoke_points_at_the_new_key(
+        self, factory, capsys, live_session, live_tenant
+    ):
+        """The new key's probe is the one that controls the old key's 401,
+        so a rotation keeps today's line."""
+        old, _ = await mint(live_session, live_tenant, "old", "production")
+        await live_session.commit()
+        old_id = str(old.id)
+
+        code = await main(
+            parse_args(
+                ["--tenant-id", live_tenant, "--new-label", "new", "--revoke", old_id, "--yes"]
+            )
+        )
+
+        out = capsys.readouterr().out
+        assert code == OK
+        assert MINT_UNVERIFIED in out.splitlines()
+        assert REVOKE_UNVERIFIED not in out
+
+    async def test_a_revoke_only_points_at_the_revoked_key(
+        self, factory, capsys, live_session, live_tenant
+    ):
+        doomed, _ = await mint(live_session, live_tenant, "doomed", "production")
+        await mint(live_session, live_tenant, "survivor", "production")
+        await live_session.commit()
+        doomed_id = str(doomed.id)
+
+        code = await main(parse_args(["--tenant-id", live_tenant, "--revoke", doomed_id, "--yes"]))
+
+        out = capsys.readouterr().out
+        assert code == OK
+        assert REVOKE_UNVERIFIED in out.splitlines()
+        assert "new key" not in out
+
+    async def test_a_rerun_with_the_flags_refuses_so_the_line_names_the_revoking_run(
+        self, factory, capsys, live_session, live_tenant
+    ):
+        """The revoked row is gone, so a second run with `--verify` and
+        `--verify-old` is refused: the flags only work on the revoking run,
+        and the line has to say so (CR 1a)."""
+        doomed, _ = await mint(live_session, live_tenant, "doomed", "production")
+        await mint(live_session, live_tenant, "survivor", "production")
+        await live_session.commit()
+        doomed_id = str(doomed.id)
+        await main(parse_args(["--tenant-id", live_tenant, "--revoke", doomed_id, "--yes"]))
+        assert "on the revoking run" in capsys.readouterr().out
+
+        argv = ["--tenant-id", live_tenant, "--revoke", doomed_id, "--yes"]
+        argv += ["--verify", "http://status:9000", "--verify-old", "csk_doomed"]
+        code = await main(parse_args(argv))
+
+        assert code == REFUSED
 
 
 class TestRefusalsReachTheOperatorCleanly:

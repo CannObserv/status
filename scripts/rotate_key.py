@@ -484,6 +484,23 @@ def _open_factory() -> async_sessionmaker[AsyncSession]:
     return get_session_factory()
 
 
+def _unverified_hint(outcome: Outcome) -> str:
+    """The closing line of a live run without ``--verify``: the check it could have had.
+
+    A revoke with no replacement minted nothing, so the one check it can have
+    is the revoked key's 401, which takes the raw key the script never held
+    (#147). That check is uncontrolled, so "checks", as the ``--verify`` path
+    says, not "proves"; and the row is gone, so a re-run is refused: the flags
+    belong on the revoking run.
+    """
+    if outcome.raw_key is None:
+        return (
+            "NOT VERIFIED — the revoked key went unchecked: --verify <base-url> "
+            "--verify-old <raw> on the revoking run checks it now gets 401"
+        )
+    return "NOT VERIFIED — pass --verify <base-url> to prove the new key works"
+
+
 async def main(args: argparse.Namespace) -> int:
     """Run the requested operation and print the result. Returns an exit code."""
     try:
@@ -534,7 +551,7 @@ async def main(args: argparse.Namespace) -> int:
         if args.verify is not None:
             print("verification skipped — a dry run has nothing live to check")
         elif not outcome.dry_run:
-            print("NOT VERIFIED — pass --verify <base-url> to prove the new key works")
+            print(_unverified_hint(outcome))
         return OK
 
     checks = verify(args.verify, new_raw=outcome.raw_key, old_raw=args.verify_old)

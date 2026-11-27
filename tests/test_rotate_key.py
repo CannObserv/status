@@ -40,6 +40,13 @@ from src.core.models import ApiKey, Tenant
 TENANT = "01J0TENANT0000000000000000"
 KEY = "01J0KEY0000000000000000000"
 
+#: ``main``'s closing line on a live run without ``--verify`` (#147).
+MINT_UNVERIFIED = "NOT VERIFIED — pass --verify <base-url> to prove the new key works"
+REVOKE_UNVERIFIED = (
+    "NOT VERIFIED — the revoked key went unchecked: --verify <base-url> "
+    "--verify-old <raw> on the revoking run checks it now gets 401"
+)
+
 
 @pytest.fixture
 async def live_session(test_engine):
@@ -659,13 +666,6 @@ class TestVerificationNeverReportsSuccessHavingCheckedNothing:
         )
 
         assert "uncontrolled" not in checks[1].name
-
-
-MINT_UNVERIFIED = "NOT VERIFIED — pass --verify <base-url> to prove the new key works"
-REVOKE_UNVERIFIED = (
-    "NOT VERIFIED — the revoked key went unchecked: --verify <base-url> "
-    "--verify-old <raw> on the revoking run checks it now gets 401"
-)
 
 
 class TestTheUnverifiedLineFitsWhatTheRunDid:
